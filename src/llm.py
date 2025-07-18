@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import modal
 
@@ -29,6 +30,10 @@ vllm_image = (
             "HF_HUB_ENABLE_HF_TRANSFER": "1",
             "VLLM_USE_V1": "1",
         }
+    )
+    .add_local_file(
+        Path(__file__).parent.parent / "assets" / "qwen3_nonthinking.jinja",
+        remote_chat_template_path,
     )
 )
 
