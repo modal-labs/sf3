@@ -7,13 +7,13 @@ import modal.experimental
 
 from .config import (
     CHARACTER_MAPPING,
-    # X_SIZE,
-    # Y_SIZE,
     create_messages,
     minutes,
 )
 from .llm import LLMServer
 from .llm import app as llm_app
+from .yolo import YOLOServer
+from .yolo import app as yolo_app
 
 # diambra engine
 
@@ -39,7 +39,7 @@ engine_image = (
 
 # web app
 
-app = modal.App(name="diambra-web").include(llm_app)
+app = modal.App(name="diambra-web").include(llm_app).include(yolo_app)
 
 local_assets_dir = Path(__file__).parent.parent / "assets"
 remote_frontend_dir = "/root/frontend"
@@ -90,14 +90,21 @@ def server():
 
     web_app = FastAPI()
 
-    def create_llm() -> LLMServer:
+    async def create_llm() -> LLMServer:
         print("Creating LLM...")
         llm = LLMServer()
-        llm.boot.remote()
+        await llm.boot.remote.aio()
         print("LLM created")
         return llm
 
-    def create_sandbox() -> modal.Sandbox:
+    async def create_yolo() -> YOLOServer:
+        print("Creating YOLO...")
+        yolo = YOLOServer()
+        await yolo.boot.remote.aio()
+        print("YOLO created")
+        return yolo
+
+    async def create_sandbox() -> modal.Sandbox:
         print("Creating sandbox...")
         engine_port = 50051
         sandbox = modal.Sandbox.create(
@@ -161,8 +168,11 @@ def server():
 
         # boot up
 
-        llm = create_llm()
-        sandbox = create_sandbox()
+        llm, yolo, sandbox = await asyncio.gather(
+            create_llm(),
+            create_yolo(),
+            create_sandbox(),
+        )
 
         # per frame
 
@@ -244,48 +254,42 @@ def server():
 
                     await asyncio.sleep(0.001)
 
-                    # # observe
-
-                    # TODO: get actual character positions
-                    # own_pos = [
-                    #     random.randint(-X_SIZE // 2, X_SIZE // 2),
-                    #     random.randint(Y_SIZE - 204, Y_SIZE - 24),
-                    # ]
-                    # opp_pos = [
-                    #     random.randint(-X_SIZE // 2, X_SIZE // 2),
-                    #     random.randint(Y_SIZE - 204, Y_SIZE - 24),
-                    # ]
-
                     # plan
 
                     if len(next_moves) == 0:
+                        obs_p1 = observation["P1"]
+                        obs_p2 = observation["P2"]
+
+                        boxes, class_ids = await yolo.detect_characters.remote.aio(
+                            [obs_p1["character"], obs_p2["character"]],
+                            observation["frame"],
+                        )
+
                         messages = create_messages(
                             stage=observation["stage"][0],
-                            own_wins=observation["P1"]["wins"][0],
-                            opp_wins=observation["P2"]["wins"][0],
+                            own_wins=obs_p1["wins"][0],
+                            opp_wins=obs_p2["wins"][0],
                             timer=observation["timer"][0],
-                            own_character=CHARACTER_MAPPING[
-                                observation["P1"]["character"]
-                            ],
-                            opp_character=CHARACTER_MAPPING[
-                                observation["P2"]["character"]
-                            ],
-                            own_side=observation["P1"]["side"],
-                            opp_side=observation["P2"]["side"],
-                            own_stunned=observation["P1"]["stunned"],
-                            own_stun_bar=observation["P1"]["stun_bar"][0],
-                            opp_stunned=observation["P2"]["stunned"],
-                            opp_stun_bar=observation["P2"]["stun_bar"][0],
-                            own_health=observation["P1"]["health"][0],
-                            opp_health=observation["P2"]["health"][0],
-                            own_super_count=observation["P1"]["super_count"][0],
-                            own_super_bar=observation["P1"]["super_bar"][0],
-                            opp_super_count=observation["P2"]["super_count"][0],
-                            opp_super_bar=observation["P2"]["super_bar"][0],
+                            own_character=CHARACTER_MAPPING[obs_p1["character"]],
+                            opp_character=CHARACTER_MAPPING[obs_p2["character"]],
+                            own_side=obs_p1["side"],
+                            opp_side=obs_p2["side"],
+                            boxes=boxes,
+                            class_ids=class_ids,
+                            own_stunned=obs_p1["stunned"],
+                            own_stun_bar=obs_p1["stun_bar"][0],
+                            opp_stunned=obs_p2["stunned"],
+                            opp_stun_bar=obs_p2["stun_bar"][0],
+                            own_health=obs_p1["health"][0],
+                            opp_health=obs_p2["health"][0],
+                            own_super_count=obs_p1["super_count"][0],
+                            own_super_bar=obs_p1["super_bar"][0],
+                            opp_super_count=obs_p2["super_count"][0],
+                            opp_super_bar=obs_p2["super_bar"][0],
                         )
                         moves = await llm.chat.remote.aio(
                             messages,
-                            "left" if observation["P1"]["side"] == 0 else "right",
+                            "left" if obs_p1["side"] == 0 else "right",
                         )
                         next_moves.extend(moves)
 
