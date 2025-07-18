@@ -15,7 +15,7 @@ from .config import (
 
 # Modal setup
 
-app = modal.App("diambra-yolo")
+app = modal.App("sf3-yolo")
 
 py_version = "3.12"
 

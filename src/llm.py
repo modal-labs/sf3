@@ -14,7 +14,7 @@ from .config import (
 
 # Modal setup
 
-app = modal.App("diambra-llm")
+app = modal.App("sf3-llm")
 
 remote_chat_template_path = "/root/qwen3_nonthinking.jinja"
 
