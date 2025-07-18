@@ -1,4 +1,5 @@
 class StreetFighterGame {
+
     // helper fns
 
     setScreen(settings, loading, game, win, error) {
@@ -129,6 +130,7 @@ class StreetFighterGame {
         this.lastFrameTime = 0;
         this.targetFPS = 60;
         this.frameInterval = 1000 / this.targetFPS;
+        this.serverReady = false;
         this.gameSettings = {
             difficulty: 1,
             player1: {
@@ -143,9 +145,13 @@ class StreetFighterGame {
             }
         };
         this.actions = {
+
             // basic actions
+
             NONE: 0,
+
             // directional
+
             LEFT: 1,
             LEFT_UP: 2,
             UP: 3,
@@ -154,14 +160,18 @@ class StreetFighterGame {
             RIGHT_DOWN: 6,
             DOWN: 7,
             LEFT_DOWN: 8,
+
             // attacks
+
             LIGHT_PUNCH: 9,
             MEDIUM_PUNCH: 10,
             HEAVY_PUNCH: 11,
             LIGHT_KICK: 12,
             MEDIUM_KICK: 13,
             HEAVY_KICK: 14,
+
             // combinations
+            
             LP_LK: 15,
             MP_MK: 16,
             HP_HK: 17
@@ -203,6 +213,7 @@ class StreetFighterGame {
             label.textContent = difficultyLabels[value];
         });
 
+        const startButton = document.getElementById('start-game-btn');
         const playAgainButton = document.getElementById('play-again-btn');
         const errorBackButton = document.getElementById('error-back-btn');
 
@@ -224,12 +235,22 @@ class StreetFighterGame {
         
         this.socket.onclose = () => {
             console.log('Disconnected from server');
+            if (!this.serverReady) {
+                startButton.textContent = 'Connection Lost';
+                startButton.disabled = true;
+                startButton.classList.add('opacity-50');
+            }
         };
         
         this.socket.onerror = (event) => {
             let msg = 'WebSocket connection error';
             console.error(msg, event);
             this.showError(msg);
+            if (!this.serverReady) {
+                startButton.textContent = 'Connection Error';
+                startButton.disabled = true;
+                startButton.classList.add('opacity-50');
+            }
         };
         
         this.socket.onmessage = (event) => {
@@ -238,6 +259,14 @@ class StreetFighterGame {
             switch (message.type) {
                 case 'game_state':
                     console.log('Game state:', message.data.status);
+    
+                    if (!this.serverReady) {
+                        this.serverReady = true;
+                        startButton.disabled = false;
+                        startButton.textContent = 'START GAME';
+                        startButton.classList.remove('opacity-50');
+                        console.log('Server ready - start button enabled');
+                    }
     
                     switch (message.data.status) {
                         case 'initializing':
@@ -280,6 +309,7 @@ class StreetFighterGame {
         // main game logic
 
         const startGame = () => {
+            
             // send settings to server
 
             this.gameSettings.player1.character = document.getElementById('character-select').value;
@@ -291,6 +321,7 @@ class StreetFighterGame {
             this.gameSettings.difficulty = parseInt(document.getElementById('difficulty-slider').value);
 
             // reset
+
             this.gameLoaded = false;
             this.firstFrameReceived = false;
             this.renderLoopStarted = false;
@@ -305,11 +336,13 @@ class StreetFighterGame {
             document.getElementById('loading-status').textContent = 'Starting game...';
             
             // send start game message
+
             this.sendMessage('start_game', this.gameSettings);
         };
 
-        const startButton = document.getElementById('start-game-btn');
         startButton.addEventListener('click', startGame);
+        startButton.disabled = true;
+        startButton.classList.add('opacity-50');
     }
 }
 
