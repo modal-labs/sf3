@@ -1,235 +1,13 @@
 class StreetFighterGame {
-    constructor() {
-        this.socket = null;
-
-        // game state
-
-        this.gameLoaded = false;
-        this.keyState = {};
-        this.lastAction = 0;
-        this.firstFrameReceived = false;
-        this.gameSettings = {
-            difficulty: 1,
-            player1: {
-                character: 'Ken',
-                outfit: 1,
-                superArt: 1
-            },
-            player2: {
-                character: 'Ken',
-                outfit: 1,
-                superArt: 1
-            }
-        };
-        this.actions = {
-            // Basic actions
-            NONE: 0,
-            // Directional
-            LEFT: 1,
-            LEFT_UP: 2,
-            UP: 3,
-            RIGHT_UP: 4,
-            RIGHT: 5,
-            RIGHT_DOWN: 6,
-            DOWN: 7,
-            LEFT_DOWN: 8,
-            // Attacks
-            LIGHT_PUNCH: 9,
-            MEDIUM_PUNCH: 10,
-            HEAVY_PUNCH: 11,
-            LIGHT_KICK: 12,
-            MEDIUM_KICK: 13,
-            HEAVY_KICK: 14,
-            // Combinations
-            LP_LK: 15,
-            MP_MK: 16,
-            HP_HK: 17
-        };
-    
-        // event listeners
-
-        document.addEventListener('keydown', (e) => {
-            if (!this.gameLoaded) return;
-            
-            this.keyState[e.code] = true;
-            const action = this.getActionFromKeys();
-            if (action !== this.lastAction) {
-                this.sendAction(action);
-                this.lastAction = action;
-            }
-            e.preventDefault();
-        });
-        document.addEventListener('keyup', (e) => {
-            if (!this.gameLoaded) return;
-            
-            this.keyState[e.code] = false;
-            const action = this.getActionFromKeys();
-            if (action !== this.lastAction) {
-                this.sendAction(action);
-                this.lastAction = action;
-            }
-            e.preventDefault();
-        });
-        
-        // ui
-
-        document.getElementById('settings-screen').style.display = 'block';
-        document.getElementById('loading-screen').style.display = 'none';
-        document.getElementById('game-display').style.display = 'none';
-        document.getElementById('win-screen').style.display = 'none';
-        document.getElementById('error-screen').style.display = 'none';
-
-        const slider = document.getElementById('difficulty-slider');
-        const label = document.getElementById('difficulty-label');
-        const difficultyLabels = {
-            1: 'Very Easy',
-            2: 'Easy',
-            3: 'Medium',
-            4: 'Hard',
-            5: 'Very Hard',
-            6: 'Expert',
-            7: 'Master',
-            8: 'Extreme'
-        };
-        slider.addEventListener('input', (e) => {
-            const value = parseInt(e.target.value);
-            this.gameSettings.difficulty = value;
-            label.textContent = difficultyLabels[value];
-        });
-
-        // main game logic
-
-        const startButton = document.getElementById('start-game-btn');
-        const playAgainButton = document.getElementById('play-again-btn');
-        
-        const startGame = () => {
-            this.gameSettings.player1.character = document.getElementById('character-select').value;
-            this.gameSettings.player1.outfit = parseInt(document.getElementById('outfit-select').value);
-            this.gameSettings.player1.superArt = parseInt(document.getElementById('super-art-select').value);
-            this.gameSettings.player2.character = document.getElementById('character-select-p2').value;
-            this.gameSettings.player2.outfit = parseInt(document.getElementById('outfit-select-p2').value);
-            this.gameSettings.player2.superArt = parseInt(document.getElementById('super-art-select-p2').value);
-            this.gameSettings.difficulty = parseInt(document.getElementById('difficulty-slider').value);
-            console.log('Game settings:', this.gameSettings);
-
-            this.firstFrameReceived = false;
-            const canvas = document.getElementById('game-canvas');
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            document.getElementById('settings-screen').style.display = 'none';
-            document.getElementById('loading-screen').style.display = 'block';
-            document.getElementById('game-display').style.display = 'none';
-            document.getElementById('win-screen').style.display = 'none';
-            document.getElementById('error-screen').style.display = 'none';
-
-            let msg = 'Connecting to server...';
-            console.log(msg);
-            document.getElementById('loading-status').textContent = msg;
-            
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws`;
-            
-            this.socket = new WebSocket(wsUrl);
-            
-            this.socket.onopen = () => {
-                msg = 'Connected to server; starting emulator...';
-                console.log(msg);
-                document.getElementById('loading-status').textContent = msg;
-                this.sendMessage('start_game', this.gameSettings);
-            };
-            
-            this.socket.onclose = () => {
-                console.log('Disconnected from server');
-            };
-            
-            this.socket.onerror = (event) => {
-                let errorMsg = 'WebSocket connection error';
-                if (event && event.message) {
-                    errorMsg += ': ' + event.message;
-                }
-                console.error(errorMsg, event);
-                this.showError(errorMsg);
-            };
-            
-            this.socket.onmessage = (event) => {
-                const message = JSON.parse(event.data);
-                
-                switch (message.type) {
-                    case 'game_state':
-                        console.log('Game state:', message.data.status);
-        
-                        switch (message.data.status) {
-                            case 'initializing':
-                                document.getElementById('loading-status').textContent = 'Initializing game environment...';
-                                break;
-                            case 'running':
-                                if (!this.gameLoaded) {
-                                    this.gameLoaded = true;
-                                    document.getElementById('settings-screen').style.display = 'none';
-                                    document.getElementById('loading-screen').style.display = 'none';
-                                    document.getElementById('game-display').style.display = 'block';
-                                    document.getElementById('win-screen').style.display = 'none';
-                                    document.getElementById('canvas-loading-overlay').style.display = 'flex';
-                                }
-                                break;
-                            case 'finished':
-                                this.gameLoaded = false;
-                                document.getElementById('winner-text').textContent = `Winner: ${message.data.winner || 'Unknown'}`;
-                                document.getElementById('settings-screen').style.display = 'none';
-                                document.getElementById('loading-screen').style.display = 'none';
-                                document.getElementById('game-display').style.display = 'none';
-                                document.getElementById('win-screen').style.display = 'block';
-                                break;
-                            case 'error':
-                                this.showError(message.data.error || 'Unknown game error');
-                                if (this.socket) {
-                                    this.socket.close();
-                                    this.socket = null;
-                                }
-                                break;
-                        }
-                        break;
-                    case 'game_frame':
-                        const canvas = document.getElementById('game-canvas');
-                        const ctx = canvas.getContext('2d');
-                        
-                        const img = new Image();
-                        img.onload = () => {
-                            ctx.clearRect(0, 0, canvas.width, canvas.height);
-                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            
-                            if (!this.firstFrameReceived) {
-                                this.firstFrameReceived = true;
-                                document.getElementById('canvas-loading-overlay').style.display = 'none';
-                            }
-                        };
-                        img.src = 'data:image/jpeg;base64,' + message.data.frame;
-                        break;
-                }
-            };
-        };
-        
-        startButton.addEventListener('click', startGame);
-        playAgainButton.addEventListener('click', () => {
-            document.getElementById('settings-screen').style.display = 'block';
-            document.getElementById('loading-screen').style.display = 'none';
-            document.getElementById('game-display').style.display = 'none';
-            document.getElementById('win-screen').style.display = 'none';
-        });
-
-        const errorBackButton = document.getElementById('error-back-btn');
-        errorBackButton.addEventListener('click', () => {
-            document.getElementById('settings-screen').style.display = 'block';
-            document.getElementById('loading-screen').style.display = 'none';
-            document.getElementById('game-display').style.display = 'none';
-            document.getElementById('win-screen').style.display = 'none';
-            document.getElementById('error-screen').style.display = 'none';
-        });
-
-    }
-
     // helper fns
+
+    setScreen(settings, loading, game, win, error) {
+        document.getElementById('settings-screen').style.display = settings;
+        document.getElementById('loading-screen').style.display = loading;
+        document.getElementById('game-display').style.display = game;
+        document.getElementById('win-screen').style.display = win;
+        document.getElementById('error-screen').style.display = error;
+    };
 
     sendMessage(type, data) {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
@@ -243,11 +21,7 @@ class StreetFighterGame {
     showError(message) {
         document.getElementById('error-message').textContent = message;
         document.getElementById('error-details').textContent = new Date().toLocaleString() + '\n' + message;
-        document.getElementById('settings-screen').style.display = 'none';
-        document.getElementById('loading-screen').style.display = 'none';
-        document.getElementById('game-display').style.display = 'none';
-        document.getElementById('win-screen').style.display = 'none';
-        document.getElementById('error-screen').style.display = 'block';
+        this.setScreen('none', 'none', 'none', 'none', 'block');
     }
 
     getActionFromKeys() {
@@ -291,6 +65,237 @@ class StreetFighterGame {
         this.sendMessage('player_action', { action: action });
     }
 
+    startRenderLoop() {
+        const renderFrame = (currentTime) => {
+            requestAnimationFrame(renderFrame);
+            
+            if (!this.gameLoaded) return;
+            
+            const elapsed = currentTime - this.lastFrameTime;
+            if (elapsed < this.frameInterval) return;
+            
+            this.lastFrameTime = currentTime - (elapsed % this.frameInterval);
+            
+            if (this.frameQueue.length > 0) {
+                const frameData = this.frameQueue.shift();
+                const canvas = document.getElementById('game-canvas');
+                const ctx = canvas.getContext('2d');
+                
+                const img = new Image();
+                img.onload = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                };
+                img.src = 'data:image/jpeg;base64,' + frameData;
+            }
+        };
+        
+        requestAnimationFrame(renderFrame);
+    }
+
+    constructor() {
+        this.socket = null;
+
+        // game state
+
+        this.gameLoaded = false;
+        this.keyState = {};
+        this.firstFrameReceived = false;
+        this.renderLoopStarted = false;
+        this.frameQueue = [];
+        this.lastFrameTime = 0;
+        this.targetFPS = 60;
+        this.frameInterval = 1000 / this.targetFPS;
+        this.gameSettings = {
+            difficulty: 1,
+            player1: {
+                character: 'Ken',
+                outfit: 1,
+                superArt: 1
+            },
+            player2: {
+                character: 'Ken',
+                outfit: 1,
+                superArt: 1
+            }
+        };
+        this.actions = {
+            // Basic actions
+            NONE: 0,
+            // Directional
+            LEFT: 1,
+            LEFT_UP: 2,
+            UP: 3,
+            RIGHT_UP: 4,
+            RIGHT: 5,
+            RIGHT_DOWN: 6,
+            DOWN: 7,
+            LEFT_DOWN: 8,
+            // Attacks
+            LIGHT_PUNCH: 9,
+            MEDIUM_PUNCH: 10,
+            HEAVY_PUNCH: 11,
+            LIGHT_KICK: 12,
+            MEDIUM_KICK: 13,
+            HEAVY_KICK: 14,
+            // Combinations
+            LP_LK: 15,
+            MP_MK: 16,
+            HP_HK: 17
+        };
+    
+        // event listeners
+
+        const handleKeyEvent = (e, isDown) => {
+            if (!this.gameLoaded) return;
+
+            this.keyState[e.code] = isDown;
+            const action = this.getActionFromKeys();
+            this.sendAction(action);
+            e.preventDefault();
+        };
+
+        document.addEventListener('keydown', (e) => handleKeyEvent(e, true));
+        document.addEventListener('keyup', (e) => handleKeyEvent(e, false));
+
+        // ui
+
+        this.setScreen('block', 'none', 'none', 'none', 'none');
+
+        const slider = document.getElementById('difficulty-slider');
+        const label = document.getElementById('difficulty-label');
+        const difficultyLabels = {
+            1: 'Very Easy',
+            2: 'Easy',
+            3: 'Medium',
+            4: 'Hard',
+            5: 'Very Hard',
+            6: 'Expert',
+            7: 'Master',
+            8: 'Extreme'
+        };
+        slider.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            this.gameSettings.difficulty = value;
+            label.textContent = difficultyLabels[value];
+        });
+
+        const playAgainButton = document.getElementById('play-again-btn');
+        const errorBackButton = document.getElementById('error-back-btn');
+
+        playAgainButton.addEventListener('click', () => {
+            this.setScreen('block', 'none', 'none', 'none', 'none');
+        });
+        errorBackButton.addEventListener('click', () => {
+            this.setScreen('block', 'none', 'none', 'none', 'none');
+        });
+
+        // main game logic
+
+        const startGame = () => {
+            // send settings to server
+
+            this.gameSettings.player1.character = document.getElementById('character-select').value;
+            this.gameSettings.player1.outfit = parseInt(document.getElementById('outfit-select').value);
+            this.gameSettings.player1.superArt = parseInt(document.getElementById('super-art-select').value);
+            this.gameSettings.player2.character = document.getElementById('character-select-p2').value;
+            this.gameSettings.player2.outfit = parseInt(document.getElementById('outfit-select-p2').value);
+            this.gameSettings.player2.superArt = parseInt(document.getElementById('super-art-select-p2').value);
+            this.gameSettings.difficulty = parseInt(document.getElementById('difficulty-slider').value);
+
+            // reset
+            this.gameLoaded = false;
+            this.firstFrameReceived = false;
+            this.renderLoopStarted = false;
+            this.frameQueue = [];
+            this.lastFrameTime = 0;
+            this.keyState = {};
+            const canvas = document.getElementById('game-canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            this.setScreen('none', 'block', 'none', 'none', 'none');
+
+            // server
+
+            let msg = 'Connecting to server...';
+            document.getElementById('loading-status').textContent = msg;
+            
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            this.socket = new WebSocket(wsUrl);
+            
+            this.socket.onopen = () => {
+                console.log('Connected to server');
+                this.sendMessage('start_game', this.gameSettings);
+            };
+            
+            this.socket.onclose = () => {
+                console.log('Disconnected from server');
+            };
+            
+            this.socket.onerror = (event) => {
+                let msg = 'WebSocket connection error';
+                console.error(msg, event);
+                this.showError(msg);
+            };
+            
+            this.socket.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                
+                switch (message.type) {
+                    case 'game_state':
+                        console.log('Game state:', message.data.status);
+        
+                        switch (message.data.status) {
+                            case 'ready':
+                                document.getElementById('loading-status').textContent = 'Connected to server; loading game resources...';
+                                break;
+                            case 'initializing':
+                                document.getElementById('loading-status').textContent = 'Resources loaded; starting game...';
+                                break;
+                            case 'running':
+                                this.gameLoaded = true;
+                                this.setScreen('none', 'none', 'block', 'none', 'none');
+                                break;
+                            case 'finished':
+                                this.gameLoaded = false;
+                                document.getElementById('winner-text').textContent = `Winner: ${message.data.winner || 'Unknown'}`;
+                                this.setScreen('none', 'none', 'none', 'block', 'none');
+                                break;
+                            case 'error':
+                                this.showError(message.data.error || 'Unknown game error');
+                                if (this.socket) {
+                                    this.socket.close();
+                                    this.socket = null;
+                                }
+                                break;
+                        }
+                        break;
+                    case 'game_frame':
+                        this.frameQueue.push(message.data.frame);
+                        
+                        if (this.frameQueue.length > 3) {
+                            this.frameQueue.shift();
+                        }
+                        
+                        if (!this.firstFrameReceived) {
+                            this.firstFrameReceived = true;
+                            document.getElementById('canvas-loading-overlay').style.display = 'none';
+                        }
+                        
+                        if (!this.renderLoopStarted) {
+                            this.renderLoopStarted = true;
+                            this.startRenderLoop();
+                        }
+                        break;
+                }
+            };
+        };
+
+        const startButton = document.getElementById('start-game-btn');
+        startButton.addEventListener('click', startGame);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
