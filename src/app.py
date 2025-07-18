@@ -17,7 +17,7 @@ from .yolo import app as yolo_app
 
 # diambra engine
 
-engine_app = modal.App.lookup("diambra-engine", create_if_missing=True)
+engine_app = modal.App.lookup("sf3-engine", create_if_missing=True)
 
 engine_image = (
     modal.experimental.raw_registry_image("docker.io/diambra/engine:v2.2.4")
@@ -39,7 +39,7 @@ engine_image = (
 
 # web app
 
-app = modal.App(name="diambra-web").include(llm_app).include(yolo_app)
+app = modal.App(name="sf3-web").include(llm_app).include(yolo_app)
 
 local_assets_dir = Path(__file__).parent.parent / "assets"
 remote_frontend_dir = "/root/frontend"

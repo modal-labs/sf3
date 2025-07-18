@@ -1,11 +1,13 @@
-# diambra
+# sf3
+
+An interactive Street Fighter 3 demo against an RL-trained LLM in a sandboxed game engine
 
 ## Installation
 
 ```bash
 # Clone repository
-git clone https://github.com/modal-labs/diambra.git
-cd diambra
+git clone https://github.com/modal-labs/sf3.git
+cd sf3
 
 # Install dependencies
 uv sync
