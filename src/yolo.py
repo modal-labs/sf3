@@ -394,7 +394,9 @@ MAX_INPUTS = 512
 @modal.concurrent(max_inputs=MAX_INPUTS)
 class YOLOServer:
     @modal.enter()
-    def load_model(self):
+    def enter(self):
+        import cv2
+        import numpy as np
         import onnxruntime
 
         onnxruntime.set_seed(seed)
@@ -428,6 +430,23 @@ class YOLOServer:
 
         model_outputs = self.session.get_outputs()
         self.output_names = [model_outputs[i].name for i in range(len(model_outputs))]
+
+        # warm up model
+
+        frame = np.random.randint(0, 256, (Y_SIZE, X_SIZE, 3), dtype=np.uint8)
+
+        self.img_height, self.img_width = frame.shape[:2]
+        input_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        input_img = cv2.resize(input_img, (self.input_width, self.input_height))
+
+        input_img = input_img / 255.0
+        input_img = input_img.transpose(2, 0, 1)
+        input_tensor = input_img[np.newaxis, :, :, :].astype(np.float16)
+
+        _ = self.session.run(
+            self.output_names,
+            {self.input_names[0]: input_tensor},
+        )
 
     @modal.method()
     async def boot(self):  # so don't have to call `detect_characters` to boot
