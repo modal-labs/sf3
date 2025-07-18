@@ -19,6 +19,17 @@ class StreetFighterGame {
                 }
             }
         });
+        
+        // show/hide header based on game state
+
+        const header = document.getElementById('game-header');
+        if (header) {
+            if (game !== 'none') {
+                header.classList.add('hidden');
+            } else {
+                header.classList.remove('hidden');
+            }
+        }
     };
 
     sendMessage(type, data) {
