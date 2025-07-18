@@ -67,7 +67,9 @@ MAX_INPUTS = max_num_seqs = 128
 @modal.concurrent(max_inputs=MAX_INPUTS)
 class LLMServer:
     @modal.enter()
-    def enter(self):
+    async def enter(self):
+        import random
+
         from vllm import LLM, SamplingParams
         from vllm.sampling_params import GuidedDecodingParams
 
@@ -93,6 +95,54 @@ class LLMServer:
             guided_decoding=GuidedDecodingParams(
                 choice=META_INSTRUCTIONS_WITH_LOWER.keys(),
             ),  # https://huggingface.co/Qwen/Qwen3-0.6B#best-practices
+        )
+
+        # warm up model
+
+        side = random.randint(0, 1)
+        own_character = random.choice(list(CHARACTER_MAPPING.values()))
+        opp_character = random.choice(list(CHARACTER_MAPPING.values()))
+
+        n_detected_characters = random.randint(1, 2)
+
+        messages = create_messages(
+            stage=random.randint(1, 3),
+            own_wins=random.randint(0, 2),
+            opp_wins=random.randint(0, 2),
+            timer=random.randint(0, 100),
+            own_character=own_character,
+            opp_character=opp_character,
+            own_side=side,
+            opp_side=1 - side,
+            boxes=[
+                [
+                    random.randint(0, X_SIZE // 2),
+                    random.randint(0, Y_SIZE // 2),
+                    random.randint(X_SIZE // 2, X_SIZE),
+                    random.randint(Y_SIZE // 2, Y_SIZE),
+                ]
+                for _ in range(n_detected_characters)
+            ],
+            class_ids=[
+                CHARACTER_TO_ID[own_character],
+                CHARACTER_TO_ID[opp_character],
+            ][:n_detected_characters],
+            own_stunned=random.random() < 0.1,
+            own_stun_bar=random.randint(0, 120),
+            opp_stunned=random.random() < 0.1,
+            opp_stun_bar=random.randint(0, 120),
+            own_health=random.randint(0, 160),
+            opp_health=random.randint(0, 160),
+            own_super_count=random.randint(0, 2),
+            own_super_bar=random.randint(0, 120),
+            opp_super_count=random.randint(0, 2),
+            opp_super_bar=random.randint(0, 120),
+        )
+
+        _ = self.llm.chat(
+            [messages],
+            self.sampling_params,
+            chat_template=remote_chat_template_path,
         )
 
     @modal.method()
