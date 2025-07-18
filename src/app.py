@@ -28,6 +28,8 @@ engine_image = (
         }
     )
     .entrypoint([])
+    # since sandbox is created in app, files will be in Modal container, not locally
+    # so we need to add them to the web app image as well
     .add_local_file(
         "/root/assets/sfiii3n.zip",
         "/opt/diambraArena/roms/sfiii3n.zip",
@@ -55,6 +57,14 @@ image = (
         "uv pip install --system --compile-bytecode diambra-arena==2.2.7 diambra==0.0.20 fastapi[standard]==0.116.1 websockets==15.0.1 numpy==2.3.1",
     )
     .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)
+    .add_local_file(
+        Path(__file__).parent.parent / "assets" / "favicon.ico",
+        "/root/frontend/favicon.ico",
+    )
+    .add_local_file(
+        Path(__file__).parent.parent / "assets" / "logo.svg",
+        "/root/frontend/logo.svg",
+    )
     .add_local_file(
         local_assets_dir / "sfiii3n.zip",
         "/root/assets/sfiii3n.zip",
@@ -552,6 +562,14 @@ class Web:
         @web_app.get("/")
         async def index():
             return FileResponse(f"{remote_frontend_dir}/index.html")
+
+        @web_app.get("/favicon.ico")
+        async def favicon():
+            return FileResponse(f"{remote_frontend_dir}/favicon.ico")
+
+        @web_app.get("/logo.svg")
+        async def logo():
+            return FileResponse(f"{remote_frontend_dir}/logo.svg")
 
         web_app.mount("/", StaticFiles(directory=remote_frontend_dir), name="static")
 

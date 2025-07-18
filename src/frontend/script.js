@@ -2,11 +2,23 @@ class StreetFighterGame {
     // helper fns
 
     setScreen(settings, loading, game, win, error) {
-        document.getElementById('settings-screen').style.display = settings;
-        document.getElementById('loading-screen').style.display = loading;
-        document.getElementById('game-display').style.display = game;
-        document.getElementById('win-screen').style.display = win;
-        document.getElementById('error-screen').style.display = error;
+        const screens = [
+            { id: 'settings-screen', show: settings },
+            { id: 'loading-screen', show: loading },
+            { id: 'game-display', show: game },
+            { id: 'win-screen', show: win },
+            { id: 'error-screen', show: error }
+        ];
+        screens.forEach(screen => {
+            const el = document.getElementById(screen.id);
+            if (el) {
+                if (screen.show !== 'none') {
+                    el.classList.remove('hidden');
+                } else {
+                    el.classList.add('hidden');
+                }
+            }
+        });
     };
 
     sendMessage(type, data) {
@@ -243,7 +255,7 @@ class StreetFighterGame {
                     
                     if (!this.firstFrameReceived) {
                         this.firstFrameReceived = true;
-                        document.getElementById('canvas-loading-overlay').style.display = 'none';
+                        document.getElementById('canvas-loading-overlay').classList.add('hidden');
                     }
                     
                     if (!this.renderLoopStarted) {
