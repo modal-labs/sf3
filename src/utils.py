@@ -4,6 +4,7 @@ from textwrap import dedent
 seed = 42
 random.seed(seed)
 
+region = "us-east-1"
 minutes = 60
 
 # scene
