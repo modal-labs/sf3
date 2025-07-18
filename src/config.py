@@ -1,7 +1,19 @@
+import random
 from textwrap import dedent
+
+seed = 42
+random.seed(seed)
 
 minutes = 60
 
+# scene
+
+X_SIZE = 384
+Y_SIZE = 224
+MIN_Y = 80
+MAX_Y = 200
+
+# moves + characters
 # credit to https://streetfighter.fandom.com/wiki/List_of_moves_in_Street_Fighter_III:_3rd_Strike
 
 MOVES = {
@@ -504,9 +516,6 @@ META_INSTRUCTIONS_WITH_LOWER = {
 
 INDEX_TO_MOVE = {v: k for k, v in MOVES.items()}
 
-X_SIZE = 384
-Y_SIZE = 224
-
 CHARACTER_MAPPING = {
     0: "Alex",
     1: "Ryu",
@@ -531,6 +540,9 @@ CHARACTER_MAPPING = {
 CHARACTER_TO_ID = {v: k for k, v in CHARACTER_MAPPING.items()}
 
 
+# prompt
+
+
 def create_messages(
     stage,
     own_wins,
@@ -540,8 +552,8 @@ def create_messages(
     opp_character,
     own_side,
     opp_side,
-    # own_pos,
-    # opp_pos,
+    boxes,
+    class_ids,
     own_stunned,
     own_stun_bar,
     opp_stunned,
@@ -560,33 +572,70 @@ def create_messages(
     # position
 
     position_prompt = ""
-    if own_side == 0:
-        position_prompt = "You are on the left side of the screen. "
-    else:
-        position_prompt = "You are on the right side of the screen. "
-    if opp_side == 0:
-        position_prompt += "Your opponent is on the left side of the screen."
-    else:
-        position_prompt += "Your opponent is on the right side of the screen."
 
-    # TODO: uncomment once we have actual positions
+    own_box = None
+    opp_box = None
 
-    # position_prompt = ""
-    # relative_position = [own_pos[0] - opp_pos[0], own_pos[1] - opp_pos[1]]
-    # normalized_relative_position = [
-    #     relative_position[0] / X_SIZE,
-    #     relative_position[1] / Y_SIZE,
-    # ]
-    # if abs(normalized_relative_position[0]) > 0.1:
-    #     position_prompt = (
-    #         "You are very far from the opponent. Move closer to the opponent. "
-    #     )
-    #     if normalized_relative_position[0] < 0:
-    #         position_prompt += "Your opponent is on the right."
-    #     else:
-    #         position_prompt += "Your opponent is on the left."
-    # else:
-    #     position_prompt = "You are close to the opponent. You should attack them."
+    own_char_id = CHARACTER_TO_ID[own_character]
+    opp_char_id = CHARACTER_TO_ID[opp_character]
+
+    if own_char_id != opp_char_id:
+        for i, class_id in enumerate(class_ids):
+            if class_id == own_char_id and i < len(boxes):
+                own_box = boxes[i]
+            elif class_id == opp_char_id and i < len(boxes):
+                opp_box = boxes[i]
+    else:
+        if len(boxes) == 2:
+            x_center_0 = (boxes[0][0] + boxes[0][2]) / 2
+            x_center_1 = (boxes[1][0] + boxes[1][2]) / 2
+
+            if own_side == 0:
+                if x_center_0 < x_center_1:
+                    own_box = boxes[0]
+                    opp_box = boxes[1]
+                else:
+                    own_box = boxes[1]
+                    opp_box = boxes[0]
+            else:
+                if x_center_0 > x_center_1:
+                    own_box = boxes[0]
+                    opp_box = boxes[1]
+                else:
+                    own_box = boxes[1]
+                    opp_box = boxes[0]
+        elif len(boxes) == 1:  # only one character detected
+            x_center = (boxes[0][0] + boxes[0][2]) / 2
+            x_mid = X_SIZE / 2
+
+            if own_side == 0:
+                if x_center < x_mid:
+                    own_box = boxes[0]
+                else:
+                    opp_box = boxes[0]
+            else:
+                if x_center > x_mid:
+                    own_box = boxes[0]
+                else:
+                    opp_box = boxes[0]
+
+    if own_box is not None:
+        own_x_center = (own_box[0] + own_box[2]) / 2
+        own_y_center = (own_box[1] + own_box[3]) / 2
+        position_prompt = (
+            f"You are at position ({int(own_x_center)}, {int(own_y_center)}). "
+        )
+    else:
+        position_prompt = "Your position is unknown. "
+
+    if opp_box is not None:
+        opp_x_center = (opp_box[0] + opp_box[2]) / 2
+        opp_y_center = (opp_box[1] + opp_box[3]) / 2
+        position_prompt += (
+            f"Your opponent is at position ({int(opp_x_center)}, {int(opp_y_center)})."
+        )
+    else:
+        position_prompt += "Your opponent's position is unknown."
 
     # stun
 

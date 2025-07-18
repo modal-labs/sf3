@@ -4,7 +4,10 @@ import modal
 
 from .config import (
     CHARACTER_MAPPING,
+    CHARACTER_TO_ID,
     META_INSTRUCTIONS_WITH_LOWER,
+    X_SIZE,
+    Y_SIZE,
     create_messages,
     minutes,
 )
@@ -19,10 +22,7 @@ vllm_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("uv")
     .run_commands(
-        "uv pip install --system --compile-bytecode vllm==0.9.2 flashinfer-python==0.2.6.post1 --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu128",
-    )
-    .run_commands(
-        "uv pip install --system --compile-bytecode huggingface_hub[hf_transfer]==0.33.4",
+        "uv pip install --system --compile-bytecode vllm==0.9.2 flashinfer-python==0.2.6.post1 huggingface_hub[hf_transfer]==0.33.4 --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cu128",
     )
     .env(
         {
@@ -89,7 +89,7 @@ class LLMServer:
         )
 
     @modal.method()
-    def boot(self):  # so don't have to call `chat` to boot
+    async def boot(self):  # so don't have to call `chat` to boot
         pass
 
     @modal.method()
@@ -110,23 +110,42 @@ class LLMServer:
 
 
 @app.local_entrypoint()
-async def test(test_timeout=10 * minutes, n_samples=100):
+async def test(n_samples=100):
     import random
 
     llm = LLMServer()
+    llm.boot.remote()
 
     latencies = []
     for sample_idx in range(n_samples):
         side = random.randint(0, 1)
+        own_character = random.choice(list(CHARACTER_MAPPING.values()))
+        opp_character = random.choice(list(CHARACTER_MAPPING.values()))
+
+        n_detected_characters = random.randint(1, 2)
+
         messages = create_messages(
             stage=random.randint(1, 3),
             own_wins=random.randint(0, 2),
             opp_wins=random.randint(0, 2),
             timer=random.randint(0, 100),
-            own_character=random.choice(list(CHARACTER_MAPPING.values())),
-            opp_character=random.choice(list(CHARACTER_MAPPING.values())),
+            own_character=own_character,
+            opp_character=opp_character,
             own_side=side,
             opp_side=1 - side,
+            boxes=[
+                [
+                    random.randint(0, X_SIZE // 2),
+                    random.randint(0, Y_SIZE // 2),
+                    random.randint(X_SIZE // 2, X_SIZE),
+                    random.randint(Y_SIZE // 2, Y_SIZE),
+                ]
+                for _ in range(n_detected_characters)
+            ],
+            class_ids=[
+                CHARACTER_TO_ID[own_character],
+                CHARACTER_TO_ID[opp_character],
+            ][:n_detected_characters],
             own_stunned=random.random() < 0.1,
             own_stun_bar=random.randint(0, 120),
             opp_stunned=random.random() < 0.1,
