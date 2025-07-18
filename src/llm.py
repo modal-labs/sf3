@@ -3,7 +3,7 @@ from pathlib import Path
 
 import modal
 
-from .config import (
+from .utils import (
     CHARACTER_MAPPING,
     CHARACTER_TO_ID,
     META_INSTRUCTIONS_WITH_LOWER,
@@ -11,6 +11,7 @@ from .config import (
     Y_SIZE,
     create_messages,
     minutes,
+    # region,
 )
 
 # Modal setup
@@ -54,13 +55,14 @@ MAX_INPUTS = max_num_seqs = 128
 
 @app.cls(
     image=vllm_image,
-    gpu="b200",
-    scaledown_window=15 * minutes,
-    timeout=10 * minutes,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,
     },
+    gpu="b200",
+    # region=region,
+    scaledown_window=15 * minutes,
+    timeout=10 * minutes,
 )
 @modal.concurrent(max_inputs=MAX_INPUTS)
 class LLMServer:

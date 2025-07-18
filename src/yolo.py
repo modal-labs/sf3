@@ -3,7 +3,7 @@ from pathlib import Path
 
 import modal
 
-from .config import (
+from .utils import (
     CHARACTER_MAPPING,
     MAX_Y,
     MIN_Y,
@@ -11,6 +11,7 @@ from .config import (
     Y_SIZE,
     minutes,
     seed,
+    # region,
 )
 
 # Modal setup
@@ -72,11 +73,6 @@ scenes_per_pair_train = (
     images_per_character * 9
 )  # multiple of images_per_character to use all character variations
 scenes_per_pair_val = images_per_character * 1  # same as train
-
-
-# model
-
-model_size = "yolov10n.pt"
 
 
 @dataclass
@@ -298,6 +294,10 @@ def prepare_dataset():
     )
 
 
+# model
+
+model_size = "yolov10n.pt"
+
 TRAIN_GPU_COUNT = 1
 TRAIN_CPU_COUNT = TRAIN_GPU_COUNT * 8
 
@@ -387,6 +387,7 @@ MAX_INPUTS = 512
     image=onnx_image,
     volumes=volumes,
     gpu="b200",
+    # region=region,
     scaledown_window=15 * minutes,
     timeout=10 * minutes,
 )

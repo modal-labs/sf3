@@ -120,9 +120,9 @@ class StreetFighterGame {
             }
         };
         this.actions = {
-            // Basic actions
+            // basic actions
             NONE: 0,
-            // Directional
+            // directional
             LEFT: 1,
             LEFT_UP: 2,
             UP: 3,
@@ -131,14 +131,14 @@ class StreetFighterGame {
             RIGHT_DOWN: 6,
             DOWN: 7,
             LEFT_DOWN: 8,
-            // Attacks
+            // attacks
             LIGHT_PUNCH: 9,
             MEDIUM_PUNCH: 10,
             HEAVY_PUNCH: 11,
             LIGHT_KICK: 12,
             MEDIUM_KICK: 13,
             HEAVY_KICK: 14,
-            // Combinations
+            // combinations
             LP_LK: 15,
             MP_MK: 16,
             HP_HK: 17
@@ -190,6 +190,70 @@ class StreetFighterGame {
             this.setScreen('block', 'none', 'none', 'none', 'none');
         });
 
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        
+        this.socket = new WebSocket(wsUrl);
+        
+        this.socket.onopen = () => {
+            console.log('Connected to server');
+        };
+        
+        this.socket.onclose = () => {
+            console.log('Disconnected from server');
+        };
+        
+        this.socket.onerror = (event) => {
+            let msg = 'WebSocket connection error';
+            console.error(msg, event);
+            this.showError(msg);
+        };
+        
+        this.socket.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            
+            switch (message.type) {
+                case 'game_state':
+                    console.log('Game state:', message.data.status);
+    
+                    switch (message.data.status) {
+                        case 'initializing':
+                            document.getElementById('loading-status').textContent = 'Starting game...';
+                            break;
+                        case 'running':
+                            this.gameLoaded = true;
+                            this.setScreen('none', 'none', 'block', 'none', 'none');
+                            break;
+                        case 'finished':
+                            this.gameLoaded = false;
+                            document.getElementById('winner-text').textContent = `Winner: ${message.data.winner || 'Unknown'}`;
+                            this.setScreen('none', 'none', 'none', 'block', 'none');
+                            break;
+                        case 'error':
+                            this.showError(message.data.error || 'Unknown game error');
+                            break;
+                    }
+                    break;
+                case 'game_frame':
+                    this.frameQueue.push(message.data.frame);
+                    
+                    if (this.frameQueue.length > 3) {
+                        this.frameQueue.shift();
+                    }
+                    
+                    if (!this.firstFrameReceived) {
+                        this.firstFrameReceived = true;
+                        document.getElementById('canvas-loading-overlay').style.display = 'none';
+                    }
+                    
+                    if (!this.renderLoopStarted) {
+                        this.renderLoopStarted = true;
+                        this.startRenderLoop();
+                    }
+                    break;
+            }
+        };
+
         // main game logic
 
         const startGame = () => {
@@ -215,82 +279,10 @@ class StreetFighterGame {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             this.setScreen('none', 'block', 'none', 'none', 'none');
 
-            // server
-
-            let msg = 'Connecting to server...';
-            document.getElementById('loading-status').textContent = msg;
+            document.getElementById('loading-status').textContent = 'Starting game...';
             
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws`;
-            
-            this.socket = new WebSocket(wsUrl);
-            
-            this.socket.onopen = () => {
-                console.log('Connected to server');
-                this.sendMessage('start_game', this.gameSettings);
-            };
-            
-            this.socket.onclose = () => {
-                console.log('Disconnected from server');
-            };
-            
-            this.socket.onerror = (event) => {
-                let msg = 'WebSocket connection error';
-                console.error(msg, event);
-                this.showError(msg);
-            };
-            
-            this.socket.onmessage = (event) => {
-                const message = JSON.parse(event.data);
-                
-                switch (message.type) {
-                    case 'game_state':
-                        console.log('Game state:', message.data.status);
-        
-                        switch (message.data.status) {
-                            case 'ready':
-                                document.getElementById('loading-status').textContent = 'Connected to server; loading game resources...';
-                                break;
-                            case 'initializing':
-                                document.getElementById('loading-status').textContent = 'Resources loaded; starting game...';
-                                break;
-                            case 'running':
-                                this.gameLoaded = true;
-                                this.setScreen('none', 'none', 'block', 'none', 'none');
-                                break;
-                            case 'finished':
-                                this.gameLoaded = false;
-                                document.getElementById('winner-text').textContent = `Winner: ${message.data.winner || 'Unknown'}`;
-                                this.setScreen('none', 'none', 'none', 'block', 'none');
-                                break;
-                            case 'error':
-                                this.showError(message.data.error || 'Unknown game error');
-                                if (this.socket) {
-                                    this.socket.close();
-                                    this.socket = null;
-                                }
-                                break;
-                        }
-                        break;
-                    case 'game_frame':
-                        this.frameQueue.push(message.data.frame);
-                        
-                        if (this.frameQueue.length > 3) {
-                            this.frameQueue.shift();
-                        }
-                        
-                        if (!this.firstFrameReceived) {
-                            this.firstFrameReceived = true;
-                            document.getElementById('canvas-loading-overlay').style.display = 'none';
-                        }
-                        
-                        if (!this.renderLoopStarted) {
-                            this.renderLoopStarted = true;
-                            this.startRenderLoop();
-                        }
-                        break;
-                }
-            };
+            // send start game message
+            this.sendMessage('start_game', this.gameSettings);
         };
 
         const startButton = document.getElementById('start-game-btn');
