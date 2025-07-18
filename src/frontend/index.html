@@ -91,8 +91,17 @@
 
 <body class="font-mono bg-gradient-to-br from-sf-dark-1 via-sf-dark-2 to-sf-dark-3 text-white min-h-screen">
     <div class="min-h-screen flex flex-col">
-        <header class="text-center p-5 bg-black/80 border-b-4 border-sf-green">
-            <h1 class="text-4xl font-bold tracking-wider text-sf-green text-glow mb-1">STREET FIGHTER III</h1>
+        <header class="p-8 bg-black/80 border-b-4 border-sf-green">
+            <div class="flex items-center justify-between gap-8">
+                <h1 class="text-4xl font-bold tracking-wider text-sf-green text-glow">STREET FIGHTER III</h1>
+                <div class="flex flex-col justify-center items-end gap-4 text-sf-green text-glow">
+                    <h2 class="text-2xl">made with</h2>
+                    <a href="https://modal.com" target="_blank" rel="noopener"
+                        class="transition-transform duration-200 hover:drop-shadow-[0_0_20px_#00ff41]">
+                        <img src="/logo.svg" alt="Modal Logo" class="h-10 w-auto transition-transform duration-200">
+                    </a>
+                </div>
+            </div>
         </header>
 
         <main class="flex-1 flex items-center justify-center relative">
@@ -303,14 +312,14 @@
                 </button>
             </div>
 
-            <div id="loading-screen" class="text-center p-10" style="display: none;">
+            <div id="loading-screen" class="text-center p-10 hidden">
                 <div
                     class="loading-spinner w-16 h-16 border-4 border-sf-green/30 border-t-sf-green rounded-full mx-auto mb-8">
                 </div>
                 <h2 id="loading-status" class="text-2xl text-sf-green text-glow animate-pulse-custom">Connecting to
                     server...</h2>
             </div>
-            <div id="game-display" class="relative w-full h-full" style="display: none;">
+            <div id="game-display" class="relative w-full h-full hidden">
                 <div class="flex items-center justify-center h-full p-5">
                     <canvas id="game-canvas" width="800" height="600"
                         class="max-w-full max-h-[80vh] border-4 border-sf-green rounded-lg bg-black/80 box-glow"></canvas>
@@ -323,7 +332,7 @@
                 </div>
             </div>
 
-            <div id="win-screen" class="text-center p-10" style="display: none;">
+            <div id="win-screen" class="text-center p-10 hidden">
                 <div class="bg-black/80 border-2 border-sf-green rounded-lg p-8 max-w-md mx-auto">
                     <h2 class="text-4xl text-sf-green text-glow mb-4">Game Over!</h2>
                     <p id="winner-text" class="text-2xl text-sf-gold mb-6"></p>
@@ -334,7 +343,7 @@
                 </div>
             </div>
 
-            <div id="error-screen" class="text-center p-10" style="display: none;">
+            <div id="error-screen" class="text-center p-10 hidden">
                 <div class="bg-red-900/80 backdrop-blur-md border-2 border-red-500 rounded-lg p-8 max-w-2xl mx-auto">
                     <div class="mb-6">
                         <svg class="w-24 h-24 mx-auto text-red-500" fill="none" stroke="currentColor"
