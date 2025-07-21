@@ -9,6 +9,7 @@ from .llm import LLMServer
 from .llm import app as llm_app
 from .utils import (
     CHARACTER_MAPPING,
+    SPECIAL_MOVES,
     create_messages,
     minutes,
     region,
@@ -206,7 +207,8 @@ class Web:
 
             # game duration
 
-            next_moves = []
+            player1_next_moves = []  # necessary since some actions require multiple moves
+            player2_next_moves = []
             actions = {"agent_0": 0, "agent_1": 0}
 
             outbound_message_queue = asyncio.Queue()
@@ -215,7 +217,13 @@ class Web:
             # concurrent loops
 
             async def process_inbound_messages():
-                nonlocal stop_event, game_running, game_settings, player1_action
+                nonlocal \
+                    stop_event, \
+                    game_running, \
+                    game_settings, \
+                    player1_action, \
+                    player1_next_moves, \
+                    observation
 
                 try:
                     while not stop_event.is_set():
@@ -231,7 +239,51 @@ class Web:
                                 game_running = True
                         elif message_type == "player_action":
                             action = data.get("data", {}).get("action", 0)
-                            player1_action = action
+
+                            if action == 18 and observation is not None:
+                                p1_character = CHARACTER_MAPPING[
+                                    observation["P1"]["character"]
+                                ]
+                                p1_super_art = game_settings["player1"]["superArt"]
+                                p1_side = observation["P1"]["side"]
+                                p1_direction = "left" if p1_side == 0 else "right"
+                                p1_super_count = observation["P1"]["super_count"][0]
+
+                                best_move_key = str(p1_super_art)
+                                max_bars_used = 1
+
+                                for move_key in SPECIAL_MOVES[p1_character].keys():
+                                    if isinstance(move_key, str):
+                                        bars_required = 1
+                                        if move_key.startswith("Max"):
+                                            for i in range(1, 4):
+                                                if f"(uses {i} bars)" in move_key:
+                                                    bars_required = i
+                                                    break
+
+                                            if (
+                                                p1_super_count >= bars_required
+                                                and bars_required > max_bars_used
+                                            ):
+                                                if move_key.startswith(
+                                                    f"Max-{p1_super_art}"
+                                                ):
+                                                    best_move_key = move_key
+                                                    max_bars_used = bars_required
+                                                elif not any(
+                                                    move_key.startswith(f"Max-{i}")
+                                                    for i in [1, 2, 3]
+                                                ):
+                                                    best_move_key = move_key
+                                                    max_bars_used = bars_required
+
+                                player1_next_moves.extend(
+                                    SPECIAL_MOVES[p1_character][best_move_key][
+                                        p1_direction
+                                    ]
+                                )
+                            else:
+                                player1_action = action
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in message processor")
@@ -263,9 +315,10 @@ class Web:
                     game_running, \
                     observation, \
                     info, \
+                    game_settings, \
                     current_direction, \
                     player2_action, \
-                    next_moves, \
+                    player2_next_moves, \
                     stop_event
 
                 try:
@@ -278,7 +331,7 @@ class Web:
 
                         # plan
 
-                        if len(next_moves) == 0:
+                        if len(player2_next_moves) == 0:
                             obs_p1 = observation["P1"]
                             obs_p2 = observation["P2"]
 
@@ -290,38 +343,46 @@ class Web:
                                 observation["frame"],
                             )
 
+                            player2_character = CHARACTER_MAPPING[obs_p2["character"]]
+                            player2_side = obs_p2["side"] if obs_p2 else 0
+
                             messages = create_messages(
                                 stage=observation["stage"][0],
-                                own_wins=obs_p1["wins"][0],
-                                opp_wins=obs_p2["wins"][0],
                                 timer=observation["timer"][0],
-                                own_character=CHARACTER_MAPPING[obs_p1["character"]],
-                                opp_character=CHARACTER_MAPPING[obs_p2["character"]],
-                                own_side=obs_p1["side"],
-                                opp_side=obs_p2["side"],
                                 boxes=boxes,
                                 class_ids=class_ids,
-                                own_stunned=obs_p1["stunned"],
-                                own_stun_bar=obs_p1["stun_bar"][0],
-                                opp_stunned=obs_p2["stunned"],
-                                opp_stun_bar=obs_p2["stun_bar"][0],
-                                own_health=obs_p1["health"][0],
-                                opp_health=obs_p2["health"][0],
-                                own_super_count=obs_p1["super_count"][0],
-                                own_super_bar=obs_p1["super_bar"][0],
-                                opp_super_count=obs_p2["super_count"][0],
-                                opp_super_bar=obs_p2["super_bar"][0],
+                                player1_character=CHARACTER_MAPPING[
+                                    obs_p1["character"]
+                                ],
+                                player1_super_art=game_settings["player1"]["superArt"],
+                                player1_wins=obs_p1["wins"][0],
+                                player1_side=obs_p1["side"],
+                                player1_stunned=obs_p1["stunned"],
+                                player1_stun_bar=obs_p1["stun_bar"][0],
+                                player1_health=obs_p1["health"][0],
+                                player1_super_count=obs_p1["super_count"][0],
+                                player1_super_bar=obs_p1["super_bar"][0],
+                                player2_character=player2_character,
+                                player2_super_art=game_settings["player2"]["superArt"],
+                                player2_wins=obs_p2["wins"][0],
+                                player2_side=player2_side,
+                                player2_stunned=obs_p2["stunned"],
+                                player2_stun_bar=obs_p2["stun_bar"][0],
+                                player2_health=obs_p2["health"][0],
+                                player2_super_count=obs_p2["super_count"][0],
+                                player2_super_bar=obs_p2["super_bar"][0],
                             )
                             moves = await self.llm.chat.remote.aio(
                                 messages,
-                                "left" if obs_p1["side"] == 0 else "right",
+                                player2_character,
+                                player2_side,
                             )
-                            next_moves.extend(moves)
+                            player2_next_moves.extend(moves)
 
                         # act
 
-                        if len(next_moves) > 0:
-                            player2_action = next_moves.pop(0)
+                        if len(player2_next_moves) > 0:
+                            player2_action = player2_next_moves.pop(0)
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in robot background")
@@ -344,7 +405,8 @@ class Web:
                     current_direction, \
                     player1_action, \
                     player2_action, \
-                    next_moves, \
+                    player1_next_moves, \
+                    player2_next_moves, \
                     actions, \
                     outbound_message_queue
 
@@ -403,6 +465,9 @@ class Web:
                             else:
                                 await asyncio.sleep(0)
                             next_frame_time += frame_interval
+
+                            if len(player1_next_moves) > 0:
+                                player1_action = player1_next_moves.pop(0)
 
                             actions = {
                                 "agent_0": player1_action,
@@ -495,7 +560,8 @@ class Web:
                                 player1_action = 0
                                 player2_action = 0
 
-                                next_moves = []
+                                player1_next_moves = []
+                                player2_next_moves = []
                                 actions = {"agent_0": 0, "agent_1": 0}
 
                 except WebSocketDisconnect:

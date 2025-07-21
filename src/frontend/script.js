@@ -49,6 +49,8 @@ class StreetFighterGame {
     }
 
     getActionFromKeys() {
+        if (this.keyState['KeyP']) return this.actions.SUPER_ART;
+        
         const hasLP = this.keyState['KeyJ'];
         const hasMP = this.keyState['KeyK'];
         const hasHP = this.keyState['KeyL'];
@@ -174,7 +176,10 @@ class StreetFighterGame {
             
             LP_LK: 15,
             MP_MK: 16,
-            HP_HK: 17
+            HP_HK: 17,
+            
+            // super art
+            SUPER_ART: 18
         };
     
         // event listeners
