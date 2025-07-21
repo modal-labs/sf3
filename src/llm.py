@@ -4,11 +4,17 @@ from pathlib import Path
 import modal
 
 from .utils import (
+    BASE_META_INSTRUCTIONS,
     CHARACTER_MAPPING,
     CHARACTER_TO_ID,
-    META_INSTRUCTIONS_WITH_LOWER,
+    COMBOS,
+    HEALTH_MAX,
+    MAX_Y,
+    MIN_Y,
+    SPECIAL_MOVES,
+    STUN_BAR_MAX,
+    SUPER_BAR_MAX,
     X_SIZE,
-    Y_SIZE,
     create_messages,
     minutes,
     # region,
@@ -50,6 +56,57 @@ vllm_cache_vol = modal.Volume.from_name(
 )
 
 
+def create_random_messages():
+    import random
+
+    n_detected_characters = random.randint(1, 2)
+
+    player1_character = random.choice(list(CHARACTER_MAPPING.values()))
+    player2_character = random.choice(list(CHARACTER_MAPPING.values()))
+
+    side = random.randint(0, 1)
+
+    return (
+        create_messages(
+            stage=random.randint(1, 3),
+            timer=random.randint(0, 100),
+            boxes=[
+                [
+                    random.randint(0, X_SIZE // 2),
+                    random.randint(MIN_Y, MAX_Y // 2),
+                    random.randint(X_SIZE // 2, X_SIZE),
+                    random.randint(MAX_Y // 2, MAX_Y),
+                ]
+                for _ in range(n_detected_characters)
+            ],
+            class_ids=[
+                CHARACTER_TO_ID[player1_character],
+                CHARACTER_TO_ID[player2_character],
+            ][:n_detected_characters],
+            player1_character=player1_character,
+            player1_super_art=random.randint(1, 3),
+            player1_wins=random.randint(0, 2),
+            player1_side=side,
+            player1_stunned=random.random() < 0.1,
+            player1_stun_bar=random.randint(0, STUN_BAR_MAX),
+            player1_health=random.randint(0, HEALTH_MAX),
+            player1_super_count=random.randint(0, 2),
+            player1_super_bar=random.randint(0, SUPER_BAR_MAX),
+            player2_character=player2_character,
+            player2_super_art=random.randint(1, 3),
+            player2_wins=random.randint(0, 2),
+            player2_side=1 - side,
+            player2_stunned=random.random() < 0.1,
+            player2_stun_bar=random.randint(0, STUN_BAR_MAX),
+            player2_health=random.randint(0, HEALTH_MAX),
+            player2_super_count=random.randint(0, 2),
+            player2_super_bar=random.randint(0, SUPER_BAR_MAX),
+        ),
+        side,
+        player2_character,
+    )
+
+
 MAX_INPUTS = max_num_seqs = 128
 
 
@@ -68,8 +125,6 @@ MAX_INPUTS = max_num_seqs = 128
 class LLMServer:
     @modal.enter()
     async def enter(self):
-        import random
-
         from vllm import LLM, SamplingParams
         from vllm.sampling_params import GuidedDecodingParams
 
@@ -85,59 +140,41 @@ class LLMServer:
             disable_log_stats=True,  # reduce overhead
         )
 
+        choices = list(
+            set(
+                list(BASE_META_INSTRUCTIONS.keys())
+                + list(
+                    [
+                        combo
+                        for character in COMBOS.keys()
+                        for combo in COMBOS[character].keys()
+                    ]
+                )
+                + list(
+                    [
+                        special_move
+                        for character in SPECIAL_MOVES.keys()
+                        for special_move in SPECIAL_MOVES[character].keys()
+                    ]
+                )
+            )
+        )
+
         self.sampling_params = SamplingParams(
             temperature=0.7,
             top_p=0.8,
-            top_k=len(META_INSTRUCTIONS_WITH_LOWER),
+            top_k=20,
             min_p=0.0,
             max_tokens=8,  # roughly len("<longest meta instruction name>")
             presence_penalty=1.5,
             guided_decoding=GuidedDecodingParams(
-                choice=META_INSTRUCTIONS_WITH_LOWER.keys(),
+                choice=choices,
             ),  # https://huggingface.co/Qwen/Qwen3-0.6B#best-practices
         )
 
         # warm up model
 
-        side = random.randint(0, 1)
-        own_character = random.choice(list(CHARACTER_MAPPING.values()))
-        opp_character = random.choice(list(CHARACTER_MAPPING.values()))
-
-        n_detected_characters = random.randint(1, 2)
-
-        messages = create_messages(
-            stage=random.randint(1, 3),
-            own_wins=random.randint(0, 2),
-            opp_wins=random.randint(0, 2),
-            timer=random.randint(0, 100),
-            own_character=own_character,
-            opp_character=opp_character,
-            own_side=side,
-            opp_side=1 - side,
-            boxes=[
-                [
-                    random.randint(0, X_SIZE // 2),
-                    random.randint(0, Y_SIZE // 2),
-                    random.randint(X_SIZE // 2, X_SIZE),
-                    random.randint(Y_SIZE // 2, Y_SIZE),
-                ]
-                for _ in range(n_detected_characters)
-            ],
-            class_ids=[
-                CHARACTER_TO_ID[own_character],
-                CHARACTER_TO_ID[opp_character],
-            ][:n_detected_characters],
-            own_stunned=random.random() < 0.1,
-            own_stun_bar=random.randint(0, 120),
-            opp_stunned=random.random() < 0.1,
-            opp_stun_bar=random.randint(0, 120),
-            own_health=random.randint(0, 160),
-            opp_health=random.randint(0, 160),
-            own_super_count=random.randint(0, 2),
-            own_super_bar=random.randint(0, 120),
-            opp_super_count=random.randint(0, 2),
-            opp_super_bar=random.randint(0, 120),
-        )
+        messages, _, _ = create_random_messages()
 
         _ = self.llm.chat(
             [messages],
@@ -150,73 +187,47 @@ class LLMServer:
         pass
 
     @modal.method()
-    async def chat(self, messages: list[dict[str, str]], current_direction: str) -> int:
+    async def chat(
+        self, messages: list[dict[str, str]], character: str, side: int
+    ) -> int:
         outputs = self.llm.chat(
             [messages],
             self.sampling_params,
             chat_template=remote_chat_template_path,
         )
         text = outputs[0].outputs[0].text
+
+        current_direction = "left" if side == 0 else "right"
+
         try:
-            return [
-                button
-                for button in META_INSTRUCTIONS_WITH_LOWER[text][current_direction]
-            ]
-        except ValueError:
+            if text in BASE_META_INSTRUCTIONS:
+                return [
+                    button for button in BASE_META_INSTRUCTIONS[text][current_direction]
+                ]
+            elif text in COMBOS[character]:
+                return [button for button in COMBOS[character][text][current_direction]]
+            elif text in SPECIAL_MOVES[character]:
+                return [
+                    button
+                    for button in SPECIAL_MOVES[character][text][current_direction]
+                ]
+            else:
+                raise ValueError(f"Invalid move: {text}")
+        except Exception as e:
+            print(f"Error: {e}")
             return [0]
 
 
 @app.local_entrypoint()
 async def test(n_samples=100):
-    import random
-
     llm = LLMServer()
     llm.boot.remote()
 
     latencies = []
     for sample_idx in range(n_samples):
-        side = random.randint(0, 1)
-        own_character = random.choice(list(CHARACTER_MAPPING.values()))
-        opp_character = random.choice(list(CHARACTER_MAPPING.values()))
-
-        n_detected_characters = random.randint(1, 2)
-
-        messages = create_messages(
-            stage=random.randint(1, 3),
-            own_wins=random.randint(0, 2),
-            opp_wins=random.randint(0, 2),
-            timer=random.randint(0, 100),
-            own_character=own_character,
-            opp_character=opp_character,
-            own_side=side,
-            opp_side=1 - side,
-            boxes=[
-                [
-                    random.randint(0, X_SIZE // 2),
-                    random.randint(0, Y_SIZE // 2),
-                    random.randint(X_SIZE // 2, X_SIZE),
-                    random.randint(Y_SIZE // 2, Y_SIZE),
-                ]
-                for _ in range(n_detected_characters)
-            ],
-            class_ids=[
-                CHARACTER_TO_ID[own_character],
-                CHARACTER_TO_ID[opp_character],
-            ][:n_detected_characters],
-            own_stunned=random.random() < 0.1,
-            own_stun_bar=random.randint(0, 120),
-            opp_stunned=random.random() < 0.1,
-            opp_stun_bar=random.randint(0, 120),
-            own_health=random.randint(0, 160),
-            opp_health=random.randint(0, 160),
-            own_super_count=random.randint(0, 2),
-            own_super_bar=random.randint(0, 120),
-            opp_super_count=random.randint(0, 2),
-            opp_super_bar=random.randint(0, 120),
-        )
-
+        messages, side, character = create_random_messages()
         start_time = time.perf_counter()
-        moves = await llm.chat.remote.aio(messages, "left" if side == 0 else "right")
+        moves = await llm.chat.remote.aio(messages, character, side)
         latencies.append((time.perf_counter() - start_time) * 1000)
 
         print(f"Sample {sample_idx}: {moves}")
