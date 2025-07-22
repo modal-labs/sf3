@@ -106,7 +106,87 @@
 
         <main class="flex-1 flex items-center justify-center relative">
             <div id="settings-screen" class="text-center py-10 max-w-2xl">
-                <h2 class="text-3xl text-sf-green text-glow mb-6">Game Settings</h2>
+
+                <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
+                    <h3 class="text-sf-green text-xl mb-4">Controls</h3>
+                    <div class="flex flex-col gap-6">
+                        <div class="flex justify-center items-center gap-2">
+                            <h4 class="text-sf-gold text-lg mb-0 text-center">Movement:</h4>
+                            <span
+                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">WASD
+                                / Arrow Keys</span>
+                        </div>
+
+                        <div class="border-t border-sf-green/30 pt-6">
+                            <div class="flex flex-col md:flex-row gap-8 justify-center items-center">
+                                <div class="w-full md:flex-1 mx-auto md:mx-0">
+                                    <h4 class="text-sf-gold text-lg mb-3 text-center">Punches</h4>
+                                    <div class="space-y-3">
+                                        <div class="flex justify-between md:justify-between items-center">
+                                            <strong class="text-gray-300">Light:</strong>
+                                            <span
+                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">J</span>
+                                        </div>
+                                        <div class="flex justify-between md:justify-between items-center">
+                                            <strong class="text-gray-300">Medium:</strong>
+                                            <span
+                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">K</span>
+                                        </div>
+                                        <div class="flex justify-between md:justify-between items-center">
+                                            <strong class="text-gray-300">Heavy:</strong>
+                                            <span
+                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">L</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="hidden md:block w-px bg-sf-green/30 self-stretch"></div>
+                                <div class="w-full md:flex-1 mx-auto md:mx-0">
+                                    <h4 class="text-sf-gold text-lg mb-3 text-center">Kicks</h4>
+                                    <div class="space-y-3">
+                                        <div class="flex justify-between md:justify-between items-center">
+                                            <strong class="text-gray-300">Light:</strong>
+                                            <span
+                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">U</span>
+                                        </div>
+                                        <div class="flex justify-between md:justify-between items-center">
+                                            <strong class="text-gray-300">Medium:</strong>
+                                            <span
+                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">I</span>
+                                        </div>
+                                        <div class="flex justify-between md:justify-between items-center">
+                                            <strong class="text-gray-300">Heavy:</strong>
+                                            <span
+                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">O</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-6 pt-4 border-t border-sf-green/30">
+                                <h4 class="text-sf-gold text-lg mb-3 text-center">Special Combinations</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
+                                    <div class="flex items-center justify-between md:justify-start md:gap-2">
+                                        <strong class="text-gray-300">LP + LK:</strong>
+                                        <span
+                                            class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">J
+                                            + U</span>
+                                    </div>
+                                    <div class="flex items-center justify-between md:justify-start md:gap-2">
+                                        <strong class="text-gray-300">MP + MK:</strong>
+                                        <span
+                                            class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">K
+                                            + I</span>
+                                    </div>
+                                    <div class="flex items-center justify-between md:justify-start md:gap-2">
+                                        <strong class="text-gray-300">HP + HK:</strong>
+                                        <span
+                                            class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">L
+                                            + O</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
                     <h3 class="text-sf-green text-xl mb-4">Player 1 Settings</h3>
@@ -115,11 +195,11 @@
                             <label class="block text-sf-gold text-lg mb-3">Character</label>
                             <select id="character-select"
                                 class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="Akuma">Akuma</option>
                                 <option value="Alex">Alex</option>
                                 <option value="Chun-Li">Chun-Li</option>
                                 <option value="Dudley">Dudley</option>
                                 <option value="Elena">Elena</option>
+                                <option value="Gouki">Gouki</option>
                                 <option value="Hugo">Hugo</option>
                                 <option value="Ibuki">Ibuki</option>
                                 <option value="Ken">Ken</option>
@@ -160,6 +240,26 @@
                             </select>
                         </div>
                     </div>
+                    <div id="combos-section">
+                        <h3 class="text-sf-gold text-lg mb-4">Combos</h3>
+                        <div id="combos-loading" class="flex justify-center py-4">
+                            <div
+                                class="w-8 h-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
+                            </div>
+                        </div>
+                        <div id="combos-list" class="space-y-3">
+                        </div>
+                    </div>
+                    <div id="super-arts-section" class="mt-4 pt-4 border-t border-sf-green/30">
+                        <h3 class="text-sf-gold text-lg mb-4">Super Arts</h3>
+                        <div id="super-arts-loading" class="flex justify-center py-4">
+                            <div
+                                class="w-8 h-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
+                            </div>
+                        </div>
+                        <div id="super-arts-list" class="space-y-3">
+                        </div>
+                    </div>
                 </div>
 
                 <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
@@ -169,11 +269,11 @@
                             <label class="block text-sf-gold text-lg mb-3">Character</label>
                             <select id="character-select-p2"
                                 class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="Akuma">Akuma</option>
                                 <option value="Alex">Alex</option>
                                 <option value="Chun-Li">Chun-Li</option>
                                 <option value="Dudley">Dudley</option>
                                 <option value="Elena">Elena</option>
+                                <option value="Gouki">Gouki</option>
                                 <option value="Hugo">Hugo</option>
                                 <option value="Ibuki">Ibuki</option>
                                 <option value="Ken">Ken</option>
@@ -214,11 +314,7 @@
                             </select>
                         </div>
                     </div>
-                </div>
-
-                <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
-                    <h3 class="text-sf-green text-xl mb-4">Difficulty</h3>
-                    <div class="mb-4">
+                    <div class="mb-4 pt-4 border-t border-sf-green/30">
                         <label class="block text-sf-gold text-lg mb-3">Game Difficulty</label>
                         <div class="flex items-center space-x-4">
                             <span class="text-gray-300">Very Easy</span>
@@ -229,90 +325,6 @@
                         <div class="text-center mt-2">
                             <span id="difficulty-label" class="text-sf-gold text-lg font-bold">Very Easy</span>
                         </div>
-                    </div>
-                </div>
-
-                <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
-                    <h3 class="text-sf-green text-xl mb-4">Controls</h3>
-                    <div class="flex justify-center items-center gap-4 mb-4">
-                        <strong class="text-sf-gold text-lg">Movement:</strong>
-                        <span class="text-gray-300 font-mono">WASD / Arrow Keys</span>
-                    </div>
-                    <div class="flex flex-col md:flex-row gap-8 justify-center">
-                        <div class="flex-1 max-w-xs">
-                            <h4 class="text-sf-gold text-lg mb-3 text-center">Punches</h4>
-                            <div class="space-y-3">
-                                <div class="flex justify-between items-center">
-                                    <strong class="text-gray-300">Light:</strong>
-                                    <span
-                                        class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">J</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <strong class="text-gray-300">Medium:</strong>
-                                    <span
-                                        class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">K</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <strong class="text-gray-300">Heavy:</strong>
-                                    <span
-                                        class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">L</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="hidden md:block w-px bg-sf-green/30"></div>
-                        <div class="flex-1 max-w-xs">
-                            <h4 class="text-sf-gold text-lg mb-3 text-center">Kicks</h4>
-                            <div class="space-y-3">
-                                <div class="flex justify-between items-center">
-                                    <strong class="text-gray-300">Light:</strong>
-                                    <span
-                                        class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">U</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <strong class="text-gray-300">Medium:</strong>
-                                    <span
-                                        class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">I</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <strong class="text-gray-300">Heavy:</strong>
-                                    <span
-                                        class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">O</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mt-6 pt-4 border-t border-sf-green/30">
-                        <h4 class="text-sf-gold text-lg mb-3 text-center">Special Combinations</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
-                            <div class="flex items-center justify-between md:justify-start md:gap-2">
-                                <strong class="text-gray-300">LP+LK:</strong>
-                                <span
-                                    class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">J
-                                    + U</span>
-                            </div>
-                            <div class="flex items-center justify-between md:justify-start md:gap-2">
-                                <strong class="text-gray-300">MP+MK:</strong>
-                                <span
-                                    class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">K
-                                    + I</span>
-                            </div>
-                            <div class="flex items-center justify-between md:justify-start md:gap-2">
-                                <strong class="text-gray-300">HP+HK:</strong>
-                                <span
-                                    class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">L
-                                    + O</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mt-4 pt-4 border-t border-sf-green/30">
-                        <div class="flex items-center justify-center gap-4">
-                            <strong class="text-sf-gold text-lg">Special move:</strong>
-                            <span
-                                class="text-gray-300 font-mono bg-sf-dark-2 px-4 py-2 rounded border-2 border-sf-gold/50">P</span>
-
-                        </div>
-                        <p class="text-gray-400 text-center mt-2">Executes your character's selected Super Art
-                            move</p>
                     </div>
                 </div>
 

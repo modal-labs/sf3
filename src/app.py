@@ -9,6 +9,7 @@ from .llm import LLMServer
 from .llm import app as llm_app
 from .utils import (
     CHARACTER_MAPPING,
+    COMBOS,
     SPECIAL_MOVES,
     create_messages,
     minutes,
@@ -240,48 +241,47 @@ class Web:
                         elif message_type == "player_action":
                             action = data.get("data", {}).get("action", 0)
 
+                            # super art
+
                             if action == 18 and observation is not None:
+                                super_art_name = data.get("data", {}).get(
+                                    "super_art", "unknown"
+                                )
                                 p1_character = CHARACTER_MAPPING[
                                     observation["P1"]["character"]
                                 ]
-                                p1_super_art = game_settings["player1"]["superArt"]
                                 p1_side = observation["P1"]["side"]
                                 p1_direction = "left" if p1_side == 0 else "right"
-                                p1_super_count = observation["P1"]["super_count"][0]
 
-                                best_move_key = str(p1_super_art)
-                                max_bars_used = 1
+                                if (
+                                    p1_character in SPECIAL_MOVES
+                                    and super_art_name in SPECIAL_MOVES[p1_character]
+                                ):
+                                    player1_next_moves.extend(
+                                        SPECIAL_MOVES[p1_character][super_art_name][
+                                            p1_direction
+                                        ]
+                                    )
 
-                                for move_key in SPECIAL_MOVES[p1_character].keys():
-                                    if isinstance(move_key, str):
-                                        bars_required = 1
-                                        if move_key.startswith("Max"):
-                                            for i in range(1, 4):
-                                                if f"(uses {i} bars)" in move_key:
-                                                    bars_required = i
-                                                    break
+                            # combo
 
-                                            if (
-                                                p1_super_count >= bars_required
-                                                and bars_required > max_bars_used
-                                            ):
-                                                if move_key.startswith(
-                                                    f"Max-{p1_super_art}"
-                                                ):
-                                                    best_move_key = move_key
-                                                    max_bars_used = bars_required
-                                                elif not any(
-                                                    move_key.startswith(f"Max-{i}")
-                                                    for i in [1, 2, 3]
-                                                ):
-                                                    best_move_key = move_key
-                                                    max_bars_used = bars_required
-
-                                player1_next_moves.extend(
-                                    SPECIAL_MOVES[p1_character][best_move_key][
-                                        p1_direction
-                                    ]
+                            elif action == 19 and observation is not None:
+                                combo_name = data.get("data", {}).get(
+                                    "combo", "unknown"
                                 )
+                                p1_character = CHARACTER_MAPPING[
+                                    observation["P1"]["character"]
+                                ]
+                                p1_side = observation["P1"]["side"]
+                                p1_direction = "left" if p1_side == 0 else "right"
+
+                                if (
+                                    p1_character in COMBOS
+                                    and combo_name in COMBOS[p1_character]
+                                ):
+                                    player1_next_moves.extend(
+                                        COMBOS[p1_character][combo_name][p1_direction]
+                                    )
                             else:
                                 player1_action = action
 
@@ -636,6 +636,10 @@ class Web:
         @web_app.get("/logo.svg")
         async def logo():
             return FileResponse(f"{remote_frontend_dir}/logo.svg")
+
+        @web_app.get("/api/extra-moves")
+        async def get_extra_moves():
+            return make_json_safe({"combos": COMBOS, "special_moves": SPECIAL_MOVES})
 
         web_app.mount("/", StaticFiles(directory=remote_frontend_dir), name="static")
 
