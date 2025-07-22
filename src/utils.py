@@ -53,96 +53,6 @@ MOVES = {
 }
 
 COMBOS = {
-    "Akuma": {
-        "Hadouken": {
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-        },
-        "Shakunetsu-Hadouken": {
-            "left": [
-                MOVES["Right"],
-                MOVES["Down+Right"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Left"],
-                MOVES["Down+Left"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-        },
-        "Go Shoryuken": {
-            "left": [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["High Punch"],
-            ],
-            "right": [
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["High Punch"],
-            ],
-        },
-        "Tatsumaki Zankuukyaku": {
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ],
-        },
-        "Ashura Senku": {
-            "left": [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Low Punch+Low Kick"],
-            ],
-            "right": [
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Low Punch+Low Kick"],
-            ],
-        },
-        "Hyakkishu": {
-            "left": [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Low Kick"],
-            ],
-            "right": [
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Low Kick"],
-            ],
-        },
-    },
     "Alex": {
         "Power Bomb": {
             "left": [
@@ -469,6 +379,96 @@ COMBOS = {
                 MOVES["Left"],
                 MOVES["Down"],
                 MOVES["Down+Left"],
+                MOVES["Low Kick"],
+            ],
+        },
+    },
+    "Gouki": {
+        "Hadouken": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+        },
+        "Shakunetsu-Hadouken": {
+            "left": [
+                MOVES["Right"],
+                MOVES["Down+Right"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Left"],
+                MOVES["Down+Left"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+        },
+        "Go Shoryuken": {
+            "left": [
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["High Punch"],
+            ],
+            "right": [
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["High Punch"],
+            ],
+        },
+        "Tatsumaki Zankuukyaku": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Low Kick"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Low Kick"],
+            ],
+        },
+        "Ashura Senku": {
+            "left": [
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Low Punch+Low Kick"],
+            ],
+            "right": [
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Low Punch+Low Kick"],
+            ],
+        },
+        "Hyakkishu": {
+            "left": [
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Low Kick"],
+            ],
+            "right": [
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
                 MOVES["Low Kick"],
             ],
         },
@@ -1530,8 +1530,262 @@ COMBOS = {
 }
 
 SPECIAL_MOVES = {
-    "Akuma": {
-        "1": {  # Messatsu Gou Hadou
+    "Alex": {
+        "1 Hyper Bomb": {
+            "left": [
+                MOVES["Right"],
+                MOVES["Down+Right"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Up+Left"],
+                MOVES["Up"],
+                MOVES["Up+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Left"],
+                MOVES["Down+Left"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Up+Right"],
+                MOVES["Up"],
+                MOVES["Up+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+        },
+        "2 Boomerang Raid": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Low Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Low Punch"],
+            ],
+        },
+        "3 Stun Gun Headbutt": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+        },
+    },
+    "Chun-Li": {
+        "1 Kikou Shou": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+        },
+        "2 Houyoku Sen": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Kick"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Kick"],
+            ],
+        },
+        "3 Tensei Ranka": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Low Kick"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Low Kick"],
+            ],
+        },
+    },
+    "Dudley": {
+        "1 Rocket Upper": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+        },
+        "2 Rolling Thunder": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+        },
+        "3 Corkscrew Blow": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["High Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["High Punch"],
+            ],
+        },
+    },
+    "Elena": {
+        "1 Spinning Beat": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Low Kick"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Low Kick"],
+            ],
+        },
+        "2 Brave Dance": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Low Kick"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Low Kick"],
+            ],
+        },
+        "3 Healing": {
+            "left": [
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Down"],
+                MOVES["Down+Left"],
+                MOVES["Left"],
+                MOVES["Medium Punch"],
+            ],
+            "right": [
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Down"],
+                MOVES["Down+Right"],
+                MOVES["Right"],
+                MOVES["Medium Punch"],
+            ],
+        },
+    },
+    "Gouki": {
+        "1 Messatsu Gou Hadou": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Right"],
@@ -1551,7 +1805,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Messatsu Gou Shoryu
+        "2 Messatsu Gou Shoryu": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Right"],
@@ -1571,7 +1825,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Messatsu-Gourasen
+        "3 Messatsu-Gourasen": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Right"],
@@ -1622,262 +1876,8 @@ SPECIAL_MOVES = {
             ],
         },
     },
-    "Alex": {
-        "1": {  # Hyper Bomb
-            "left": [
-                MOVES["Right"],
-                MOVES["Down+Right"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Up+Left"],
-                MOVES["Up"],
-                MOVES["Up+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Left"],
-                MOVES["Down+Left"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Up+Right"],
-                MOVES["Up"],
-                MOVES["Up+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-        },
-        "2": {  # Boomerang Raid
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Low Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Low Punch"],
-            ],
-        },
-        "3": {  # Stun Gun Headbutt
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-        },
-    },
-    "Chun-Li": {
-        "1": {  # Kikou Shou
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-        },
-        "2": {  # Houyoku Sen
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Kick"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Kick"],
-            ],
-        },
-        "3": {  # Tensei Ranka
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ],
-        },
-    },
-    "Dudley": {
-        "1": {  # Rocket Upper
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-        },
-        "2": {  # Rolling Thunder
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-        },
-        "3": {  # Corkscrew Blow
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["High Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["High Punch"],
-            ],
-        },
-    },
-    "Elena": {
-        "1": {  # Spinning Beat
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ],
-        },
-        "2": {  # Brave Dance
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ],
-        },
-        "3": {  # Healing
-            "left": [
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Down+Left"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ],
-            "right": [
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Down+Right"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ],
-        },
-    },
     "Hugo": {
-        "1": {  # Gigas Breaker
+        "1 Gigas Breaker": {
             "left": [
                 MOVES["Right"],
                 MOVES["Down+Right"],
@@ -1919,7 +1919,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Megaton Press
+        "2 Megaton Press": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -1939,7 +1939,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Kick"],
             ],
         },
-        "3": {  # Hammer Frenzy
+        "3 Hammer Frenzy": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -1961,7 +1961,7 @@ SPECIAL_MOVES = {
         },
     },
     "Ibuki": {
-        "1": {  # Kasumi Suzaku
+        "1 Kasumi Suzaku": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -1981,7 +1981,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Yoroi Dooshi
+        "2 Yoroi Dooshi": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2001,7 +2001,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Yami Shigure
+        "3 Yami Shigure": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2023,7 +2023,7 @@ SPECIAL_MOVES = {
         },
     },
     "Ken": {
-        "1": {  # Shoryureppa
+        "1 Shoryureppa": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2043,7 +2043,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Shinryuken
+        "2 Shinryuken": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2063,7 +2063,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Kick"],
             ],
         },
-        "3": {  # Shippu Jinraikyaku
+        "3 Shippu Jinraikyaku": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2085,7 +2085,7 @@ SPECIAL_MOVES = {
         },
     },
     "Makoto": {
-        "1": {  # Seichusen Godanzuki
+        "1 Seichusen Godanzuki": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2105,7 +2105,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Punch"],
             ],
         },
-        "2": {  # Abare Tosanami
+        "2 Abare Tosanami": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2125,7 +2125,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Kick"],
             ],
         },
-        "3": {  # Tanden Renki
+        "3 Tanden Renki": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2147,7 +2147,7 @@ SPECIAL_MOVES = {
         },
     },
     "Necro": {
-        "1": {  # Magnetic Storm
+        "1 Magnetic Storm": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2167,7 +2167,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Slam Dance
+        "2 Slam Dance": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2187,7 +2187,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Electric Snake
+        "3 Electric Snake": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2209,7 +2209,7 @@ SPECIAL_MOVES = {
         },
     },
     "Oro": {
-        "1": {  # Kishin Riki
+        "1 Kishin Riki": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2249,7 +2249,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Punch+Low Kick"],
             ],
         },
-        "2": {  # Yagyou Dama
+        "2 Yagyou Dama": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2289,7 +2289,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Punch+Low Kick"],
             ],
         },
-        "3": {  # Tengu Stone
+        "3 Tengu Stone": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2331,7 +2331,7 @@ SPECIAL_MOVES = {
         },
     },
     "Q": {
-        "1": {  # Critical Combo Attack
+        "1 Critical Combo Attack": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2351,7 +2351,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Deadly Double Combination
+        "2 Deadly Double Combination": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2371,7 +2371,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Total Destruction
+        "3 Total Destruction": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2393,7 +2393,7 @@ SPECIAL_MOVES = {
         },
     },
     "Remy": {
-        "1": {  # Light of Justice
+        "1 Light of Justice": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2413,7 +2413,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Supreme Rising Rage Flash
+        "2 Supreme Rising Rage Flash": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2433,7 +2433,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Kick"],
             ],
         },
-        "3": {  # Blue Nocturne
+        "3 Blue Nocturne": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2455,7 +2455,7 @@ SPECIAL_MOVES = {
         },
     },
     "Ryu": {
-        "1": {  # Shinkuu-Hadouken
+        "1 Shinkuu-Hadouken": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2475,7 +2475,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Shin Shoryuken
+        "2 Shin Shoryuken": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2495,7 +2495,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Denjin Hadouken
+        "3 Denjin Hadouken": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2517,7 +2517,7 @@ SPECIAL_MOVES = {
         },
     },
     "Sean": {
-        "1": {  # Hadou Burst
+        "1 Hadou Burst": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2537,7 +2537,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Shoryuu Cannon
+        "2 Shoryuu Cannon": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2557,7 +2557,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Hyper Tornado
+        "3 Hyper Tornado": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2579,7 +2579,7 @@ SPECIAL_MOVES = {
         },
     },
     "Twelve": {
-        "1": {  # X.N.D.L
+        "1 X.N.D.L": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2599,7 +2599,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # X.F.L.A.T
+        "2 X.F.L.A.T": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2619,7 +2619,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Kick"],
             ],
         },
-        "3": {  # X.C.O.P.Y
+        "3 X.C.O.P.Y": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2641,7 +2641,7 @@ SPECIAL_MOVES = {
         },
     },
     "Urien": {
-        "1": {  # Tyrant Slaughter
+        "1 Tyrant Slaughter": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2661,7 +2661,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Temporal Thunder
+        "2 Temporal Thunder": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2681,7 +2681,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Aegis Reflector
+        "3 Aegis Reflector": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2703,7 +2703,7 @@ SPECIAL_MOVES = {
         },
     },
     "Yang": {
-        "1": {  # Raishin Mahha Ken
+        "1 Raishin Mahha Ken": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2723,7 +2723,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Tenshin Senkyutai
+        "2 Tenshin Senkyutai": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2743,7 +2743,7 @@ SPECIAL_MOVES = {
                 MOVES["Low Kick"],
             ],
         },
-        "3": {  # Sei'ei Enbu
+        "3 Sei'ei Enbu": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2765,7 +2765,7 @@ SPECIAL_MOVES = {
         },
     },
     "Yun": {
-        "1": {  # You-hou
+        "1 You-hou": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2785,7 +2785,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "2": {  # Sourai Rengeki
+        "2 Sourai Rengeki": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2805,7 +2805,7 @@ SPECIAL_MOVES = {
                 MOVES["Medium Punch"],
             ],
         },
-        "3": {  # Genei-jin
+        "3 Genei-jin": {
             "left": [
                 MOVES["Down"],
                 MOVES["Down+Left"],
@@ -2882,26 +2882,22 @@ def get_meta_instructions_for_character(
 
     if super_count > 0:
         for special_move in SPECIAL_MOVES[character].keys():
-            if isinstance(special_move, int):
-                if special_move == super_art:
-                    instructions.append(str(special_move))
-            elif isinstance(special_move, str):
-                if special_move.startswith("Max"):
-                    bars_required = 1
-                    for i in range(1, 4):
-                        if f"(uses {i} bars)" in special_move:
-                            bars_required = i
-                            break
+            if special_move.startswith(f"{super_art}"):
+                instructions.append(str(special_move))
 
-                    if super_count >= bars_required:
-                        # "Max-{number}" (e.g., Oro's moves)
-                        if special_move.startswith(f"Max-{super_art}"):
-                            instructions.append(special_move)
-                        # Generic "Max" moves (e.g., Akuma's moves)
-                        elif not any(
-                            special_move.startswith(f"Max-{i}") for i in [1, 2, 3]
-                        ):
-                            instructions.append(special_move)
+            bars_required = 1
+            for i in range(1, 4):
+                if f"(uses {i} bars)" in special_move:
+                    bars_required = i
+                    break
+
+            if super_count >= bars_required:
+                # "Max-{number}" (e.g., Oro's moves)
+                if special_move.startswith(f"Max-{super_art}"):
+                    instructions.append(special_move)
+                # Generic "Max" moves (e.g., Gouki's moves)
+                elif not any(special_move.startswith(f"Max-{i}") for i in [1, 2, 3]):
+                    instructions.append(special_move)
 
     return instructions
 
@@ -3054,11 +3050,11 @@ def create_messages(
 INDEX_TO_MOVE = {v: k for k, v in MOVES.items()}
 
 CHARACTER_MAPPING = {
-    0: "Akuma",
     1: "Alex",
     2: "Chun-Li",
     3: "Dudley",
     4: "Elena",
+    0: "Gouki",
     5: "Hugo",
     6: "Ibuki",
     7: "Ken",
