@@ -211,6 +211,14 @@ class Web:
                 self.player1_last_move = ""
                 self.player2_last_move = ""
 
+                # transition state
+
+                self.in_transition = False
+                self.transition_start_time = None
+                self.transition_duration = 3.0  # seconds, matches frontend
+                self.pending_game_end = False
+                self.game_end_data = None
+
                 # game duration state
 
                 self.player1_next_moves = []
@@ -305,6 +313,10 @@ class Web:
                 self.player2_next_moves = []
                 self.player1_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
+                self.in_transition = False
+                self.transition_start_time = None
+                self.pending_game_end = False
+                self.game_end_data = None
 
             async def cleanup(self):
                 print("Cleaning up resources...")
@@ -371,10 +383,13 @@ class Web:
                     while not session.stop_event.is_set():
                         await asyncio.sleep(0.001)
 
-                        if not session.game_running:
+                        if not session.game_running or session.observation is None:
                             continue
 
-                        if session.observation is None:
+                        if (
+                            "stage" not in session.observation
+                            or session.observation["stage"] is None
+                        ):  # in case env was just reset
                             continue
 
                         obs_p1 = session.observation["P1"]
@@ -501,53 +516,106 @@ class Web:
                                 await asyncio.sleep(0)
                             next_frame_time += frame_interval
 
-                            session.actions = {
-                                "agent_0": session.player1_next_moves.pop(0)
-                                if session.player1_next_moves
-                                else session.player1_current_action,
-                                "agent_1": session.player2_next_moves.pop(0)
-                                if session.player2_next_moves
-                                else 0,
-                            }
-
-                            (
-                                session.observation,
-                                reward,
-                                terminated,
-                                truncated,
-                                session.info,
-                            ) = session.env.step(session.actions)
-
-                            frame = session.observation.get("frame")
-                            if frame is not None:
-                                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                                _, buffer = cv2.imencode(
-                                    ".jpg",
-                                    frame,
-                                    [cv2.IMWRITE_JPEG_QUALITY, 85],
+                            if session.in_transition:
+                                elapsed = (
+                                    asyncio.get_event_loop().time()
+                                    - session.transition_start_time
                                 )
-                                await websocket.send_bytes(buffer.tobytes())
+                                if elapsed >= session.transition_duration:
+                                    session.in_transition = False
+                                    session.transition_start_time = None
+                            else:
+                                session.actions = {
+                                    "agent_0": session.player1_next_moves.pop(0)
+                                    if session.player1_next_moves
+                                    else session.player1_current_action,
+                                    "agent_1": session.player2_next_moves.pop(0)
+                                    if session.player2_next_moves
+                                    else 0,
+                                }
 
-                            if terminated or truncated:
-                                p1_wins = session.observation["P1"]["wins"][0]
-                                p2_wins = session.observation["P2"]["wins"][0]
-                                print(f"Game finished - P1: {p1_wins}, P2: {p2_wins}")
+                                (
+                                    session.observation,
+                                    reward,
+                                    terminated,
+                                    truncated,
+                                    session.info,
+                                ) = session.env.step(session.actions)
 
-                                if p1_wins > p2_wins:
-                                    session.game_state["scores"][0] += 1
-                                    winner = "Player 1 (You)"
-                                elif p2_wins > p1_wins:
-                                    session.game_state["scores"][1] += 1
-                                    winner = "Player 2 (AI)"
-                                else:
-                                    winner = "Draw"
+                                if session.info.get("game_done", False):
+                                    session.in_transition = True
+                                    session.transition_start_time = (
+                                        asyncio.get_event_loop().time()
+                                    )
+                                    session.pending_game_end = True
+                                    session.game_end_data = {
+                                        "terminated": terminated,
+                                        "truncated": truncated,
+                                    }
+                                    await session.outbound_message_queue.put(
+                                        {
+                                            "type": "transition",
+                                            "data": {"transition_type": "game"},
+                                        }
+                                    )
+                                elif session.info.get("round_done", False):
+                                    session.in_transition = True
+                                    session.transition_start_time = (
+                                        asyncio.get_event_loop().time()
+                                    )
+                                    await session.outbound_message_queue.put(
+                                        {
+                                            "type": "transition",
+                                            "data": {"transition_type": "round"},
+                                        }
+                                    )
 
-                                session.game_state["status"] = "finished"
-                                session.game_state["winner"] = winner
-                                await session.send_game_state()
+                            if not session.in_transition:
+                                frame = session.observation.get("frame")
+                                if frame is not None:
+                                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                                    _, buffer = cv2.imencode(
+                                        ".jpg",
+                                        frame,
+                                        [cv2.IMWRITE_JPEG_QUALITY, 85],
+                                    )
+                                    await websocket.send_bytes(buffer.tobytes())
 
-                                await session.prepare_for_next_game()
-                                await session.send_game_state()
+                            if not session.in_transition and (
+                                (terminated or truncated) or session.pending_game_end
+                            ):
+                                if session.pending_game_end:
+                                    terminated = session.game_end_data.get(
+                                        "terminated", False
+                                    )
+                                    truncated = session.game_end_data.get(
+                                        "truncated", False
+                                    )
+                                    session.pending_game_end = False
+                                    session.game_end_data = None
+
+                                if terminated or truncated:
+                                    p1_wins = session.observation["P1"]["wins"][0]
+                                    p2_wins = session.observation["P2"]["wins"][0]
+                                    print(
+                                        f"Game finished - P1: {p1_wins}, P2: {p2_wins}"
+                                    )
+
+                                    if p1_wins > p2_wins:
+                                        session.game_state["scores"][0] += 1
+                                        winner = "You"
+                                    elif p2_wins > p1_wins:
+                                        session.game_state["scores"][1] += 1
+                                        winner = "LLM"
+                                    else:
+                                        winner = "Draw"
+
+                                    session.game_state["status"] = "finished"
+                                    session.game_state["winner"] = winner
+                                    await session.send_game_state()
+
+                                    await session.prepare_for_next_game()
+                                    await session.send_game_state()
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in game loop")

@@ -30,7 +30,7 @@
                 @apply px-3 py-1 bg-sf-dark border border-sf-green rounded-lg;
             }
             .loading-placeholder {
-                @apply bg-gradient-to-r from-sf-dark/50 via-sf-beige-dark/20 to-sf-dark/50 bg-[length:200%_100%] animate-skeleton-loading;
+                @apply bg-gradient-to-r from-sf-dark via-sf-beige to-sf-dark bg-[length:200%_100%] animate-skeleton-loading;
             }
         }
     </style>
@@ -117,14 +117,14 @@
                     SELECT</h1>
                 <div class="flex justify-center items-center gap-8">
                     <div id="p1-selection-box" class="flex flex-col justify-center items-center gap-4">
-                        <h2 class="text-sf-red text-2xl text-glow">PLAYER 1</h2>
+                        <h2 class="text-sf-red text-2xl text-glow">YOU</h2>
                         <div id="p1-selected-portrait" class="portrait-box border-sf-red">
                             <img src="" alt="" class="hidden w-full h-full object-cover rounded-lg">
                         </div>
                         <p id="p1-selected-name" class="text-sf-gold text-xl font-bold">-</p>
                     </div>
                     <div id="p2-selection-box" class="flex flex-col justify-center items-center gap-4">
-                        <h2 class="text-sf-blue text-2xl text-glow">PLAYER 2</h2>
+                        <h2 class="text-sf-blue text-2xl text-glow">LLM</h2>
                         <div id="p2-selected-portrait" class="portrait-box border-transparent">
                             <img src="" alt="" class="hidden w-full h-full object-cover rounded-lg">
                         </div>
@@ -197,7 +197,7 @@
                 </div>
             </div>
             <div class="panel-sm">
-                <h2 class="text-sf-green text-2xl text-glow">Player 1 Settings</h2>
+                <h2 class="text-sf-green text-2xl text-glow">Your Settings</h2>
                 <div id="combos-section" class="flex flex-col justify-center items-center gap-8">
                     <h3 class="text-sf-gold text-lg">Combos</h3>
                     <div id="combos-loading"
@@ -234,7 +234,7 @@
                 </div>
             </div>
             <div class="panel-sm">
-                <h2 class="text-sf-green text-2xl text-glow">Player 2 Settings</h2>
+                <h2 class="text-sf-green text-2xl text-glow">LLM Settings</h2>
                 <div class="flex justify-between md:justify-center items-center gap-8">
                     <label class="text-sf-gold text-lg">Super Art</label>
                     <div class="relative w-16">
@@ -294,20 +294,23 @@
                 to
                 server...</h2>
         </div>
-        <div id="game-display" class="hidden relative w-full h-full">
+        <div id="game-display" class="hidden w-full h-full">
             <div class="flex items-center justify-center">
                 <canvas id="game-canvas" width="768" height="448"
-                    class="bg-sf-darker border-2 border-sf-green rounded-lg"></canvas>
-                <div id="canvas-loading-overlay" class="absolute inset-0 flex items-center justify-center">
+                    class="bg-sf-darker border-2 border-sf-green rounded-lg hidden"></canvas>
+                <div id="canvas-loading-overlay" class="flex flex-col items-center justify-center gap-8">
                     <div class="size-16 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
                     </div>
+                    <h2 id="canvas-loading-status" class="text-2xl text-sf-green text-glow animate-pulse">
+                        Loading game...
+                    </h2>
                 </div>
             </div>
         </div>
         <div id="win-screen"
             class="hidden p-12 max-w-2xl bg-sf-darker border-2 border-sf-green rounded-lg flex flex-col gap-8">
             <h1 class="text-4xl font-bold text-sf-green text-glow">Game Over!</h1>
-            <p id="winner-text" class="text-2xl text-sf-gold mb-12">Player 1 wins!</p>
+            <p id="winner-text" class="text-2xl text-sf-gold mb-12">You win!</p>
             <button id="play-again-btn" class="btn-primary text-glow">
                 PLAY AGAIN
             </button>
