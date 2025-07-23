@@ -112,6 +112,9 @@ def prepare_dataset():
 
     # scrape images
 
+    original_image_dir = volume_path / "original_images"
+    original_image_dir.mkdir(parents=True, exist_ok=True)
+
     character_sprites = []
     base_url = "https://www.zytor.com/~johannax/jigsaw/sf/images"
 
@@ -120,24 +123,38 @@ def prepare_dataset():
         CHARACTER_MAPPING.items(), desc="Characters"
     ):
         url_name = character_name.lower().replace("-", "")
-        response = requests.get(f"{base_url}/{url_name}")
-        soup = BeautifulSoup(response.text, "html.parser")
-        image_filenames = sorted(
-            [
-                a["href"]
-                for a in soup.find_all("a", href=True)
-                if any(
-                    a["href"].endswith(f"3s{str(i).zfill(2)}.gif") for i in range(1, 14)
-                )
-            ]
+        char_dir = original_image_dir / character_name
+        char_dir.mkdir(parents=True, exist_ok=True)
+
+        all_exist = all(
+            (char_dir / f"{idx}.png").exists() for idx in range(images_per_character)
         )
 
         images = []
-        for image_filename in image_filenames:
-            image_url = f"{base_url}/{url_name}/{image_filename}"
-            response = requests.get(image_url)
-            image = Image.open(BytesIO(response.content)).convert("RGBA")
-            images.append(image)
+        if all_exist:
+            for idx in range(images_per_character):
+                image = Image.open(char_dir / f"{idx}.png").convert("RGBA")
+                images.append(image)
+        else:
+            response = requests.get(f"{base_url}/{url_name}")
+            soup = BeautifulSoup(response.text, "html.parser")
+            image_filenames = sorted(
+                [
+                    a["href"]
+                    for a in soup.find_all("a", href=True)
+                    if any(
+                        a["href"].endswith(f"3s{str(i).zfill(2)}.gif")
+                        for i in range(1, images_per_character + 1)
+                    )
+                ]
+            )
+
+            for idx, image_filename in enumerate(image_filenames):
+                image_url = f"{base_url}/{url_name}/{image_filename}"
+                response = requests.get(image_url)
+                image = Image.open(BytesIO(response.content)).convert("RGBA")
+                image.save(char_dir / f"{idx}.png")
+                images.append(image)
 
         character_sprites.append(
             CharacterSprite(
@@ -388,8 +405,8 @@ MAX_INPUTS = 512
     volumes=volumes,
     gpu="b200",
     # region=region,
-    scaledown_window=15 * minutes,
-    timeout=10 * minutes,
+    scaledown_window=60 * minutes,
+    timeout=24 * 60 * minutes,
 )
 @modal.concurrent(max_inputs=MAX_INPUTS)
 class YOLOServer:

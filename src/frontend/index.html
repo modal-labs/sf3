@@ -6,388 +6,323 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Street Fighter III</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style type="text/tailwindcss">
+        @layer components {
+            .btn-primary {
+                @apply py-4 px-8 bg-sf-darker hover:bg-sf-dark border-2 border-sf-green hover:border-sf-green-dark font-bold rounded-lg text-xl text-sf-green hover:text-sf-green-dark transition-all duration-200;
+            }
+            .btn-danger {
+                @apply py-4 px-8 bg-sf-darker hover:bg-sf-dark border-2 border-sf-red hover:border-sf-red-dark font-bold rounded-lg text-xl text-sf-red hover:text-sf-red-dark transition-all duration-200;
+            }
+            .text-glow {
+                @apply [text-shadow:0_0_10px_currentColor];
+            }
+            .panel {
+                @apply p-16 w-full max-w-4xl bg-sf-darker border-2 border-sf-green rounded-lg flex flex-col justify-center items-center gap-8;
+            }
+            .panel-sm {
+                @apply p-8 w-full max-w-xl bg-sf-darker border-2 border-sf-green rounded-lg flex flex-col justify-center items-center gap-8;
+            }
+            .portrait-box {
+                @apply size-32 bg-sf-dark border-4 rounded-lg hover:opacity-80 transition-all cursor-pointer;
+            }
+            .control-key {
+                @apply px-3 py-1 bg-sf-dark border border-sf-green rounded-lg;
+            }
+            .loading-placeholder {
+                @apply bg-gradient-to-r from-sf-dark/50 via-sf-beige-dark/20 to-sf-dark/50 bg-[length:200%_100%] animate-skeleton-loading;
+            }
+        }
+    </style>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    colors: {
-                        'sf-green': '#00ff41',
-                        'sf-gold': '#ffd700',
-                        'sf-dark-1': '#1a1a2e',
-                        'sf-dark-2': '#16213e',
-                        'sf-dark-3': '#0f3460',
+                    fontFamily: {
+                        'mono': ['Courier New', 'Consolas', 'Menlo', 'Monaco', 'Liberation Mono', 'Lucida Console', 'monospace'],
                     },
-                    animation: {
-                        'spin': 'spin 1s linear infinite',
-                        'pulse-custom': 'pulse-custom 2s ease-in-out infinite',
+                    colors: {
+                        /* background */
+                        'sf-dark': '#1a1a2e',
+                        'sf-darker': '#0f0f1e',
+                        /* base text */
+                        'sf-beige': '#f5f5dc',
+                        'sf-beige-dark': '#d2d2aa',
+                        /* main neons */
+                        'sf-green': '#00ff41',
+                        'sf-green-dark': '#00cc33',
+                        'sf-gold': '#ffd700',
+                        'sf-gold-dark': '#ccb300',
+                        /* misc */
+                        'sf-red': '#ff0040',
+                        'sf-red-dark': '#cc0033',
+                        'sf-blue': '#0080ff',
+                        'sf-blue-dark': '#0066cc',
+                    },
+                    dropShadow: {
+                        'sf-green': '0 0 20px #00ff90',
                     },
                     keyframes: {
-                        'pulse-custom': {
-                            '0%, 100%': { opacity: '0.6' },
-                            '50%': { opacity: '1' },
+                        'character-flash': {
+                            '0%, 100%': { opacity: '1' },
+                            '50%': { opacity: '0.5' },
+                        },
+                        'loading-shimmer': {
+                            '0%': { backgroundPosition: '200% 0' },
+                            '100%': { backgroundPosition: '-200% 0' },
+                        },
+                        'shutter-out': {
+                            '0%': { transform: 'scaleY(1)', opacity: '1' },
+                            '100%': { transform: 'scaleY(0)', opacity: '0' },
+                        },
+                        'shutter-in': {
+                            '0%': { transform: 'scaleY(0)', opacity: '0' },
+                            '100%': { transform: 'scaleY(1)', opacity: '1' },
+                        },
+                        'skeleton-loading': {
+                            '0%': { backgroundPosition: '-200% 0' },
+                            '100%': { backgroundPosition: '200% 0' },
                         },
                     },
-                    fontFamily: {
-                        'mono': ['Courier New', 'monospace'],
-                    }
+                    animation: {
+                        'character-flash': 'character-flash 0.2s 3',
+                        'loading-shimmer': 'loading-shimmer 1.5s ease-in-out infinite',
+                        'shutter-out': 'shutter-out 0.3s ease-in-out forwards',
+                        'shutter-in': 'shutter-in 0.3s ease-in-out forwards',
+                        'skeleton-loading': 'skeleton-loading 1.5s ease-in-out infinite',
+                    },
                 }
             }
         }
     </script>
-    <style>
-        .loading-spinner {
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            from {
-                transform: rotate(0deg);
-            }
-
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        .text-glow {
-            text-shadow: 0 0 10px currentColor;
-        }
-
-        .box-glow {
-            box-shadow: 0 0 20px rgba(0, 255, 65, 0.5);
-        }
-
-        .slider {
-            -webkit-appearance: none;
-            appearance: none;
-            background: #16213e;
-            outline: none;
-            border-radius: 8px;
-            border: 2px solid #00ff41;
-        }
-
-        .slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 24px;
-            height: 24px;
-            background: #00ff41;
-            cursor: pointer;
-            border-radius: 50%;
-            box-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
-        }
-
-        .slider::-moz-range-thumb {
-            width: 24px;
-            height: 24px;
-            background: #00ff41;
-            cursor: pointer;
-            border-radius: 50%;
-            border: none;
-            box-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
-        }
-    </style>
 </head>
 
-<body class="font-mono bg-gradient-to-br from-sf-dark-1 via-sf-dark-2 to-sf-dark-3 text-white min-h-screen">
-    <div class="min-h-screen flex flex-col">
-        <header id="game-header" class="p-8 bg-black/80 border-b-4 border-sf-green">
-            <div class="flex items-center justify-between gap-8">
-                <h1 class="text-4xl font-bold tracking-wider text-sf-green text-glow">STREET FIGHTER III</h1>
-                <div class="flex flex-col justify-center items-end gap-4 text-sf-green text-glow">
-                    <h2 class="text-2xl">made with</h2>
-                    <a href="https://modal.com" target="_blank" rel="noopener"
-                        class="transition-transform duration-200 hover:drop-shadow-[0_0_20px_#00ff41]">
-                        <img src="/logo.svg" alt="Modal Logo" class="h-10 w-auto transition-transform duration-200">
-                    </a>
+<body class="font-mono bg-sf-dark text-sf-beige min-h-screen text-center flex flex-col">
+    <header id="game-header"
+        class="p-8 bg-sf-darker border-b-2 border-sf-green flex justify-between items-center gap-8">
+        <h1 class="text-4xl font-bold tracking-wider text-sf-green text-glow">STREET
+            FIGHTER III</h1>
+        <div class="flex flex-col justify-center items-end gap-4 ">
+            <h2 class="text-2xl text-sf-green">made with</h2>
+            <a href="https://modal.com" target="_blank" rel="noopener"
+                class="hover:drop-shadow-sf-green transition-all duration-200">
+                <img src="/logo.svg" alt="Modal Logo" class="h-10 w-auto transition-all duration-200">
+            </a>
+        </div>
+    </header>
+    <main class="relative flex-1 flex justify-center items-center">
+        <div id="settings-screen" class="p-16 w-full h-full flex flex-col justify-center items-center gap-8 hidden">
+            <div class="panel">
+                <h1 class="text-4xl text-sf-green text-glow mb-6 tracking-wider">CHARACTER
+                    SELECT</h1>
+                <div class="flex justify-center items-center gap-8">
+                    <div id="p1-selection-box" class="flex flex-col justify-center items-center gap-4">
+                        <h2 class="text-sf-red text-2xl text-glow">PLAYER 1</h2>
+                        <div id="p1-selected-portrait" class="portrait-box border-sf-red">
+                            <img src="" alt="" class="hidden w-full h-full object-cover rounded-lg">
+                        </div>
+                        <p id="p1-selected-name" class="text-sf-gold text-xl font-bold">-</p>
+                    </div>
+                    <div id="p2-selection-box" class="flex flex-col justify-center items-center gap-4">
+                        <h2 class="text-sf-blue text-2xl text-glow">PLAYER 2</h2>
+                        <div id="p2-selected-portrait" class="portrait-box border-transparent">
+                            <img src="" alt="" class="hidden w-full h-full object-cover rounded-lg">
+                        </div>
+                        <p id="p2-selected-name" class="text-sf-gold text-xl font-bold">-</p>
+                    </div>
+                </div>
+                <div id="character-grid" class="relative grid grid-cols-5 gap-2 mb-12">
                 </div>
             </div>
-        </header>
-
-        <main class="flex-1 flex items-center justify-center relative">
-            <div id="settings-screen" class="text-center py-10 max-w-2xl">
-
-                <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
-                    <h3 class="text-sf-green text-xl mb-4">Controls</h3>
-                    <div class="flex flex-col gap-6">
-                        <div class="flex justify-center items-center gap-2">
-                            <h4 class="text-sf-gold text-lg mb-0 text-center">Movement:</h4>
-                            <span
-                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">WASD
-                                / Arrow Keys</span>
-                        </div>
-
-                        <div class="border-t border-sf-green/30 pt-6">
-                            <div class="flex flex-col md:flex-row gap-8 justify-center items-center">
-                                <div class="w-full md:flex-1 mx-auto md:mx-0">
-                                    <h4 class="text-sf-gold text-lg mb-3 text-center">Punches</h4>
-                                    <div class="space-y-3">
-                                        <div class="flex justify-between md:justify-between items-center">
-                                            <strong class="text-gray-300">Light:</strong>
-                                            <span
-                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">J</span>
-                                        </div>
-                                        <div class="flex justify-between md:justify-between items-center">
-                                            <strong class="text-gray-300">Medium:</strong>
-                                            <span
-                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">K</span>
-                                        </div>
-                                        <div class="flex justify-between md:justify-between items-center">
-                                            <strong class="text-gray-300">Heavy:</strong>
-                                            <span
-                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">L</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="hidden md:block w-px bg-sf-green/30 self-stretch"></div>
-                                <div class="w-full md:flex-1 mx-auto md:mx-0">
-                                    <h4 class="text-sf-gold text-lg mb-3 text-center">Kicks</h4>
-                                    <div class="space-y-3">
-                                        <div class="flex justify-between md:justify-between items-center">
-                                            <strong class="text-gray-300">Light:</strong>
-                                            <span
-                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">U</span>
-                                        </div>
-                                        <div class="flex justify-between md:justify-between items-center">
-                                            <strong class="text-gray-300">Medium:</strong>
-                                            <span
-                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">I</span>
-                                        </div>
-                                        <div class="flex justify-between md:justify-between items-center">
-                                            <strong class="text-gray-300">Heavy:</strong>
-                                            <span
-                                                class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">O</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="mt-6 pt-4 border-t border-sf-green/30">
-                                <h4 class="text-sf-gold text-lg mb-3 text-center">Special Combinations</h4>
-                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
-                                    <div class="flex items-center justify-between md:justify-start md:gap-2">
-                                        <strong class="text-gray-300">LP + LK:</strong>
-                                        <span
-                                            class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">J
-                                            + U</span>
-                                    </div>
-                                    <div class="flex items-center justify-between md:justify-start md:gap-2">
-                                        <strong class="text-gray-300">MP + MK:</strong>
-                                        <span
-                                            class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">K
-                                            + I</span>
-                                    </div>
-                                    <div class="flex items-center justify-between md:justify-start md:gap-2">
-                                        <strong class="text-gray-300">HP + HK:</strong>
-                                        <span
-                                            class="text-gray-300 font-mono bg-sf-dark-2 px-3 py-1 rounded border border-sf-green/50">L
-                                            + O</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+            <div id="outfit-selection" class="hidden panel">
+                <h3 class="text-2xl text-sf-gold text-glow">SELECT OUTFIT</h3>
+                <p id="outfit-player-indicator" class="text-lg text-sf-beige">Select a character to see outfits</p>
+                <div id="outfit-grid" class="relative flex flex-wrap justify-center gap-2">
                 </div>
-
-                <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
-                    <h3 class="text-sf-green text-xl mb-4">Player 1 Settings</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                        <div>
-                            <label class="block text-sf-gold text-lg mb-3">Character</label>
-                            <select id="character-select"
-                                class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="Alex">Alex</option>
-                                <option value="Chun-Li">Chun-Li</option>
-                                <option value="Dudley">Dudley</option>
-                                <option value="Elena">Elena</option>
-                                <option value="Gouki">Gouki</option>
-                                <option value="Hugo">Hugo</option>
-                                <option value="Ibuki">Ibuki</option>
-                                <option value="Ken">Ken</option>
-                                <option value="Makoto">Makoto</option>
-                                <option value="Necro">Necro</option>
-                                <option value="Oro">Oro</option>
-                                <option value="Q">Q</option>
-                                <option value="Remy">Remy</option>
-                                <option value="Ryu">Ryu</option>
-                                <option value="Sean">Sean</option>
-                                <option value="Twelve">Twelve</option>
-                                <option value="Urien">Urien</option>
-                                <option value="Yang">Yang</option>
-                                <option value="Yun">Yun</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label class="block text-sf-gold text-lg mb-3">Outfit</label>
-                            <select id="outfit-select"
-                                class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="1">Outfit 1</option>
-                                <option value="2">Outfit 2</option>
-                                <option value="3">Outfit 3</option>
-                                <option value="4">Outfit 4</option>
-                                <option value="5">Outfit 5</option>
-                                <option value="6">Outfit 6</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label class="block text-sf-gold text-lg mb-3">Super Art</label>
-                            <select id="super-art-select"
-                                class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="1">Super Art 1</option>
-                                <option value="2">Super Art 2</option>
-                                <option value="3">Super Art 3</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div id="combos-section">
-                        <h3 class="text-sf-gold text-lg mb-4">Combos</h3>
-                        <div id="combos-loading" class="flex justify-center py-4">
-                            <div
-                                class="w-8 h-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
-                            </div>
-                        </div>
-                        <div id="combos-list" class="space-y-3">
-                        </div>
-                    </div>
-                    <div id="super-arts-section" class="mt-4 pt-4 border-t border-sf-green/30">
-                        <h3 class="text-sf-gold text-lg mb-4">Super Arts</h3>
-                        <div id="super-arts-loading" class="flex justify-center py-4">
-                            <div
-                                class="w-8 h-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
-                            </div>
-                        </div>
-                        <div id="super-arts-list" class="space-y-3">
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-black/80 border-2 border-sf-green rounded-lg p-6 mb-6">
-                    <h3 class="text-sf-green text-xl mb-4">Player 2 Settings</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                        <div>
-                            <label class="block text-sf-gold text-lg mb-3">Character</label>
-                            <select id="character-select-p2"
-                                class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="Alex">Alex</option>
-                                <option value="Chun-Li">Chun-Li</option>
-                                <option value="Dudley">Dudley</option>
-                                <option value="Elena">Elena</option>
-                                <option value="Gouki">Gouki</option>
-                                <option value="Hugo">Hugo</option>
-                                <option value="Ibuki">Ibuki</option>
-                                <option value="Ken">Ken</option>
-                                <option value="Makoto">Makoto</option>
-                                <option value="Necro">Necro</option>
-                                <option value="Oro">Oro</option>
-                                <option value="Q">Q</option>
-                                <option value="Remy">Remy</option>
-                                <option value="Ryu">Ryu</option>
-                                <option value="Sean">Sean</option>
-                                <option value="Twelve">Twelve</option>
-                                <option value="Urien">Urien</option>
-                                <option value="Yang">Yang</option>
-                                <option value="Yun">Yun</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label class="block text-sf-gold text-lg mb-3">Outfit</label>
-                            <select id="outfit-select-p2"
-                                class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="1">Outfit 1</option>
-                                <option value="2">Outfit 2</option>
-                                <option value="3">Outfit 3</option>
-                                <option value="4">Outfit 4</option>
-                                <option value="5">Outfit 5</option>
-                                <option value="6">Outfit 6</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label class="block text-sf-gold text-lg mb-3">Super Art</label>
-                            <select id="super-art-select-p2"
-                                class="w-full p-3 bg-sf-dark-2 border-2 border-sf-green rounded text-white">
-                                <option value="1">Super Art 1</option>
-                                <option value="2">Super Art 2</option>
-                                <option value="3">Super Art 3</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="mb-4 pt-4 border-t border-sf-green/30">
-                        <label class="block text-sf-gold text-lg mb-3">Game Difficulty</label>
-                        <div class="flex items-center space-x-4">
-                            <span class="text-gray-300">Very Easy</span>
-                            <input type="range" id="difficulty-slider" min="1" max="8" value="1" step="1"
-                                class="flex-1 h-2 bg-sf-dark-2 rounded-lg appearance-none cursor-pointer slider">
-                            <span class="text-gray-300">Extreme</span>
-                        </div>
-                        <div class="text-center mt-2">
-                            <span id="difficulty-label" class="text-sf-gold text-lg font-bold">Very Easy</span>
-                        </div>
-                    </div>
-                </div>
-
-                <button id="start-game-btn"
-                    class="bg-sf-green hover:bg-sf-green/80 text-white font-bold py-4 px-8 rounded-lg text-xl border-2 border-sf-green box-glow transition-all duration-200">
-                    Initializing...
-                </button>
             </div>
-
-            <div id="loading-screen" class="text-center p-10 hidden">
+            <div class="panel-sm">
+                <h2 class="text-sf-green text-2xl text-glow">Controls</h2>
+                <div class="w-full flex justify-between md:justify-center items-center gap-8">
+                    <h3 class="text-sf-gold text-lg">Movement:</h3>
+                    <span class="control-key">WASD / Arrow Keys</span>
+                </div>
                 <div
-                    class="loading-spinner w-16 h-16 border-4 border-sf-green/30 border-t-sf-green rounded-full mx-auto mb-8">
-                </div>
-                <h2 id="loading-status" class="text-2xl text-sf-green text-glow animate-pulse-custom">Connecting to
-                    server...</h2>
-            </div>
-            <div id="game-display" class="relative w-full h-full hidden">
-                <div class="flex items-center justify-center h-full p-5">
-                    <canvas id="game-canvas" width="800" height="600"
-                        class="max-w-full max-h-[80vh] border-4 border-sf-green rounded-lg bg-black/80 box-glow"></canvas>
-                    <div id="canvas-loading-overlay"
-                        class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div
-                            class="loading-spinner w-16 h-16 border-4 border-sf-green/30 border-t-sf-green rounded-full">
+                    class="pt-8 w-full border-t border-sf-green flex flex-col md:flex-row justify-center items-center gap-8">
+                    <div class="w-full flex flex-col justify-center items-center gap-4">
+                        <h3 class="text-sf-gold text-lg">Punches</h3>
+                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
+                            <p>Light:</p>
+                            <span class="control-key">J</span>
+                        </div>
+                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
+                            <p>Medium:</p>
+                            <span class="control-key">K</span>
+                        </div>
+                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
+                            <p>Heavy:</p>
+                            <span class="control-key">L</span>
+                        </div>
+                    </div>
+                    <div
+                        class="pt-8 md:pt-0 pl-0 md:pl-8 w-full border-t md:border-t-0 md:border-l border-sf-green flex flex-col justify-center items-center gap-4">
+                        <h3 class="text-sf-gold text-lg">Kicks</h3>
+                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
+                            <p>Light:</p>
+                            <span class="control-key">U</span>
+                        </div>
+                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
+                            <p>Medium:</p>
+                            <span class="control-key">I</span>
+                        </div>
+                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
+                            <p>Heavy:</p>
+                            <span class="control-key">O</span>
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <div id="win-screen" class="text-center p-10 hidden">
-                <div class="bg-black/80 border-2 border-sf-green rounded-lg p-8 max-w-md mx-auto">
-                    <h2 class="text-4xl text-sf-green text-glow mb-4">Game Over!</h2>
-                    <p id="winner-text" class="text-2xl text-sf-gold mb-6"></p>
-                    <button id="play-again-btn"
-                        class="bg-sf-green hover:bg-sf-green/80 text-white font-bold py-4 px-8 rounded-lg text-xl border-2 border-sf-green box-glow transition-all duration-200">
-                        PLAY AGAIN
-                    </button>
+                <div class="pt-8 w-full border-t border-sf-green flex flex-col justify-center items-center gap-4">
+                    <h3 class="text-sf-gold text-lg">Special Combos</h3>
+                    <div class="w-full flex justify-between md:justify-center items-center gap-8">
+                        <p>LP + LK:</p>
+                        <span class="control-key">J + U</span>
+                    </div>
+                    <div class="w-full flex justify-between md:justify-center items-center gap-8">
+                        <p>MP + MK:</p>
+                        <span class="control-key">K + I</span>
+                    </div>
+                    <div class="w-full flex justify-between md:justify-center items-center gap-8">
+                        <p>HP + HK:</p>
+                        <span class="control-key">L + O</span>
+                    </div>
                 </div>
             </div>
-
-            <div id="error-screen" class="text-center p-10 hidden">
-                <div class="bg-red-900/80 backdrop-blur-md border-2 border-red-500 rounded-lg p-8 max-w-2xl mx-auto">
-                    <div class="mb-6">
-                        <svg class="w-24 h-24 mx-auto text-red-500" fill="none" stroke="currentColor"
-                            viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
-                            </path>
-                        </svg>
+            <div class="panel-sm">
+                <h2 class="text-sf-green text-2xl text-glow">Player 1 Settings</h2>
+                <div id="combos-section" class="flex flex-col justify-center items-center gap-8">
+                    <h3 class="text-sf-gold text-lg">Combos</h3>
+                    <div id="combos-loading"
+                        class="size-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
                     </div>
-                    <h2 class="text-4xl text-red-500 font-bold mb-4">ERROR</h2>
-                    <p id="error-message" class="text-xl text-white mb-8">An unexpected error occurred</p>
-                    <div class="bg-black/50 rounded p-4 mb-6">
-                        <pre id="error-details" class="text-left text-gray-300 overflow-x-auto"></pre>
+                    <div id="combos-list">
                     </div>
-                    <button id="error-back-btn"
-                        class="bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-8 rounded-lg text-xl border-2 border-red-500 transition-all duration-200">
-                        BACK TO MENU
-                    </button>
+                </div>
+                <div class="w-full border-t border-sf-green"></div>
+                <div id="super-arts-section" class="flex flex-col justify-center items-center gap-8">
+                    <div class="flex justify-between md:justify-center items-center gap-8">
+                        <label class="text-sf-gold text-lg">Super Art</label>
+                        <div class="relative w-16">
+                            <select id="super-art-select-p1"
+                                class="py-3 pl-3 pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none">
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                            </select>
+                            <span
+                                class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold">
+                                <svg class="size-4" fill="none" stroke="currentColor" stroke-width="2"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </span>
+                        </div>
+                    </div>
+                    <div id="super-arts-loading"
+                        class="size-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
+                    </div>
+                    <div id="super-arts-list">
+                    </div>
                 </div>
             </div>
-        </main>
-    </div>
+            <div class="panel-sm">
+                <h2 class="text-sf-green text-2xl text-glow">Player 2 Settings</h2>
+                <div class="flex justify-between md:justify-center items-center gap-8">
+                    <label class="text-sf-gold text-lg">Super Art</label>
+                    <div class="relative w-16">
+                        <select id="super-art-select-p2"
+                            class="py-3 pl-3 pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                        </select>
+                        <span
+                            class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold">
+                            <svg class="size-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </span>
+                    </div>
+                </div>
+                <div class="pt-8 w-full border-t border-sf-green flex flex-col justify-center items-center gap-4">
+                    <label class="text-sf-gold text-lg mb-4">Game Difficulty</label>
+                    <div class="w-full flex justify-between items-center gap-8">
+                        <span>Very Easy</span>
+                        <input type="range" id="difficulty-slider" min="1" max="8" value="1" step="1" class="appearance-none cursor-pointer outline-none h-2 bg-sf-dark border-2 border-sf-green rounded-lg flex-1 flex
+                            [&::-webkit-slider-thumb]:appearance-none
+                            [&::-webkit-slider-thumb]:w-6
+                            [&::-webkit-slider-thumb]:h-6
+                            [&::-webkit-slider-thumb]:rounded-full
+                            [&::-webkit-slider-thumb]:bg-sf-green
+                            [&::-webkit-slider-thumb]:cursor-pointer
+                            [&::-webkit-slider-thumb]:border-2
+                            [&::-webkit-slider-thumb]:border-sf-green-dark
+                            [&::-webkit-slider-thumb]:hover:bg-sf-green-dark
+                            [&::-webkit-slider-thumb]:transition-colors
+                            [&::-moz-range-thumb]:w-6
+                            [&::-moz-range-thumb]:h-6
+                            [&::-moz-range-thumb]:rounded-full
+                            [&::-moz-range-thumb]:bg-sf-green
+                            [&::-moz-range-thumb]:cursor-pointer
+                            [&::-moz-range-thumb]:border-2
+                            [&::-moz-range-thumb]:border-sf-green-dark
+                            [&::-moz-range-thumb]:hover:bg-sf-green-dark
+                            [&::-moz-range-thumb]:transition-colors
+                            [&::-moz-range-thumb]:border-none">
+                        <span>Extreme</span>
+                    </div>
+                    <span id="difficulty-label" class="text-sf-gold text-lg">Very Easy</span>
+                </div>
+            </div>
+            <button id="start-game-btn" class="btn-primary text-glow">
+                Initializing...
+            </button>
+        </div>
+        <div id="loading-screen" class="flex flex-col items-center justify-center gap-8">
+            <div class="size-16 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
+            </div>
+            <h2 id="loading-status" class="text-2xl text-sf-green text-glow animate-pulse">
+                Connecting
+                to
+                server...</h2>
+        </div>
+        <div id="game-display" class="hidden relative w-full h-full">
+            <div class="flex items-center justify-center">
+                <canvas id="game-canvas" width="768" height="448"
+                    class="bg-sf-darker border-2 border-sf-green rounded-lg"></canvas>
+                <div id="canvas-loading-overlay" class="absolute inset-0 flex items-center justify-center">
+                    <div class="size-16 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="win-screen"
+            class="hidden p-12 max-w-2xl bg-sf-darker border-2 border-sf-green rounded-lg flex flex-col gap-8">
+            <h1 class="text-4xl font-bold text-sf-green text-glow">Game Over!</h1>
+            <p id="winner-text" class="text-2xl text-sf-gold mb-12">Player 1 wins!</p>
+            <button id="play-again-btn" class="btn-primary text-glow">
+                PLAY AGAIN
+            </button>
+        </div>
+        <div id="error-screen"
+            class="hidden p-12 max-w-2xl bg-sf-darker border-2 border-sf-red rounded-lg flex flex-col gap-8">
+            <h1 class="text-4xl font-bold text-sf-red text-glow">ERROR</h1>
+            <div class="p-4 bg-sf-dark rounded-lg">
+                <pre id="error-details" class="text-left overflow-x-auto"></pre>
+            </div>
+            <button id="error-back-btn" class="btn-danger text-glow">
+                BACK TO MENU
+            </button>
+        </div>
+    </main>
     <script src="script.js"></script>
 </body>
 
