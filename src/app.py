@@ -1,4 +1,3 @@
-import base64
 import os
 from pathlib import Path
 
@@ -11,7 +10,10 @@ from .utils import (
     CHARACTER_MAPPING,
     COMBOS,
     SPECIAL_MOVES,
+    GameInfo,
+    PlayerState,
     create_messages,
+    local_assets_dir,
     minutes,
     region,
 )
@@ -46,7 +48,6 @@ engine_image = (
 
 app = modal.App(name="sf3").include(llm_app).include(yolo_app)
 
-local_assets_dir = Path(__file__).parent.parent / "assets"
 remote_frontend_dir = "/root/frontend"
 
 image = (
@@ -58,15 +59,7 @@ image = (
     .run_commands(
         "uv pip install --system --compile-bytecode diambra-arena==2.2.7 diambra==0.0.20 fastapi[standard]==0.116.1 websockets==15.0.1 numpy==2.3.1",
     )
-    .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)
-    .add_local_file(
-        Path(__file__).parent.parent / "assets" / "favicon.ico",
-        "/root/frontend/favicon.ico",
-    )
-    .add_local_file(
-        Path(__file__).parent.parent / "assets" / "logo.svg",
-        "/root/frontend/logo.svg",
-    )
+    # engine assets
     .add_local_file(
         local_assets_dir / "sfiii3n.zip",
         "/root/assets/sfiii3n.zip",
@@ -75,6 +68,24 @@ image = (
         local_assets_dir / "credentials",
         "/root/assets/credentials",
     )
+    # frontend assets
+    .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)  # code
+    .add_local_file(
+        local_assets_dir / "favicon.ico",
+        "/root/frontend/favicon.ico",
+    )
+    .add_local_file(
+        local_assets_dir / "logo.svg",
+        "/root/frontend/logo.svg",
+    )
+    .add_local_dir(
+        local_assets_dir / "portraits",
+        "/root/frontend/portraits",
+    )
+    .add_local_dir(
+        local_assets_dir / "outfits",
+        "/root/frontend/outfits",
+    )
 )
 
 max_inputs = 1000
@@ -82,8 +93,8 @@ max_inputs = 1000
 
 @app.cls(
     image=image,
-    scaledown_window=15 * minutes,
-    timeout=5 * minutes,
+    scaledown_window=60 * minutes,
+    timeout=24 * 60 * minutes,
     region=region,
 )
 @modal.concurrent(max_inputs=max_inputs)
@@ -97,7 +108,7 @@ class Web:
         self.llm = None
         self.yolo = None
 
-    async def create_llm(self):
+    async def create_llm(self):  # async to avoid blocking event loop
         print("Creating LLM...")
         if self.llm is None:
             self.llm = LLMServer()
@@ -114,6 +125,7 @@ class Web:
     @modal.asgi_app()
     def app(self):
         import asyncio
+        import json
         import traceback
 
         import cv2
@@ -126,16 +138,16 @@ class Web:
 
         web_app = FastAPI()
 
-        async def create_sandbox() -> (
-            modal.Sandbox
-        ):  # async to avoid blocking event loop
+        # helper fns
+
+        async def create_sandbox() -> modal.Sandbox:
             print("Creating sandbox...")
             engine_port = 50051
             sandbox = modal.Sandbox.create(
                 "/bin/diambraEngineServer",
                 app=engine_app,
                 image=engine_image,
-                timeout=5 * minutes,
+                timeout=24 * 60 * minutes,
                 region=region,
                 unencrypted_ports=[engine_port],
                 verbose=True,
@@ -147,276 +159,301 @@ class Web:
             print(f"Created sandbox {sandbox.object_id} at {host}:{port}")
             return sandbox
 
+        class NumpyJSONEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                if hasattr(obj, "__dict__"):
+                    return vars(obj)
+                return super().default(obj)
+
         def make_json_safe(obj):
-            if isinstance(obj, dict):
-                return {k: make_json_safe(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [make_json_safe(v) for v in obj]
-            elif isinstance(obj, tuple):
-                return tuple(make_json_safe(v) for v in obj)
-            elif isinstance(obj, np.ndarray):
-                return make_json_safe(obj.tolist())
-            elif hasattr(obj, "__dict__"):
-                return make_json_safe(vars(obj))
-            else:
-                return obj
+            return json.loads(json.dumps(obj, cls=NumpyJSONEncoder))
 
-        @web_app.websocket("/ws")
-        async def websocket_endpoint(websocket: WebSocket):
-            await websocket.accept()
-            print("Client connected")
-
-            # game state
-
-            env = None
-            game_running = False
-            game_settings = {
-                "difficulty": 1,
-                "player1": {
-                    "character": "Ken",
-                    "outfit": 1,
-                    "superArt": 1,
-                },
-                "player2": {
-                    "character": "Ken",
-                    "outfit": 1,
-                    "superArt": 1,
-                },
-            }
-            game_state = {
+        def create_initial_game_state():
+            return {
                 "status": "initializing",
                 "scores": [0, 0],
                 "winner": "",
                 "error": "",
             }
 
-            # boot up
+        # manages game state and communication
 
-            _, _, sandbox = await asyncio.gather(
+        class GameSession:
+            def __init__(self, websocket: WebSocket):
+                self.websocket = websocket
+
+                # game state
+
+                self.env = None
+                self.sandbox = None
+                self.game_running = False
+                self.game_settings = {
+                    "difficulty": 1,
+                    "player1": {
+                        "character": "Ken",
+                        "outfit": 1,
+                        "superArt": 1,
+                    },
+                    "player2": {
+                        "character": "Ken",
+                        "outfit": 1,
+                        "superArt": 1,
+                    },
+                }
+                self.game_state = create_initial_game_state()
+
+                # per frame state
+
+                self.observation = None
+                self.info = None
+                self.player1_last_move = ""
+                self.player2_last_move = ""
+
+                # game duration state
+
+                self.player1_next_moves = []
+                self.player2_next_moves = []
+                self.player1_current_action = 0
+                self.actions = {"agent_0": 0, "agent_1": 0}
+
+                # communication
+
+                self.outbound_message_queue = asyncio.Queue()
+                self.stop_event = asyncio.Event()
+
+            async def send_game_state(self):
+                await self.outbound_message_queue.put(
+                    {"type": "game_state", "data": make_json_safe(self.game_state)}
+                )
+
+            async def handle_player_action(self, action_data):
+                if self.observation is None:
+                    return
+
+                action = action_data["action"]
+
+                # super art
+
+                if action == 18:
+                    super_art_name = action_data["super_art"]
+                    self.player1_last_move = super_art_name
+
+                    p1_obs = self.observation["P1"]
+                    p1_character = CHARACTER_MAPPING[p1_obs["character"]]
+                    p1_direction = "left" if p1_obs["side"] == 0 else "right"
+
+                    if (
+                        p1_character in SPECIAL_MOVES
+                        and super_art_name in SPECIAL_MOVES[p1_character]
+                    ):
+                        self.player1_next_moves.extend(
+                            SPECIAL_MOVES[p1_character][super_art_name][p1_direction]
+                        )
+
+                # combo
+
+                elif action == 19:
+                    combo_name = action_data["combo"]
+                    self.player1_last_move = combo_name
+
+                    p1_obs = self.observation["P1"]
+                    p1_character = CHARACTER_MAPPING[p1_obs["character"]]
+                    p1_direction = "left" if p1_obs["side"] == 0 else "right"
+
+                    if p1_character in COMBOS and combo_name in COMBOS[p1_character]:
+                        self.player1_next_moves.extend(
+                            COMBOS[p1_character][combo_name][p1_direction]
+                        )
+
+                # normal move
+
+                else:
+                    self.player1_last_move = action_data.get("move", "unknown")
+
+                    if action <= 8:  # directional, so don't queue
+                        self.player1_current_action = action
+                    else:  # attack moves (9-17), so queue
+                        self.player1_next_moves.append(action)
+
+            async def cleanup_environment(self):
+                print("Cleaning up environment...")
+                if self.env:
+                    try:
+                        self.env.close()
+                    except Exception:
+                        print("Warning: could not close environment")
+                    finally:
+                        self.env = None
+
+            async def prepare_for_next_game(self):
+                await self.cleanup_environment()
+
+                if self.sandbox:
+                    print(f"Terminating sandbox {self.sandbox.object_id}")
+                    self.sandbox.terminate()
+                    self.sandbox = await create_sandbox()
+
+                self.game_running = False
+                self.game_state = create_initial_game_state()
+                self.observation = None
+                self.info = None
+                self.player1_last_move = ""
+                self.player2_last_move = ""
+                self.player1_next_moves = []
+                self.player2_next_moves = []
+                self.player1_current_action = 0
+                self.actions = {"agent_0": 0, "agent_1": 0}
+
+            async def cleanup(self):
+                print("Cleaning up resources...")
+                await self.cleanup_environment()
+                if self.sandbox:
+                    print(f"Terminating sandbox {self.sandbox.object_id}")
+                    self.sandbox.terminate()
+                    self.sandbox = None
+
+        # routes
+
+        @web_app.websocket("/ws")
+        async def websocket_endpoint(websocket: WebSocket):
+            await websocket.accept()
+            print("Client connected")
+
+            session = GameSession(websocket)
+
+            _, _, session.sandbox = await asyncio.gather(
                 self.create_llm(),
                 self.create_yolo(),
                 create_sandbox(),
             )
 
-            # per frame
-
-            observation = None
-            info = None
-            current_direction = ""
-            player1_action = 0
-            player2_action = 0
-
-            # game duration
-
-            player1_next_moves = []  # necessary since some actions require multiple moves
-            player2_next_moves = []
-            actions = {"agent_0": 0, "agent_1": 0}
-
-            outbound_message_queue = asyncio.Queue()
-            stop_event = asyncio.Event()
-
-            # concurrent loops
-
             async def process_inbound_messages():
-                nonlocal \
-                    stop_event, \
-                    game_running, \
-                    game_settings, \
-                    player1_action, \
-                    player1_next_moves, \
-                    observation
-
                 try:
-                    while not stop_event.is_set():
+                    while not session.stop_event.is_set():
                         data = await websocket.receive_json()
                         message_type = data.get("type", "unknown")
 
                         if message_type == "start_game":
                             print(f"Received start_game message: {data}")
-                            if not game_running:
+                            if not session.game_running:
                                 received_settings = data.get("data", {})
                                 if received_settings:
-                                    game_settings.update(received_settings)
-                                game_running = True
+                                    session.game_settings.update(received_settings)
+                                session.game_running = True
                         elif message_type == "player_action":
-                            action = data.get("data", {}).get("action", 0)
-
-                            # super art
-
-                            if action == 18 and observation is not None:
-                                super_art_name = data.get("data", {}).get(
-                                    "super_art", "unknown"
-                                )
-                                p1_character = CHARACTER_MAPPING[
-                                    observation["P1"]["character"]
-                                ]
-                                p1_side = observation["P1"]["side"]
-                                p1_direction = "left" if p1_side == 0 else "right"
-
-                                if (
-                                    p1_character in SPECIAL_MOVES
-                                    and super_art_name in SPECIAL_MOVES[p1_character]
-                                ):
-                                    player1_next_moves.extend(
-                                        SPECIAL_MOVES[p1_character][super_art_name][
-                                            p1_direction
-                                        ]
-                                    )
-
-                            # combo
-
-                            elif action == 19 and observation is not None:
-                                combo_name = data.get("data", {}).get(
-                                    "combo", "unknown"
-                                )
-                                p1_character = CHARACTER_MAPPING[
-                                    observation["P1"]["character"]
-                                ]
-                                p1_side = observation["P1"]["side"]
-                                p1_direction = "left" if p1_side == 0 else "right"
-
-                                if (
-                                    p1_character in COMBOS
-                                    and combo_name in COMBOS[p1_character]
-                                ):
-                                    player1_next_moves.extend(
-                                        COMBOS[p1_character][combo_name][p1_direction]
-                                    )
-                            else:
-                                player1_action = action
+                            await session.handle_player_action(data["data"])
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in message processor")
-                    stop_event.set()
-
+                    session.stop_event.set()
                 except Exception:
                     print(f"Error in message processor: {traceback.format_exc()}")
-                    stop_event.set()
+                    session.stop_event.set()
 
             async def process_outbound_messages():
-                nonlocal stop_event, outbound_message_queue
-
                 try:
-                    while not stop_event.is_set():
-                        message = await outbound_message_queue.get()
+                    while not session.stop_event.is_set():
+                        message = await session.outbound_message_queue.get()
                         print(f"Sending game state: {message}")
                         await websocket.send_json(message)
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in outgoing processor")
-                    stop_event.set()
-
+                    session.stop_event.set()
                 except Exception:
                     print(f"Error in outgoing processor: {traceback.format_exc()}")
-                    stop_event.set()
+                    session.stop_event.set()
 
             async def run_robot_background():
-                nonlocal \
-                    game_running, \
-                    observation, \
-                    info, \
-                    game_settings, \
-                    current_direction, \
-                    player2_action, \
-                    player2_next_moves, \
-                    stop_event
-
                 try:
-                    while not stop_event.is_set():
-                        if not game_running or observation is None:
-                            await asyncio.sleep(0.001)
-                            continue
-
+                    while not session.stop_event.is_set():
                         await asyncio.sleep(0.001)
 
-                        # plan
+                        if not session.game_running:
+                            continue
 
-                        if len(player2_next_moves) == 0:
-                            obs_p1 = observation["P1"]
-                            obs_p2 = observation["P2"]
+                        if session.observation is None:
+                            continue
 
-                            (
-                                boxes,
-                                class_ids,
-                            ) = await self.yolo.detect_characters.remote.aio(
-                                [obs_p1["character"], obs_p2["character"]],
-                                observation["frame"],
-                            )
+                        obs_p1 = session.observation["P1"]
+                        obs_p2 = session.observation["P2"]
 
-                            player2_character = CHARACTER_MAPPING[obs_p2["character"]]
-                            player2_side = obs_p2["side"] if obs_p2 else 0
+                        (
+                            boxes,
+                            class_ids,
+                        ) = await self.yolo.detect_characters.remote.aio(
+                            [obs_p1["character"], obs_p2["character"]],
+                            session.observation["frame"],
+                        )
 
-                            messages = create_messages(
-                                stage=observation["stage"][0],
-                                timer=observation["timer"][0],
-                                boxes=boxes,
-                                class_ids=class_ids,
-                                player1_character=CHARACTER_MAPPING[
-                                    obs_p1["character"]
-                                ],
-                                player1_super_art=game_settings["player1"]["superArt"],
-                                player1_wins=obs_p1["wins"][0],
-                                player1_side=obs_p1["side"],
-                                player1_stunned=obs_p1["stunned"],
-                                player1_stun_bar=obs_p1["stun_bar"][0],
-                                player1_health=obs_p1["health"][0],
-                                player1_super_count=obs_p1["super_count"][0],
-                                player1_super_bar=obs_p1["super_bar"][0],
-                                player2_character=player2_character,
-                                player2_super_art=game_settings["player2"]["superArt"],
-                                player2_wins=obs_p2["wins"][0],
-                                player2_side=player2_side,
-                                player2_stunned=obs_p2["stunned"],
-                                player2_stun_bar=obs_p2["stun_bar"][0],
-                                player2_health=obs_p2["health"][0],
-                                player2_super_count=obs_p2["super_count"][0],
-                                player2_super_bar=obs_p2["super_bar"][0],
-                            )
-                            moves = await self.llm.chat.remote.aio(
-                                messages,
-                                player2_character,
-                                player2_side,
-                            )
-                            player2_next_moves.extend(moves)
+                        p1_character = CHARACTER_MAPPING[obs_p1["character"]]
+                        p2_character = CHARACTER_MAPPING[obs_p2["character"]]
+                        p1_settings = session.game_settings["player1"]
+                        p2_settings = session.game_settings["player2"]
 
-                        # act
+                        game_info = GameInfo(
+                            stage=session.observation["stage"][0],
+                            timer=session.observation["timer"][0],
+                            boxes=boxes,
+                            class_ids=class_ids,
+                        )
 
-                        if len(player2_next_moves) > 0:
-                            player2_action = player2_next_moves.pop(0)
+                        player1 = PlayerState(
+                            character=p1_character,
+                            super_art=p1_settings["superArt"],
+                            wins=obs_p1["wins"][0],
+                            side=obs_p1["side"],
+                            stunned=obs_p1["stunned"],
+                            stun_bar=obs_p1["stun_bar"][0],
+                            health=obs_p1["health"][0],
+                            super_count=obs_p1["super_count"][0],
+                            super_bar=obs_p1["super_bar"][0],
+                            last_move=session.player1_last_move,
+                        )
+
+                        player2 = PlayerState(
+                            character=p2_character,
+                            super_art=p2_settings["superArt"],
+                            wins=obs_p2["wins"][0],
+                            side=obs_p2["side"],
+                            stunned=obs_p2["stunned"],
+                            stun_bar=obs_p2["stun_bar"][0],
+                            health=obs_p2["health"][0],
+                            super_count=obs_p2["super_count"][0],
+                            super_bar=obs_p2["super_bar"][0],
+                            last_move=session.player2_last_move,
+                        )
+
+                        messages = create_messages(game_info, player1, player2)
+
+                        move_name, moves = await self.llm.chat.remote.aio(
+                            messages,
+                            p2_character,
+                            obs_p2["side"],
+                        )
+                        session.player2_last_move = move_name
+                        session.player2_next_moves.extend(moves)
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in robot background")
-                    stop_event.set()
-
+                    session.stop_event.set()
                 except Exception:
                     print(f"Error in robot background: {traceback.format_exc()}")
-                    stop_event.set()
+                    session.stop_event.set()
 
             async def run_game_loop():
-                nonlocal \
-                    sandbox, \
-                    stop_event, \
-                    env, \
-                    game_running, \
-                    game_settings, \
-                    game_state, \
-                    observation, \
-                    info, \
-                    current_direction, \
-                    player1_action, \
-                    player2_action, \
-                    player1_next_moves, \
-                    player2_next_moves, \
-                    actions, \
-                    outbound_message_queue
-
                 try:
-                    while not stop_event.is_set():
-                        if not game_running:
+                    while not session.stop_event.is_set():
+                        if not session.game_running:
                             await asyncio.sleep(0.001)
                             continue
 
                         print("Creating DIAMBRA environment...")
+                        p1_settings = session.game_settings["player1"]
+                        p2_settings = session.game_settings["player2"]
+
                         settings = EnvironmentSettingsMultiAgent(
                             step_ratio=1,
                             role=(Roles.P1, Roles.P2),
@@ -424,32 +461,28 @@ class Web:
                             render_mode="rgb_array",
                             splash_screen=False,
                             grpc_timeout=1 * minutes,
-                            difficulty=game_settings["difficulty"],
+                            difficulty=session.game_settings["difficulty"],
                             action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
                             characters=[
-                                game_settings["player1"]["character"],
-                                game_settings["player2"]["character"],
+                                p1_settings["character"],
+                                p2_settings["character"],
                             ],
                             outfits=[
-                                game_settings["player1"]["outfit"],
-                                game_settings["player2"]["outfit"],
+                                p1_settings["outfit"],
+                                p2_settings["outfit"],
                             ],
                             super_art=[
-                                game_settings["player1"]["superArt"],
-                                game_settings["player2"]["superArt"],
+                                p1_settings["superArt"],
+                                p2_settings["superArt"],
                             ],
                         )
-                        env = arena.make("sfiii3n", settings)
+                        session.env = arena.make("sfiii3n", settings)
                         print("DIAMBRA environment created successfully!")
 
-                        game_state["status"] = "running"
-                        await outbound_message_queue.put(
-                            {"type": "game_state", "data": make_json_safe(game_state)}
-                        )
+                        session.game_state["status"] = "running"
+                        await session.send_game_state()
 
-                        observation, info = env.reset()
-
-                        # game loop
+                        session.observation, session.info = session.env.reset()
 
                         # according to https://docs.diambra.ai/envs/games/
                         # SF3 runs at 164 FPS natively, but we want 60 FPS output
@@ -457,7 +490,9 @@ class Web:
                         frame_interval = 1.0 / target_fps
                         next_frame_time = asyncio.get_event_loop().time()
 
-                        while game_running and not stop_event.is_set():
+                        # game loop
+
+                        while session.game_running and not session.stop_event.is_set():
                             current_time = asyncio.get_event_loop().time()
                             sleep_time = next_frame_time - current_time
                             if sleep_time > 0:
@@ -466,115 +501,62 @@ class Web:
                                 await asyncio.sleep(0)
                             next_frame_time += frame_interval
 
-                            if len(player1_next_moves) > 0:
-                                player1_action = player1_next_moves.pop(0)
-
-                            actions = {
-                                "agent_0": player1_action,
-                                "agent_1": player2_action,
+                            session.actions = {
+                                "agent_0": session.player1_next_moves.pop(0)
+                                if session.player1_next_moves
+                                else session.player1_current_action,
+                                "agent_1": session.player2_next_moves.pop(0)
+                                if session.player2_next_moves
+                                else 0,
                             }
 
                             (
-                                observation,
+                                session.observation,
                                 reward,
                                 terminated,
                                 truncated,
-                                info,
-                            ) = env.step(actions)
+                                session.info,
+                            ) = session.env.step(session.actions)
 
-                            if (
-                                "frame" in observation
-                                and observation["frame"] is not None
-                            ):
-                                frame = cv2.cvtColor(
-                                    observation["frame"], cv2.COLOR_RGB2BGR
-                                )
+                            frame = session.observation.get("frame")
+                            if frame is not None:
+                                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                                 _, buffer = cv2.imencode(
                                     ".jpg",
                                     frame,
-                                    [
-                                        cv2.IMWRITE_JPEG_QUALITY,
-                                        60,
-                                    ],
+                                    [cv2.IMWRITE_JPEG_QUALITY, 85],
                                 )
-                                frame_b64 = base64.b64encode(buffer).decode("utf-8")
-                                await websocket.send_json(
-                                    {"type": "game_frame", "data": {"frame": frame_b64}}
-                                )  # not using outbound queue for speed + send frame immediately
+                                await websocket.send_bytes(buffer.tobytes())
 
                             if terminated or truncated:
-                                p1_wins = observation["P1"]["wins"][0]
-                                p2_wins = observation["P2"]["wins"][0]
+                                p1_wins = session.observation["P1"]["wins"][0]
+                                p2_wins = session.observation["P2"]["wins"][0]
                                 print(f"Game finished - P1: {p1_wins}, P2: {p2_wins}")
 
                                 if p1_wins > p2_wins:
-                                    game_state["scores"][0] += 1
+                                    session.game_state["scores"][0] += 1
                                     winner = "Player 1 (You)"
                                 elif p2_wins > p1_wins:
-                                    game_state["scores"][1] += 1
+                                    session.game_state["scores"][1] += 1
                                     winner = "Player 2 (AI)"
                                 else:
                                     winner = "Draw"
 
-                                game_state["status"] = "finished"
-                                game_state["winner"] = winner
-                                await outbound_message_queue.put(
-                                    {
-                                        "type": "game_state",
-                                        "data": make_json_safe(game_state),
-                                    }
-                                )
+                                session.game_state["status"] = "finished"
+                                session.game_state["winner"] = winner
+                                await session.send_game_state()
 
-                                # reset game state
-
-                                print(f"Terminating sandbox {sandbox.object_id}")
-                                sandbox.terminate()
-                                sandbox = await create_sandbox()
-
-                                try:
-                                    env.close()
-                                except Exception:
-                                    print(
-                                        "Warning: couldn't close environment after game"
-                                    )
-                                finally:
-                                    env = None
-
-                                game_running = False
-
-                                game_state = {
-                                    "status": "initializing",
-                                    "scores": [0, 0],
-                                    "winner": "",
-                                    "error": "",
-                                }
-
-                                await outbound_message_queue.put(
-                                    {
-                                        "type": "game_state",
-                                        "data": make_json_safe(game_state),
-                                    }
-                                )
-
-                                current_direction = ""
-                                player1_action = 0
-                                player2_action = 0
-
-                                player1_next_moves = []
-                                player2_next_moves = []
-                                actions = {"agent_0": 0, "agent_1": 0}
+                                await session.prepare_for_next_game()
+                                await session.send_game_state()
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in game loop")
-                    stop_event.set()
-
+                    session.stop_event.set()
                 except Exception:
                     print(f"Error in game loop: {traceback.format_exc()}")
-                    stop_event.set()
+                    session.stop_event.set()
 
-            await outbound_message_queue.put(
-                {"type": "game_state", "data": make_json_safe(game_state)}
-            )
+            await session.send_game_state()
 
             tasks = [
                 asyncio.create_task(process_inbound_messages()),
@@ -582,48 +564,33 @@ class Web:
                 asyncio.create_task(run_robot_background()),
                 asyncio.create_task(run_game_loop()),
             ]
+
             try:
                 await asyncio.gather(*tasks)
-
             except WebSocketDisconnect:
                 print("Client disconnected")
-                stop_event.set()
-                game_running = False
+                session.stop_event.set()
+                session.game_running = False
                 for task in tasks:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-
             except Exception as e:
                 print(f"WebSocket error: {e}")
-                stop_event.set()
-                game_running = False
-                game_state["status"] = "error"
-                game_state["error"] = str(e)
+                session.stop_event.set()
+                session.game_running = False
+                session.game_state["status"] = "error"
+                session.game_state["error"] = str(e)
                 try:
-                    await outbound_message_queue.put(
-                        {"type": "game_state", "data": make_json_safe(game_state)}
-                    )
+                    await session.send_game_state()
                 except Exception:
                     print("Warning: could not send error message")
                 for task in tasks:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-
             finally:
-                print("Cleaning up resources...")
-                if env:
-                    try:
-                        env.close()
-                    except Exception:
-                        print("Warning: could not close environment")
-                    finally:
-                        env = None
-                if sandbox:
-                    print(f"Terminating sandbox {sandbox.object_id}")
-                    sandbox.terminate()
-                    sandbox = None
+                await session.cleanup()
 
         @web_app.get("/")
         async def index():
@@ -636,6 +603,18 @@ class Web:
         @web_app.get("/logo.svg")
         async def logo():
             return FileResponse(f"{remote_frontend_dir}/logo.svg")
+
+        @web_app.get("/portraits/{character}.png")
+        async def portrait(character: str):
+            return FileResponse(
+                f"{remote_frontend_dir}/portraits/{character.lower().strip('-')}.png"
+            )
+
+        @web_app.get("/outfits/{character}/{outfit}.png")
+        async def outfit(character: str, outfit: int):
+            return FileResponse(
+                f"{remote_frontend_dir}/outfits/{character}/{outfit}.png"
+            )
 
         @web_app.get("/api/extra-moves")
         async def get_extra_moves():

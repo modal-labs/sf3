@@ -1,5 +1,4 @@
 import time
-from pathlib import Path
 
 import modal
 
@@ -15,9 +14,13 @@ from .utils import (
     STUN_BAR_MAX,
     SUPER_BAR_MAX,
     X_SIZE,
+    GameInfo,
+    PlayerState,
     create_messages,
-    minutes,
+    get_meta_instructions_for_character,
+    local_assets_dir,
     # region,
+    minutes,
 )
 
 # Modal setup
@@ -39,7 +42,7 @@ vllm_image = (
         }
     )
     .add_local_file(
-        Path(__file__).parent.parent / "assets" / "qwen3_nonthinking.jinja",
+        local_assets_dir / "qwen3_nonthinking.jinja",
         remote_chat_template_path,
     )
 )
@@ -56,6 +59,17 @@ vllm_cache_vol = modal.Volume.from_name(
 )
 
 
+def calculate_super_count(super_bar: int) -> int:
+    if super_bar == SUPER_BAR_MAX:
+        return 3
+    elif super_bar >= (SUPER_BAR_MAX // 3) * 2:
+        return 2
+    elif super_bar >= SUPER_BAR_MAX // 3:
+        return 1
+    else:
+        return 0
+
+
 def create_random_messages():
     import random
 
@@ -64,44 +78,77 @@ def create_random_messages():
     player1_character = random.choice(list(CHARACTER_MAPPING.values()))
     player2_character = random.choice(list(CHARACTER_MAPPING.values()))
 
+    player1_super_art = random.randint(1, 3)
+    player2_super_art = random.randint(1, 3)
+
     side = random.randint(0, 1)
 
+    player1_stun_bar = random.randint(0, STUN_BAR_MAX)
+    player2_stun_bar = random.randint(0, STUN_BAR_MAX)
+
+    player1_super_bar = random.randint(0, SUPER_BAR_MAX)
+    player2_super_bar = random.randint(0, SUPER_BAR_MAX)
+
+    player1_super_count = calculate_super_count(player1_super_bar)
+    player2_super_count = calculate_super_count(player2_super_bar)
+
+    player1_possible_moves = get_meta_instructions_for_character(
+        player1_character,
+        player1_super_art,
+        player1_super_count,
+    )
+    player2_possible_moves = get_meta_instructions_for_character(
+        player2_character,
+        player2_super_art,
+        player2_super_count,
+    )
+
+    game_info = GameInfo(
+        stage=random.randint(1, 3),
+        timer=random.randint(0, 100),
+        boxes=[
+            [
+                random.randint(0, X_SIZE // 2),
+                random.randint(MIN_Y, MAX_Y // 2),
+                random.randint(X_SIZE // 2, X_SIZE),
+                random.randint(MAX_Y // 2, MAX_Y),
+            ]
+            for _ in range(n_detected_characters)
+        ],
+        class_ids=[
+            CHARACTER_TO_ID[player1_character],
+            CHARACTER_TO_ID[player2_character],
+        ][:n_detected_characters],
+    )
+
+    player1 = PlayerState(
+        character=player1_character,
+        super_art=player1_super_art,
+        wins=random.randint(0, 2),
+        side=side,
+        stunned=player1_stun_bar == STUN_BAR_MAX,
+        stun_bar=player1_stun_bar,
+        health=random.randint(0, HEALTH_MAX),
+        super_count=player1_super_count,
+        super_bar=player1_super_bar,
+        last_move=random.choice(player1_possible_moves),
+    )
+
+    player2 = PlayerState(
+        character=player2_character,
+        super_art=player2_super_art,
+        wins=random.randint(0, 2),
+        side=1 - side,
+        stunned=player2_stun_bar == STUN_BAR_MAX,
+        stun_bar=player2_stun_bar,
+        health=random.randint(0, HEALTH_MAX),
+        super_count=player2_super_count,
+        super_bar=player2_super_bar,
+        last_move=random.choice(player2_possible_moves),
+    )
+
     return (
-        create_messages(
-            stage=random.randint(1, 3),
-            timer=random.randint(0, 100),
-            boxes=[
-                [
-                    random.randint(0, X_SIZE // 2),
-                    random.randint(MIN_Y, MAX_Y // 2),
-                    random.randint(X_SIZE // 2, X_SIZE),
-                    random.randint(MAX_Y // 2, MAX_Y),
-                ]
-                for _ in range(n_detected_characters)
-            ],
-            class_ids=[
-                CHARACTER_TO_ID[player1_character],
-                CHARACTER_TO_ID[player2_character],
-            ][:n_detected_characters],
-            player1_character=player1_character,
-            player1_super_art=random.randint(1, 3),
-            player1_wins=random.randint(0, 2),
-            player1_side=side,
-            player1_stunned=random.random() < 0.1,
-            player1_stun_bar=random.randint(0, STUN_BAR_MAX),
-            player1_health=random.randint(0, HEALTH_MAX),
-            player1_super_count=random.randint(0, 2),
-            player1_super_bar=random.randint(0, SUPER_BAR_MAX),
-            player2_character=player2_character,
-            player2_super_art=random.randint(1, 3),
-            player2_wins=random.randint(0, 2),
-            player2_side=1 - side,
-            player2_stunned=random.random() < 0.1,
-            player2_stun_bar=random.randint(0, STUN_BAR_MAX),
-            player2_health=random.randint(0, HEALTH_MAX),
-            player2_super_count=random.randint(0, 2),
-            player2_super_bar=random.randint(0, SUPER_BAR_MAX),
-        ),
+        create_messages(game_info, player1, player2),
         side,
         player2_character,
     )
@@ -118,15 +165,14 @@ MAX_INPUTS = max_num_seqs = 128
     },
     gpu="b200",
     # region=region,
-    scaledown_window=15 * minutes,
-    timeout=10 * minutes,
+    scaledown_window=60 * minutes,
+    timeout=24 * 60 * minutes,
 )
 @modal.concurrent(max_inputs=MAX_INPUTS)
 class LLMServer:
     @modal.enter()
     async def enter(self):
         from vllm import LLM, SamplingParams
-        from vllm.sampling_params import GuidedDecodingParams
 
         self.llm = LLM(
             model=MODEL_NAME,
@@ -140,36 +186,13 @@ class LLMServer:
             disable_log_stats=True,  # reduce overhead
         )
 
-        choices = list(
-            set(
-                list(BASE_META_INSTRUCTIONS.keys())
-                + list(
-                    [
-                        combo
-                        for character in COMBOS.keys()
-                        for combo in COMBOS[character].keys()
-                    ]
-                )
-                + list(
-                    [
-                        special_move
-                        for character in SPECIAL_MOVES.keys()
-                        for special_move in SPECIAL_MOVES[character].keys()
-                    ]
-                )
-            )
-        )
-
         self.sampling_params = SamplingParams(
             temperature=0.7,
             top_p=0.8,
             top_k=20,
             min_p=0.0,
-            max_tokens=8,  # roughly len("<longest meta instruction name>")
+            max_tokens=32,  # roughly len("<longest meta instruction name>")
             presence_penalty=1.5,
-            guided_decoding=GuidedDecodingParams(
-                choice=choices,
-            ),  # https://huggingface.co/Qwen/Qwen3-0.6B#best-practices
         )
 
         # warm up model
@@ -189,33 +212,48 @@ class LLMServer:
     @modal.method()
     async def chat(
         self, messages: list[dict[str, str]], character: str, side: int
-    ) -> int:
+    ) -> tuple[str, list[int]]:
+        from vllm.sampling_params import GuidedDecodingParams
+
+        choices = []
+        choices.extend(BASE_META_INSTRUCTIONS.keys())
+        if character in COMBOS:
+            choices.extend(COMBOS[character].keys())
+        if character in SPECIAL_MOVES:
+            choices.extend(SPECIAL_MOVES[character].keys())
+        choices = list(set(choices))
+
+        self.sampling_params.guided_decoding = GuidedDecodingParams(
+            choice=choices,
+        )
+
         outputs = self.llm.chat(
             [messages],
             self.sampling_params,
             chat_template=remote_chat_template_path,
         )
-        text = outputs[0].outputs[0].text
+        move_name = outputs[0].outputs[0].text
 
         current_direction = "left" if side == 0 else "right"
 
         try:
-            if text in BASE_META_INSTRUCTIONS:
-                return [
-                    button for button in BASE_META_INSTRUCTIONS[text][current_direction]
-                ]
-            elif text in COMBOS[character]:
-                return [button for button in COMBOS[character][text][current_direction]]
-            elif text in SPECIAL_MOVES[character]:
-                return [
-                    button
-                    for button in SPECIAL_MOVES[character][text][current_direction]
-                ]
+            move_sequence = None
+
+            if move_name in BASE_META_INSTRUCTIONS:
+                move_sequence = BASE_META_INSTRUCTIONS[move_name][current_direction]
+            elif move_name in COMBOS.get(character, {}):
+                move_sequence = COMBOS[character][move_name][current_direction]
+            elif move_name in SPECIAL_MOVES.get(character, {}):
+                move_sequence = SPECIAL_MOVES[character][move_name][current_direction]
+
+            if move_sequence is not None:
+                return move_name, list(move_sequence)
             else:
-                raise ValueError(f"Invalid move: {text}")
+                raise ValueError(f"Invalid move: {move_name}")
+
         except Exception as e:
             print(f"Error: {e}")
-            return [0]
+            return "", [0]
 
 
 @app.local_entrypoint()
@@ -227,10 +265,10 @@ async def test(n_samples=100):
     for sample_idx in range(n_samples):
         messages, side, character = create_random_messages()
         start_time = time.perf_counter()
-        moves = await llm.chat.remote.aio(messages, character, side)
+        move_name, moves = await llm.chat.remote.aio(messages, character, side)
         latencies.append((time.perf_counter() - start_time) * 1000)
 
-        print(f"Sample {sample_idx}: {moves}")
+        print(f"Sample {sample_idx}: {move_name} {moves}")
 
     percentiles = [50, 90, 95, 99]
     sorted_latencies = sorted(latencies)
