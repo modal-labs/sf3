@@ -42,7 +42,7 @@ vllm_image = (
         }
     )
     .add_local_file(
-        local_assets_dir / "qwen3_nonthinking.jinja",
+        local_assets_dir / "llm" / "qwen3_nonthinking.jinja",
         remote_chat_template_path,
     )
 )

@@ -35,11 +35,11 @@ engine_image = (
     # since sandbox is created in app, files will be in Modal container, not locally
     # so we need to add them to the web app image as well
     .add_local_file(
-        "/root/assets/sfiii3n.zip",
+        "/root/sfiii3n.zip",
         "/opt/diambraArena/roms/sfiii3n.zip",
     )
     .add_local_file(
-        "/root/assets/credentials",
+        "/root/credentials",
         "/tmp/.diambra/credentials",
     )
 )
@@ -48,7 +48,19 @@ engine_image = (
 
 app = modal.App(name="sf3").include(llm_app).include(yolo_app)
 
+local_engine_dir = local_assets_dir / "engine"
+local_icons_dir = local_assets_dir / "icons"
+local_logos_dir = local_assets_dir / "logos"
+local_outfits_dir = local_assets_dir / "outfits"
+local_portraits_dir = local_assets_dir / "portraits"
+local_sounds_dir = local_assets_dir / "sounds"
+
 remote_frontend_dir = "/root/frontend"
+remote_icons_dir = "/root/icons"
+remote_logos_dir = "/root/logos"
+remote_outfits_dir = "/root/outfits"
+remote_portraits_dir = "/root/portraits"
+remote_sounds_dir = "/root/sounds"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -59,32 +71,36 @@ image = (
     .run_commands(
         "uv pip install --system --compile-bytecode diambra-arena==2.2.7 diambra==0.0.20 fastapi[standard]==0.116.1 websockets==15.0.1 numpy==2.3.1",
     )
-    # engine assets
+    # engine
     .add_local_file(
-        local_assets_dir / "sfiii3n.zip",
-        "/root/assets/sfiii3n.zip",
+        local_engine_dir / "sfiii3n.zip",
+        "/root/sfiii3n.zip",
     )
     .add_local_file(
-        local_assets_dir / "credentials",
-        "/root/assets/credentials",
+        local_engine_dir / "credentials",
+        "/root/credentials",
     )
-    # frontend assets
-    .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)  # code
-    .add_local_file(
-        local_assets_dir / "favicon.ico",
-        "/root/frontend/favicon.ico",
-    )
-    .add_local_file(
-        local_assets_dir / "logo.svg",
-        "/root/frontend/logo.svg",
+    # frontend
+    .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)
+    .add_local_dir(
+        local_icons_dir,
+        remote_icons_dir,
     )
     .add_local_dir(
-        local_assets_dir / "portraits",
-        "/root/frontend/portraits",
+        local_logos_dir,
+        remote_logos_dir,
     )
     .add_local_dir(
-        local_assets_dir / "outfits",
-        "/root/frontend/outfits",
+        local_outfits_dir,
+        remote_outfits_dir,
+    )
+    .add_local_dir(
+        local_portraits_dir,
+        remote_portraits_dir,
+    )
+    .add_local_dir(
+        local_sounds_dir,
+        remote_sounds_dir,
     )
 )
 
@@ -392,6 +408,10 @@ class Web:
                         ):  # in case env was just reset
                             continue
 
+                        # store values immediately to avoid race conditions
+                        stage = session.observation["stage"][0]
+                        timer = session.observation["timer"][0]
+                        frame = session.observation["frame"]
                         obs_p1 = session.observation["P1"]
                         obs_p2 = session.observation["P2"]
 
@@ -400,7 +420,7 @@ class Web:
                             class_ids,
                         ) = await self.yolo.detect_characters.remote.aio(
                             [obs_p1["character"], obs_p2["character"]],
-                            session.observation["frame"],
+                            frame,
                         )
 
                         p1_character = CHARACTER_MAPPING[obs_p1["character"]]
@@ -409,8 +429,8 @@ class Web:
                         p2_settings = session.game_settings["player2"]
 
                         game_info = GameInfo(
-                            stage=session.observation["stage"][0],
-                            timer=session.observation["timer"][0],
+                            stage=stage,
+                            timer=timer,
                             boxes=boxes,
                             class_ids=class_ids,
                         )
@@ -664,25 +684,37 @@ class Web:
         async def index():
             return FileResponse(f"{remote_frontend_dir}/index.html")
 
+        @web_app.get("/icons/{icon}.svg")
+        async def icon(icon: str):
+            return FileResponse(f"{remote_icons_dir}/{icon}.svg")
+
+        @web_app.get("/capcom.svg")
+        async def capcom_logo():
+            return FileResponse(f"{remote_logos_dir}/capcom.svg")
+
         @web_app.get("/favicon.ico")
         async def favicon():
-            return FileResponse(f"{remote_frontend_dir}/favicon.ico")
+            return FileResponse(f"{remote_logos_dir}/favicon.ico")
 
-        @web_app.get("/logo.svg")
-        async def logo():
-            return FileResponse(f"{remote_frontend_dir}/logo.svg")
-
-        @web_app.get("/portraits/{character}.png")
-        async def portrait(character: str):
-            return FileResponse(
-                f"{remote_frontend_dir}/portraits/{character.lower().strip('-')}.png"
-            )
+        @web_app.get("/modal.svg")
+        async def modal_logo():
+            return FileResponse(f"{remote_logos_dir}/modal.svg")
 
         @web_app.get("/outfits/{character}/{outfit}.png")
         async def outfit(character: str, outfit: int):
-            return FileResponse(
-                f"{remote_frontend_dir}/outfits/{character}/{outfit}.png"
-            )
+            return FileResponse(f"{remote_outfits_dir}/{character}/{outfit}.png")
+
+        @web_app.get("/portraits/{character}.png")
+        async def portrait(character: str):
+            return FileResponse(f"{remote_portraits_dir}/{character}.png")
+
+        @web_app.get("/sounds/{sound}.mp3")
+        async def sound(sound: str):
+            return FileResponse(f"{remote_sounds_dir}/{sound}.mp3")
+
+        @web_app.get("/sounds/gameplay/{sound}.mp3")
+        async def gameplay_sound(sound: str):
+            return FileResponse(f"{remote_sounds_dir}/gameplay/{sound}.mp3")
 
         @web_app.get("/api/extra-moves")
         async def get_extra_moves():
