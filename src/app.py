@@ -511,7 +511,16 @@ class Web:
                                 p2_settings["superArt"],
                             ],
                         )
-                        session.env = arena.make("sfiii3n", settings)
+                        try:
+                            session.env = arena.make("sfiii3n", settings)
+                        except Exception as e:
+                            print(f"Error creating DIAMBRA environment: {e}")
+                            session.game_state["status"] = "error"
+                            session.game_state["error"] = str(e)
+                            await session.send_game_state()
+                            await session.prepare_for_next_game()
+                            await session.send_game_state()
+                            continue
                         print("DIAMBRA environment created successfully!")
 
                         session.game_state["status"] = "running"
