@@ -25,7 +25,7 @@ STUN_BAR_MAX = 72
 SUPER_BAR_MAX = 128
 HEALTH_MAX = 160
 
-# moves + characters: https://streetfighter.fandom.com/wiki/List_of_moves_in_Street_Fighter_III:_3rd_Strike
+# moves + characters
 
 MOVES = {
     "No-Move": 0,

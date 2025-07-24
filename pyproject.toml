@@ -1,7 +1,7 @@
 [project]
 name = "sf3"
 version = "0.1.0"
-description = "An interactive Street Fighter 3 demo against an RL-trained LLM in a sandboxed game engine"
+description = "An interactive Street Fighter 3 demo against an RL-trained LLM in a sandboxed game engine."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

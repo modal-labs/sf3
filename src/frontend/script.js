@@ -4,13 +4,19 @@ class StreetFighterGame {
   constructor() {
     this.initializeState();
     this.initializeConstants();
-    this.initializeEventListeners();
+    this.initializeAudio();
     this.initializeUI();
+    this.initializeEventListeners();
     this.initializeWebSocket();
   }
 
+  // init state
+
   initializeState() {
+    // per session
     this.socket = null;
+
+    // per game
     this.gameSettings = {
       difficulty: 1,
       player1: { character: "Ken", outfit: 1, superArt: 1 },
@@ -23,12 +29,14 @@ class StreetFighterGame {
     this.transitionStartTime = null;
     this.readyToHideTransition = false;
 
+    // keys
     this.keyState = {};
     this.inputHistory = [];
     this.movesByLength = {};
     this.allCombos = {};
     this.allSpecialMoves = {};
 
+    // character select
     this.currentCharacter = "Ken";
     this.playerDirection = "right";
     this.characterGrid = {
@@ -38,7 +46,10 @@ class StreetFighterGame {
     };
   }
 
+  // init const
+
   initializeConstants() {
+    // sf3-specific
     this.characters = [
       "Alex",
       "Chun-Li",
@@ -60,7 +71,6 @@ class StreetFighterGame {
       "Yang",
       "Yun",
     ];
-
     this.actions = {
       NONE: 0,
       LEFT: 1,
@@ -83,7 +93,6 @@ class StreetFighterGame {
       SUPER_ART: 18,
       COMBO: 19,
     };
-
     this.idxToMove = {
       0: "No-Move",
       1: "Left",
@@ -104,7 +113,6 @@ class StreetFighterGame {
       16: "Medium Punch+Medium Kick",
       17: "High Punch+High Kick",
     };
-
     this.actionNames = {
       1: "←",
       2: "↖",
@@ -124,7 +132,6 @@ class StreetFighterGame {
       16: "K + I",
       17: "L + O",
     };
-
     this.difficultyLabels = [
       "",
       "Very Easy",
@@ -136,15 +143,471 @@ class StreetFighterGame {
       "Master",
       "Extreme",
     ];
-
     this.numOutfitsPerCharacter = 6;
-    this.animationDuration = 600;
     this.maxInputHistory = 20; // roughly max length of move sequence
+
+    // ux
+    this.animationDuration = 600;
     this.comboTimeout = 500; // ms
     this.transitionMinDisplayTime = 3000; // ms
+    this.coinSoundDuration = 1000;
+    this.capcomSoundDuration = 6000; // ms
+
+    // ui
+    this.buttons = [
+      "start-game-btn",
+      "play-again-btn",
+      "error-back-btn",
+      "p1-selected-portrait",
+      "p2-selected-portrait",
+    ];
+    this.hoverElements = [
+      "super-art-select-p1",
+      "super-art-select-p2",
+      "difficulty-slider",
+      "modal-link",
+    ];
+    this.soundFiles = [
+      "hover",
+      "click",
+      "coin",
+      "capcom",
+      "select",
+      "transition",
+      "start",
+      "win",
+      "lose",
+      "continue",
+    ];
+    this.gameplayMusicFiles = [
+      "alex,ken.mp3",
+      "chun-li.mp3",
+      "dudley.mp3",
+      "elena.mp3",
+      "gouki.mp3",
+      "hugo.mp3",
+      "ibuki.mp3",
+      "makoto.mp3",
+      "necro,twelve.mp3",
+      "q.mp3",
+      "remy.mp3",
+      "ryu.mp3",
+      "sean,oro.mp3",
+      "urien.mp3",
+      "yun,yang.mp3",
+    ];
   }
 
+  // init audio
+
+  initializeAudio() {
+    this.audio = {
+      sounds: {},
+      enabled: localStorage.getItem("audioEnabled") === "true",
+      volume: 0.5,
+      backgroundMusic: null,
+      transitionSound: null,
+      winLoseSound: null,
+    };
+
+    // preload all sounds
+    this.soundFiles.forEach((sound) => {
+      this.audio.sounds[sound] = new Audio(`/sounds/${sound}.mp3`);
+      this.audio.sounds[sound].volume = this.audio.volume;
+      this.audio.sounds[sound].preload = "auto";
+    });
+
+    this.gameplayMusicFiles.forEach((filename) => {
+      const namesPart = filename.replace(".mp3", "");
+      const characters = namesPart.split(",").map((name) => name.trim());
+
+      characters.forEach((character) => {
+        this.audio.sounds[character] = new Audio(
+          `/sounds/gameplay/${filename}`
+        );
+        this.audio.sounds[character].volume = this.audio.volume;
+        this.audio.sounds[character].preload = "auto";
+      });
+    });
+
+    // special handling for capcom sound to detect when it ends
+    this.audio.sounds.capcom.addEventListener("ended", () => {
+      this.showScreen("settings");
+    });
+
+    this.playSound = (soundName) => {
+      if (!this.audio.enabled) return;
+
+      const sound = this.audio.sounds[soundName];
+      if (sound) {
+        // reset and play for overlapping sounds
+        sound.currentTime = 0;
+        sound.play().catch(() => {
+          // ignore autoplay errors silently
+        });
+      }
+    };
+
+    this.playWinLoseSound = (soundName) => {
+      if (!this.audio.enabled) return;
+
+      this.stopWinLoseSound();
+
+      const sound = this.audio.sounds[soundName];
+      if (sound) {
+        sound.currentTime = 0;
+
+        this.audio.winLoseSound = sound;
+
+        const onEndHandler = () => {
+          this.audio.winLoseSound = null;
+          if (
+            document
+              .getElementById("win-screen")
+              .classList.contains("hidden") === false
+          ) {
+            this.playBackgroundMusic("continue");
+          }
+          sound.removeEventListener("ended", onEndHandler);
+        };
+
+        sound.addEventListener("ended", onEndHandler);
+
+        sound.play().catch(() => {
+          this.audio.winLoseSound = null;
+          sound.removeEventListener("ended", onEndHandler);
+          if (
+            document
+              .getElementById("win-screen")
+              .classList.contains("hidden") === false
+          ) {
+            this.playBackgroundMusic("continue");
+          }
+        });
+      }
+    };
+
+    this.stopWinLoseSound = () => {
+      if (this.audio.winLoseSound) {
+        this.audio.winLoseSound.pause();
+        this.audio.winLoseSound.currentTime = 0;
+        this.audio.winLoseSound = null;
+      }
+    };
+
+    this.playBackgroundMusic = (soundName) => {
+      if (!this.audio.enabled) return;
+
+      this.stopBackgroundMusic();
+
+      const sound = this.audio.sounds[soundName];
+      if (sound) {
+        sound.currentTime = 0;
+        sound.loop = true;
+        sound.volume = this.audio.volume * 0.1;
+        sound.play().catch(() => {
+          // ignore autoplay errors silently
+        });
+        this.audio.backgroundMusic = sound;
+      }
+    };
+
+    this.stopBackgroundMusic = () => {
+      if (this.audio.backgroundMusic) {
+        this.audio.backgroundMusic.pause();
+        this.audio.backgroundMusic.currentTime = 0;
+        this.audio.backgroundMusic.loop = false;
+        this.audio.backgroundMusic = null;
+      }
+    };
+
+    this.playTransitionSound = () => {
+      if (!this.audio.enabled) return;
+
+      this.stopTransitionSound();
+
+      const sound = this.audio.sounds["transition"];
+      if (sound) {
+        sound.currentTime = 0;
+        sound.volume = this.audio.volume;
+        sound.play().catch(() => {
+          // ignore autoplay errors silently
+        });
+        this.audio.transitionSound = sound;
+      }
+    };
+
+    this.stopTransitionSound = () => {
+      if (this.audio.transitionSound) {
+        this.audio.transitionSound.pause();
+        this.audio.transitionSound.currentTime = 0;
+        this.audio.transitionSound = null;
+      }
+    };
+
+    this.playGameplayMusic = (character) => {
+      if (!this.audio.enabled) return;
+
+      this.stopBackgroundMusic();
+
+      const sound = this.audio.sounds[character.toLowerCase()];
+      if (sound) {
+        sound.currentTime = 0;
+        sound.volume = this.audio.volume * 0.3;
+        sound.loop = true;
+
+        sound.play().catch((err) => {
+          console.error(`Failed to play music for ${character}:`, err);
+        });
+
+        this.audio.backgroundMusic = sound;
+      } else {
+        console.warn(`No music found for character: ${character}`);
+      }
+    };
+
+    this.toggleMute = () => {
+      this.audio.enabled = !this.audio.enabled;
+      localStorage.setItem("audioEnabled", this.audio.enabled);
+
+      const muteIcon = document.getElementById("mute-icon");
+      if (muteIcon) {
+        muteIcon.src = this.audio.enabled
+          ? "/icons/unmute.svg"
+          : "/icons/mute.svg";
+      }
+
+      if (!this.audio.enabled) {
+        this.stopBackgroundMusic();
+        this.stopTransitionSound();
+        this.stopWinLoseSound();
+      } else {
+        if (
+          document
+            .getElementById("settings-screen")
+            .classList.contains("hidden") === false
+        ) {
+          this.playBackgroundMusic("select");
+        } else if (
+          document.getElementById("win-screen").classList.contains("hidden") ===
+          false
+        ) {
+          if (!this.audio.winLoseSound) {
+            this.playBackgroundMusic("continue");
+          }
+        } else if (
+          this.gameLoaded &&
+          document
+            .getElementById("game-display")
+            .classList.contains("hidden") === false
+        ) {
+          this.playGameplayMusic(this.gameSettings.player1.character);
+        }
+      }
+    };
+
+    const muteButton = document.getElementById("mute-toggle");
+    if (muteButton) {
+      muteButton.addEventListener("click", () => {
+        this.toggleMute();
+        this.playSound("click");
+      });
+
+      muteButton.addEventListener("mouseenter", () => {
+        this.playSound("hover");
+      });
+
+      const muteIcon = document.getElementById("mute-icon");
+      if (muteIcon) {
+        muteIcon.src = this.audio.enabled
+          ? "/icons/unmute.svg"
+          : "/icons/mute.svg";
+      }
+    }
+  }
+
+  // init ui
+
+  initializeUI() {
+    // in order that user sees
+    this.initializeCoinScreen();
+    this.showScreen("coin");
+    this.initializeSplashScreen();
+    this.initializeCharacterGrid();
+    this.initializeDifficultySlider();
+    this.loadExtraMovesDisplay();
+  }
+
+  initializeCoinScreen() {
+    const coinBtn = document.getElementById("insert-coin-btn");
+    if (coinBtn) {
+      coinBtn.addEventListener("click", () => {
+        coinBtn.disabled = true;
+
+        coinBtn.classList.remove("animate-coin-shine");
+        coinBtn.classList.add("animate-coin-insert");
+
+        this.playSound("coin");
+
+        if (this.audio.enabled && this.audio.sounds.coin) {
+          const coinSound = this.audio.sounds.coin;
+          coinSound.addEventListener(
+            "ended",
+            () => {
+              this.transitionToSplash();
+            },
+            { once: true }
+          );
+
+          setTimeout(() => {
+            this.transitionToSplash();
+          }, this.coinSoundDuration);
+        } else {
+          setTimeout(() => {
+            this.transitionToSplash();
+          }, this.coinSoundDuration);
+        }
+      });
+
+      coinBtn.addEventListener("mouseenter", () => {
+        this.playSound("hover");
+      });
+    }
+  }
+
+  transitionToSplash() {
+    if (
+      document.getElementById("coin-screen").classList.contains("hidden") ===
+      false
+    ) {
+      this.showScreen("splash");
+
+      setTimeout(() => {
+        this.playSound("capcom");
+
+        this.splashTimeout = setTimeout(() => {
+          this.showScreen("settings");
+        }, this.capcomSoundDuration);
+      }, 100);
+    }
+  }
+
+  initializeSplashScreen() {
+    const splashScreen = document.getElementById("splash-screen");
+    if (splashScreen) {
+      splashScreen.addEventListener("click", () => {
+        if (this.splashTimeout) {
+          clearTimeout(this.splashTimeout);
+          this.splashTimeout = null;
+        }
+        this.showScreen("settings");
+      });
+    }
+  }
+
+  initializeCharacterGrid() {
+    const gridContainer = document.getElementById("character-grid");
+    gridContainer.innerHTML = "";
+
+    this.characters.forEach((character, index) => {
+      const portrait = this.createPortrait(character, index, "character");
+      gridContainer.appendChild(portrait);
+    });
+
+    this.updatePlayerBoxes();
+    this.updateCharacterBorders();
+
+    const p2SuperArt = document.getElementById("super-art-select-p2");
+    if (p2SuperArt) {
+      p2SuperArt.addEventListener("change", () => this.playSound("click"));
+    }
+  }
+
+  initializeDifficultySlider() {
+    const slider = document.getElementById("difficulty-slider");
+    const label = document.getElementById("difficulty-label");
+
+    slider.addEventListener("input", (e) => {
+      const value = parseInt(e.target.value);
+      this.gameSettings.difficulty = value;
+      label.textContent = this.difficultyLabels[value];
+      this.playSound("click");
+    });
+  }
+
+  async loadExtraMovesDisplay() {
+    // async b/c requires api call
+    const elements = {
+      combosLoading: document.getElementById("combos-loading"),
+      superArtsLoading: document.getElementById("super-arts-loading"),
+      combosList: document.getElementById("combos-list"),
+      superArtsList: document.getElementById("super-arts-list"),
+    };
+
+    try {
+      const response = await fetch("/api/extra-moves");
+      const data = await response.json();
+      this.allCombos = data.combos;
+      this.allSpecialMoves = data.special_moves;
+
+      this.preprocessMoves();
+      this.updateCombosDisplay(this.currentCharacter);
+      this.updateSuperArtsDisplay(this.currentCharacter);
+
+      const superArtSelect = document.getElementById("super-art-select-p1");
+      this.gameSettings.player1.superArt = parseInt(superArtSelect.value);
+
+      superArtSelect.addEventListener("change", () => {
+        this.gameSettings.player1.superArt = parseInt(superArtSelect.value);
+        this.updateSuperArtsDisplay(this.currentCharacter);
+        this.preprocessMoves();
+        this.playSound("click");
+      });
+
+      elements.combosLoading.classList.add("hidden");
+      elements.superArtsLoading.classList.add("hidden");
+    } catch (error) {
+      console.error("Failed to load combos:", error);
+      elements.combosLoading.classList.add("hidden");
+      elements.superArtsLoading.classList.add("hidden");
+      elements.combosList.innerHTML =
+        '<p class="text-sf-red">Failed to load combos</p>';
+      elements.superArtsList.innerHTML =
+        '<p class="text-sf-red">Failed to load super arts</p>';
+    }
+  }
+
+  // init event listen
+
   initializeEventListeners() {
+    this.buttons.forEach((btnId) => {
+      const btn = document.getElementById(btnId);
+      if (btn) {
+        btn.addEventListener("mouseenter", () => this.playSound("hover"));
+      }
+    });
+
+    this.hoverElements.forEach((elemId) => {
+      const elem = document.getElementById(elemId);
+      if (elem) {
+        elem.addEventListener("mouseenter", () => this.playSound("hover"));
+      }
+    });
+
+    document.getElementById("start-game-btn").addEventListener("click", () => {
+      this.playSound("click");
+      this.startGame();
+    });
+    document.getElementById("play-again-btn").addEventListener("click", () => {
+      this.playSound("click");
+      this.resetSelections();
+      this.showScreen("settings");
+    });
+    document.getElementById("error-back-btn").addEventListener("click", () => {
+      this.playSound("click");
+      this.showScreen("settings");
+    });
+
     const handleKeyEvent = (e, isDown) => {
       if (!this.gameLoaded) return;
 
@@ -184,93 +647,72 @@ class StreetFighterGame {
         .getElementById(`${player}-selected-portrait`)
         .addEventListener("click", () => {
           this.switchActivePlayer(player);
+          this.playSound("click");
         });
     });
-
-    document
-      .getElementById("start-game-btn")
-      .addEventListener("click", () => this.startGame());
-    document.getElementById("play-again-btn").addEventListener("click", () => {
-      this.resetSelections();
-      this.showScreen("settings");
-    });
-    document.getElementById("error-back-btn").addEventListener("click", () => {
-      this.showScreen("settings");
-    });
   }
 
-  initializeUI() {
-    this.initializeCharacterGrid();
-    this.initializeDifficultySlider();
-    this.loadExtraMovesDisplay();
-    this.showScreen("settings");
-  }
+  startGame() {
+    const { p1, p2 } = this.characterGrid;
 
-  initializeCharacterGrid() {
-    const gridContainer = document.getElementById("character-grid");
-    gridContainer.innerHTML = "";
-
-    this.characters.forEach((character, index) => {
-      const portrait = this.createPortrait(character, index, "character");
-      gridContainer.appendChild(portrait);
-    });
-
-    this.updatePlayerBoxes();
-    this.updateCharacterBorders();
-  }
-
-  initializeDifficultySlider() {
-    const slider = document.getElementById("difficulty-slider");
-    const label = document.getElementById("difficulty-label");
-
-    slider.addEventListener("input", (e) => {
-      const value = parseInt(e.target.value);
-      this.gameSettings.difficulty = value;
-      label.textContent = this.difficultyLabels[value];
-    });
-  }
-
-  async loadExtraMovesDisplay() {
-    const elements = {
-      combosLoading: document.getElementById("combos-loading"),
-      superArtsLoading: document.getElementById("super-arts-loading"),
-      combosList: document.getElementById("combos-list"),
-      superArtsList: document.getElementById("super-arts-list"),
-    };
-
-    try {
-      const response = await fetch("/api/extra-moves");
-      const data = await response.json();
-      this.allCombos = data.combos;
-      this.allSpecialMoves = data.special_moves;
-
-      this.preprocessMoves();
-      this.updateCombosDisplay(this.currentCharacter);
-      this.updateSuperArtsDisplay(this.currentCharacter);
-
-      const superArtSelect = document.getElementById("super-art-select-p1");
-      this.gameSettings.player1.superArt = parseInt(superArtSelect.value);
-
-      superArtSelect.addEventListener("change", () => {
-        this.gameSettings.player1.superArt = parseInt(superArtSelect.value);
-        this.updateSuperArtsDisplay(this.currentCharacter);
-        this.preprocessMoves();
-      });
-
-      elements.combosLoading.classList.add("hidden");
-      elements.superArtsLoading.classList.add("hidden");
-    } catch (error) {
-      console.error("Failed to load combos:", error);
-      elements.combosLoading.classList.add("hidden");
-      elements.superArtsLoading.classList.add("hidden");
-      elements.combosList.innerHTML =
-        '<p class="text-sf-red">Failed to load combos</p>';
-      elements.superArtsList.innerHTML =
-        '<p class="text-sf-red">Failed to load super arts</p>';
+    if (!p1.selected || !p2.selected) {
+      alert(
+        "Both you and the LLM must have characters selected before starting!"
+      );
+      return;
     }
+
+    if (!p1.outfit || !p2.outfit) {
+      alert("Both you and the LLM must have outfits selected before starting!");
+      return;
+    }
+
+    Object.assign(this.gameSettings.player1, {
+      character: p1.character,
+      outfit: p1.outfit,
+      superArt: parseInt(document.getElementById("super-art-select-p1").value),
+    });
+
+    Object.assign(this.gameSettings.player2, {
+      character: p2.character,
+      outfit: p2.outfit,
+      superArt: parseInt(document.getElementById("super-art-select-p2").value),
+    });
+
+    this.gameSettings.difficulty = parseInt(
+      document.getElementById("difficulty-slider").value
+    );
+
+    this.resetGameState();
+    this.playSound("start");
+    this.showScreen("loading");
+    document.getElementById("loading-status").textContent = "Starting game...";
+    this.sendMessage("start_game", this.gameSettings);
   }
 
-  // ws
+  resetGameState() {
+    this.gameLoaded = false;
+    this.serverReady = false;
+    this.firstFrameReceived = false;
+    this.inTransition = false;
+    this.transitionStartTime = null;
+    this.readyToHideTransition = false;
+    this.keyState = {};
+    this.inputHistory = [];
+
+    const status = document.getElementById("canvas-loading-status");
+    status.textContent = "Loading game...";
+
+    const overlay = document.getElementById("canvas-loading-overlay");
+    overlay.classList.remove("hidden");
+
+    const canvas = document.getElementById("game-canvas");
+    canvas.classList.add("hidden");
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // init ws
 
   initializeWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -379,15 +821,29 @@ class StreetFighterGame {
       case "running":
         this.gameLoaded = true;
         this.showScreen("game");
+        this.playGameplayMusic(this.gameSettings.player1.character);
         break;
       case "finished":
         this.gameLoaded = false;
-        document.getElementById("winner-text").textContent = `Winner: ${
-          data.winner || "Unknown"
-        }`;
+
+        this.stopBackgroundMusic();
+
+        const winner = data.winner || "Unknown";
+        document.getElementById(
+          "winner-text"
+        ).textContent = `Winner: ${winner}`;
+
+        if (winner === "You") {
+          this.playWinLoseSound("win");
+        } else {
+          this.playWinLoseSound("lose");
+        }
+
         this.showScreen("win");
         break;
       case "error":
+        this.gameLoaded = false;
+        this.stopBackgroundMusic();
         this.showError(data.error || "Unknown game error");
         break;
     }
@@ -397,6 +853,9 @@ class StreetFighterGame {
     this.inTransition = true;
     this.transitionStartTime = Date.now();
     this.readyToHideTransition = false;
+
+    this.stopBackgroundMusic();
+    this.playTransitionSound();
 
     const status = document.getElementById("canvas-loading-status");
 
@@ -426,6 +885,12 @@ class StreetFighterGame {
     this.transitionStartTime = null;
     this.readyToHideTransition = false;
 
+    this.stopTransitionSound();
+
+    if (this.gameLoaded) {
+      this.playGameplayMusic(this.gameSettings.player1.character);
+    }
+
     const canvas = document.getElementById("game-canvas");
     canvas.classList.remove("hidden");
 
@@ -444,67 +909,7 @@ class StreetFighterGame {
     }
   }
 
-  // game state
-
-  startGame() {
-    const { p1, p2 } = this.characterGrid;
-
-    if (!p1.selected || !p2.selected) {
-      alert(
-        "Both you and the LLM must have characters selected before starting!"
-      );
-      return;
-    }
-
-    if (!p1.outfit || !p2.outfit) {
-      alert("Both you and the LLM must have outfits selected before starting!");
-      return;
-    }
-
-    Object.assign(this.gameSettings.player1, {
-      character: p1.character,
-      outfit: p1.outfit,
-      superArt: parseInt(document.getElementById("super-art-select-p1").value),
-    });
-
-    Object.assign(this.gameSettings.player2, {
-      character: p2.character,
-      outfit: p2.outfit,
-      superArt: parseInt(document.getElementById("super-art-select-p2").value),
-    });
-
-    this.gameSettings.difficulty = parseInt(
-      document.getElementById("difficulty-slider").value
-    );
-
-    this.resetGameState();
-    this.showScreen("loading");
-    document.getElementById("loading-status").textContent = "Starting game...";
-    this.sendMessage("start_game", this.gameSettings);
-  }
-
-  resetGameState() {
-    this.gameLoaded = false;
-    this.serverReady = false;
-    this.firstFrameReceived = false;
-    this.inTransition = false;
-    this.transitionStartTime = null;
-    this.readyToHideTransition = false;
-    this.keyState = {};
-    this.inputHistory = [];
-
-    const status = document.getElementById("canvas-loading-status");
-    status.textContent = "Loading game...";
-
-    const overlay = document.getElementById("canvas-loading-overlay");
-    overlay.classList.remove("hidden");
-
-    const canvas = document.getElementById("game-canvas");
-    canvas.classList.add("hidden");
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
-
+  // helper fns
   // input handling
 
   preprocessMoves() {
@@ -656,6 +1061,8 @@ class StreetFighterGame {
 
   showScreen(screenId) {
     const screens = [
+      { id: "coin-screen", show: screenId === "coin" },
+      { id: "splash-screen", show: screenId === "splash" },
       { id: "settings-screen", show: screenId === "settings" },
       { id: "loading-screen", show: screenId === "loading" },
       { id: "game-display", show: screenId === "game" },
@@ -675,10 +1082,29 @@ class StreetFighterGame {
 
     const header = document.getElementById("game-header");
     if (header) {
-      if (screenId === "game") {
+      if (screenId === "game" || screenId === "splash") {
         header.classList.add("hidden");
       } else {
         header.classList.remove("hidden");
+      }
+    }
+
+    if (screenId === "settings") {
+      this.playBackgroundMusic("select");
+      this.stopWinLoseSound();
+    } else {
+      this.stopBackgroundMusic();
+      if (screenId !== "win") {
+        this.stopWinLoseSound();
+      }
+    }
+
+    if (screenId === "coin") {
+      const coinBtn = document.getElementById("insert-coin-btn");
+      if (coinBtn) {
+        coinBtn.disabled = false;
+        coinBtn.classList.remove("animate-coin-insert");
+        coinBtn.classList.add("animate-coin-shine");
       }
     }
   }
@@ -876,7 +1302,7 @@ class StreetFighterGame {
     portraitBox.appendChild(placeholder);
 
     portraitImg.classList.add("opacity-0");
-    portraitImg.src = `/portraits/${character}.png`;
+    portraitImg.src = `/portraits/${character.toLowerCase()}.png`;
     portraitImg.classList.remove("hidden");
     nameEl.textContent = character;
 
@@ -957,137 +1383,6 @@ class StreetFighterGame {
     this.updateOutfitBorders();
   }
 
-  // ui element creation
-
-  createOutfitBox(character, index) {
-    const outfit = this.createImageBox({
-      className:
-        "relative size-24 bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200 mx-auto",
-      imageSrc: `/outfits/${character}/${index}.png`,
-      imageAlt: `Outfit ${index + 1}`,
-      imageClassName: "relative size-full object-contain bg-sf-dark rounded-lg",
-    });
-
-    outfit.dataset.outfit = index;
-
-    const label = document.createElement("div");
-    label.className =
-      "absolute bottom-0 left-0 right-0 p-1 text-center font-bold text-sf-green bg-sf-darker/80 backdrop-blur-sm rounded-b-lg";
-    label.textContent = `${index + 1}`;
-    outfit.appendChild(label);
-
-    const borderColor = `border-${this.getPlayerColor(
-      this.characterGrid.activePlayer
-    )}`;
-
-    outfit.addEventListener("mouseenter", () => {
-      if (
-        !outfit.classList.contains("border-sf-red") &&
-        !outfit.classList.contains("border-sf-blue")
-      ) {
-        outfit.classList.remove("border-transparent");
-        outfit.classList.add(borderColor);
-      }
-    });
-
-    outfit.addEventListener("mouseleave", () => {
-      const activePlayer = this.characterGrid.activePlayer;
-      const isSelected = this.characterGrid[activePlayer].outfit === index + 1;
-      if (!isSelected) {
-        outfit.classList.remove("border-sf-red", "border-sf-blue");
-        outfit.classList.add("border-transparent");
-      }
-    });
-
-    outfit.addEventListener("click", () => {
-      this.selectOutfit(this.characterGrid.activePlayer, index);
-    });
-
-    return outfit;
-  }
-
-  createPortrait(character, index, type) {
-    const portrait = this.createImageBox({
-      className:
-        "relative w-full aspect-square bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200",
-      imageSrc: `/portraits/${character}.png`,
-      imageAlt: character,
-      imageClassName: "relative w-full h-full object-contain rounded-lg",
-    });
-
-    portrait.dataset.character = character;
-    portrait.dataset.index = index;
-
-    const nameLabel = document.createElement("div");
-    nameLabel.className =
-      "absolute bottom-0 left-0 right-0 p-1 text-center font-bold text-sf-green bg-sf-darker/80 backdrop-blur-sm rounded-b-lg";
-    nameLabel.textContent = character;
-    portrait.appendChild(nameLabel);
-
-    portrait.addEventListener("mouseenter", () => {
-      if (type === "character") {
-        const borderColor = `border-${this.getPlayerColor(
-          this.characterGrid.activePlayer
-        )}`;
-        portrait.classList.remove("border-transparent");
-        portrait.classList.add(borderColor);
-      }
-    });
-
-    portrait.addEventListener("mouseleave", () => {
-      portrait.classList.remove("border-sf-red", "border-sf-blue");
-      portrait.classList.add("border-transparent");
-      this.updateCharacterBorders();
-    });
-
-    portrait.addEventListener("click", () => {
-      this.selectCharacter(this.characterGrid.activePlayer, character);
-    });
-
-    return portrait;
-  }
-
-  createImageBox({ className, imageSrc, imageAlt, imageClassName }) {
-    const box = document.createElement("div");
-    box.className = className;
-
-    const placeholder = document.createElement("div");
-    placeholder.className = "absolute inset-0 loading-placeholder rounded-lg";
-    box.appendChild(placeholder);
-
-    const img = document.createElement("img");
-    img.src = imageSrc;
-    img.alt = imageAlt;
-    img.className =
-      imageClassName + " opacity-0 transition-opacity duration-300";
-
-    img.addEventListener(
-      "load",
-      () => {
-        img.classList.remove("opacity-0");
-        img.classList.add("opacity-100");
-        placeholder.remove();
-      },
-      { once: true }
-    );
-
-    img.addEventListener(
-      "error",
-      () => {
-        img.classList.remove("opacity-0");
-        img.classList.add("opacity-100");
-        placeholder.innerHTML =
-          '<div class="flex items-center justify-center h-full text-sf-red">?</div>';
-      },
-      { once: true }
-    );
-
-    box.appendChild(img);
-    return box;
-  }
-
-  // utility fns
-
   getPlayerColor(player) {
     return player === "p1" ? "sf-red" : "sf-blue";
   }
@@ -1135,6 +1430,139 @@ class StreetFighterGame {
 
     this.updatePlayerBoxes();
     this.updateCharacterBorders();
+  }
+
+  // ui element creation
+
+  createOutfitBox(character, index) {
+    const outfit = this.createImageBox({
+      className:
+        "relative size-24 bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200 mx-auto",
+      imageSrc: `/outfits/${character}/${index}.png`,
+      imageAlt: `Outfit ${index + 1}`,
+      imageClassName: "relative size-full object-contain bg-sf-dark rounded-lg",
+    });
+
+    outfit.dataset.outfit = index;
+
+    const label = document.createElement("div");
+    label.className =
+      "absolute bottom-0 left-0 right-0 p-1 text-center font-bold text-sf-green bg-sf-darker/80 backdrop-blur-sm rounded-b-lg";
+    label.textContent = `${index + 1}`;
+    outfit.appendChild(label);
+
+    const borderColor = `border-${this.getPlayerColor(
+      this.characterGrid.activePlayer
+    )}`;
+
+    outfit.addEventListener("mouseenter", () => {
+      if (
+        !outfit.classList.contains("border-sf-red") &&
+        !outfit.classList.contains("border-sf-blue")
+      ) {
+        outfit.classList.remove("border-transparent");
+        outfit.classList.add(borderColor);
+        this.playSound("hover");
+      }
+    });
+
+    outfit.addEventListener("mouseleave", () => {
+      const activePlayer = this.characterGrid.activePlayer;
+      const isSelected = this.characterGrid[activePlayer].outfit === index + 1;
+      if (!isSelected) {
+        outfit.classList.remove("border-sf-red", "border-sf-blue");
+        outfit.classList.add("border-transparent");
+      }
+    });
+
+    outfit.addEventListener("click", () => {
+      this.selectOutfit(this.characterGrid.activePlayer, index);
+      this.playSound("click");
+    });
+
+    return outfit;
+  }
+
+  createPortrait(character, index, type) {
+    const portrait = this.createImageBox({
+      className:
+        "relative w-full aspect-square bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200",
+      imageSrc: `/portraits/${character.toLowerCase()}.png`,
+      imageAlt: character,
+      imageClassName: "relative w-full h-full object-contain rounded-lg",
+    });
+
+    portrait.dataset.character = character;
+    portrait.dataset.index = index;
+
+    const nameLabel = document.createElement("div");
+    nameLabel.className =
+      "absolute bottom-0 left-0 right-0 p-1 text-center font-bold text-sf-green bg-sf-darker/80 backdrop-blur-sm rounded-b-lg";
+    nameLabel.textContent = character;
+    portrait.appendChild(nameLabel);
+
+    portrait.addEventListener("mouseenter", () => {
+      if (type === "character") {
+        const borderColor = `border-${this.getPlayerColor(
+          this.characterGrid.activePlayer
+        )}`;
+        portrait.classList.remove("border-transparent");
+        portrait.classList.add(borderColor);
+        this.playSound("hover");
+      }
+    });
+
+    portrait.addEventListener("mouseleave", () => {
+      portrait.classList.remove("border-sf-red", "border-sf-blue");
+      portrait.classList.add("border-transparent");
+      this.updateCharacterBorders();
+    });
+
+    portrait.addEventListener("click", () => {
+      this.selectCharacter(this.characterGrid.activePlayer, character);
+      this.playSound("click");
+    });
+
+    return portrait;
+  }
+
+  createImageBox({ className, imageSrc, imageAlt, imageClassName }) {
+    const box = document.createElement("div");
+    box.className = className;
+
+    const placeholder = document.createElement("div");
+    placeholder.className = "absolute inset-0 loading-placeholder rounded-lg";
+    box.appendChild(placeholder);
+
+    const img = document.createElement("img");
+    img.src = imageSrc;
+    img.alt = imageAlt;
+    img.className =
+      imageClassName + " opacity-0 transition-opacity duration-300";
+
+    img.addEventListener(
+      "load",
+      () => {
+        img.classList.remove("opacity-0");
+        img.classList.add("opacity-100");
+        placeholder.remove();
+      },
+      { once: true }
+    );
+
+    img.addEventListener(
+      "error",
+      () => {
+        img.classList.remove("opacity-0");
+        img.classList.add("opacity-100");
+        placeholder.innerHTML =
+          '<div class="flex items-center justify-center h-full text-sf-red">?</div>';
+      },
+      { once: true }
+    );
+
+    box.appendChild(img);
+    return box;
   }
 }
 
