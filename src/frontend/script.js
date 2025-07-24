@@ -5,9 +5,13 @@ class StreetFighterGame {
     this.initializeState();
     this.initializeConstants();
     this.initializeAudio();
-    this.initializeUI();
-    this.initializeEventListeners();
-    this.initializeWebSocket();
+    this.showScreen(this.screens.LOADING);
+    document.getElementById("loading-status").textContent = "Loading assets...";
+    this.preloadAllAssets().then(() => {
+      this.initializeUI();
+      this.initializeEventListeners();
+      this.initializeWebSocket();
+    });
   }
 
   // init state
@@ -33,8 +37,8 @@ class StreetFighterGame {
     this.keyState = {};
     this.inputHistory = [];
     this.movesByLength = {};
-    this.allCombos = {};
-    this.allSpecialMoves = {};
+    this.combos = {};
+    this.specialMoves = {};
 
     // character select
     this.currentCharacter = "Ken";
@@ -71,67 +75,35 @@ class StreetFighterGame {
       "Yang",
       "Yun",
     ];
-    this.actions = {
-      NONE: 0,
-      LEFT: 1,
-      LEFT_UP: 2,
-      UP: 3,
-      RIGHT_UP: 4,
-      RIGHT: 5,
-      RIGHT_DOWN: 6,
-      DOWN: 7,
-      LEFT_DOWN: 8,
-      LIGHT_PUNCH: 9,
-      MEDIUM_PUNCH: 10,
-      HEAVY_PUNCH: 11,
-      LIGHT_KICK: 12,
-      MEDIUM_KICK: 13,
-      HEAVY_KICK: 14,
-      LP_LK: 15,
-      MP_MK: 16,
-      HP_HK: 17,
-      SUPER_ART: 18,
-      COMBO: 19,
-    };
-    this.idxToMove = {
-      0: "No-Move",
-      1: "Left",
-      2: "Left+Up",
-      3: "Up",
-      4: "Up+Right",
-      5: "Right",
-      6: "Right+Down",
-      7: "Down",
-      8: "Down+Left",
-      9: "Low Punch",
-      10: "Medium Punch",
-      11: "High Punch",
-      12: "Low Kick",
-      13: "Medium Kick",
-      14: "High Kick",
-      15: "Low Punch+Low Kick",
-      16: "Medium Punch+Medium Kick",
-      17: "High Punch+High Kick",
-    };
-    this.actionNames = {
-      1: "←",
-      2: "↖",
-      3: "↑",
-      4: "↗",
-      5: "→",
-      6: "↘",
-      7: "↓",
-      8: "↙",
-      9: "J",
-      10: "K",
-      11: "L",
-      12: "U",
-      13: "I",
-      14: "O",
-      15: "J + U",
-      16: "K + I",
-      17: "L + O",
-    };
+    this.idxToMove = [
+      { name: "No-Move", display: "" },
+      { name: "Left", display: "←" },
+      { name: "Left+Up", display: "↖" },
+      { name: "Up", display: "↑" },
+      { name: "Up+Right", display: "↗" },
+      { name: "Right", display: "→" },
+      { name: "Right+Down", display: "↘" },
+      { name: "Down", display: "↓" },
+      { name: "Down+Left", display: "↙" },
+      { name: "Low Punch", display: "J" },
+      { name: "Medium Punch", display: "K" },
+      { name: "High Punch", display: "L" },
+      { name: "Low Kick", display: "U" },
+      { name: "Medium Kick", display: "I" },
+      { name: "High Kick", display: "O" },
+      { name: "Low Punch+Low Kick", display: "J + U" },
+      { name: "Medium Punch+Medium Kick", display: "K + I" },
+      { name: "High Punch+High Kick", display: "L + O" },
+    ];
+
+    this.actions = {};
+    this.idxToMove.forEach((move, idx) => {
+      let key = move.name.toUpperCase().replace(/[ +\-]/g, "_");
+      this.actions[key] = idx;
+    });
+    this.actions.SUPER_ART = 18;
+    this.actions.COMBO = 19;
+
     this.difficultyLabels = [
       "",
       "Very Easy",
@@ -153,7 +125,29 @@ class StreetFighterGame {
     this.coinSoundDuration = 1000;
     this.capcomSoundDuration = 6000; // ms
 
+    this.volume = 0.5;
+    this.selectVolume = 0.2;
+    this.startSoundVolume = 0.2;
+    this.gameplayMusicVolume = 0.2;
+    this.transitionSoundVolume = 0.2;
+    this.winLoseSoundVolume = 0.2;
+
     // ui
+    this.staticImages = {
+      CAPCOM: "/capcom.svg",
+      MODAL: "/modal.svg",
+      MUTE: "/icons/mute.svg",
+      UNMUTE: "/icons/unmute.svg",
+    };
+    this.screens = {
+      COIN: "coin",
+      SPLASH: "splash",
+      SETTINGS: "settings",
+      LOADING: "loading",
+      GAME: "game",
+      WIN: "win",
+      ERROR: "error",
+    };
     this.buttons = [
       "start-game-btn",
       "play-again-btn",
@@ -167,35 +161,48 @@ class StreetFighterGame {
       "difficulty-slider",
       "modal-link",
     ];
-    this.soundFiles = [
-      "hover",
-      "click",
-      "coin",
-      "capcom",
-      "select",
-      "transition",
-      "start",
-      "win",
-      "lose",
-      "continue",
-    ];
+
+    // audio  (suffix = .mp3 added later)
+    this.soundFiles = {
+      HOVER: "hover",
+      CLICK: "click",
+      COIN: "coin",
+      CAPCOM: "capcom",
+      SELECT: "select",
+      TRANSITION: "transition",
+      START: "start",
+      WIN: "win",
+      LOSE: "lose",
+      CONTINUE: "continue",
+    };
     this.gameplayMusicFiles = [
-      "alex,ken.mp3",
-      "chun-li.mp3",
-      "dudley.mp3",
-      "elena.mp3",
-      "gouki.mp3",
-      "hugo.mp3",
-      "ibuki.mp3",
-      "makoto.mp3",
-      "necro,twelve.mp3",
-      "q.mp3",
-      "remy.mp3",
-      "ryu.mp3",
-      "sean,oro.mp3",
-      "urien.mp3",
-      "yun,yang.mp3",
+      "alex,ken",
+      "chun-li",
+      "dudley",
+      "elena",
+      "gouki",
+      "hugo",
+      "ibuki",
+      "makoto",
+      "necro,twelve",
+      "q",
+      "remy",
+      "ryu",
+      "sean,oro",
+      "urien",
+      "yun,yang",
     ];
+    this.gameplayMusicMap = {};
+    this.gameplayMusicFiles.forEach((entry) => {
+      entry.split(",").forEach((name) => {
+        const formattedName = name
+          .trim()
+          .split("-")
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join("-");
+        this.gameplayMusicMap[formattedName] = entry;
+      });
+    });
   }
 
   // init audio
@@ -205,85 +212,190 @@ class StreetFighterGame {
       sounds: {},
       enabled: localStorage.getItem("audioEnabled") === "true",
       volume: 0.5,
-      backgroundMusic: null,
+      selectSound: null,
       transitionSound: null,
       winLoseSound: null,
+      currentEffects: [],
     };
 
-    // preload all sounds
-    this.soundFiles.forEach((sound) => {
-      this.audio.sounds[sound] = new Audio(`/sounds/${sound}.mp3`);
-      this.audio.sounds[sound].volume = this.audio.volume;
-      this.audio.sounds[sound].preload = "auto";
+    this.setupAudioPlayback();
+    this.setupMuteButton();
+  }
+
+  async preloadAllAssets() {
+    const totalAssets = [];
+
+    Object.entries(this.soundFiles).forEach(([, filename]) => {
+      // not using key since we get like `this.soundFiles.CLICK`
+      const audio = new Audio(`/sounds/${filename}.mp3`);
+      audio.volume = this.audio.volume;
+      audio.preload = "auto";
+      this.audio.sounds[filename] = audio;
+      totalAssets.push(
+        new Promise((resolve) => {
+          audio.addEventListener("canplaythrough", resolve, { once: true });
+          audio.addEventListener("error", resolve, { once: true });
+        })
+      );
     });
 
-    this.gameplayMusicFiles.forEach((filename) => {
-      const namesPart = filename.replace(".mp3", "");
-      const characters = namesPart.split(",").map((name) => name.trim());
-
-      characters.forEach((character) => {
-        this.audio.sounds[character] = new Audio(
-          `/sounds/gameplay/${filename}`
-        );
-        this.audio.sounds[character].volume = this.audio.volume;
-        this.audio.sounds[character].preload = "auto";
-      });
+    Object.entries(this.gameplayMusicMap).forEach(([key, filename]) => {
+      const audio = new Audio(`/sounds/gameplay/${filename}.mp3`);
+      audio.volume = this.audio.volume;
+      audio.preload = "auto";
+      this.audio.sounds[key] = audio;
+      totalAssets.push(
+        new Promise((resolve) => {
+          audio.addEventListener("canplaythrough", resolve, { once: true });
+          audio.addEventListener("error", resolve, { once: true });
+        })
+      );
     });
 
-    // special handling for capcom sound to detect when it ends
-    this.audio.sounds.capcom.addEventListener("ended", () => {
-      this.showScreen("settings");
+    this.characters.forEach((character) => {
+      const img = new Image();
+      img.src = `/portraits/${character.toLowerCase()}.png`;
+      totalAssets.push(
+        new Promise((resolve) => {
+          img.onload = resolve;
+          img.onerror = resolve;
+        })
+      );
     });
 
-    this.playSound = (soundName) => {
-      if (!this.audio.enabled) return;
+    Object.entries(this.staticImages).forEach(([, src]) => {
+      const img = new Image();
+      img.src = src;
+      totalAssets.push(
+        new Promise((resolve) => {
+          img.onload = resolve;
+          img.onerror = resolve;
+        })
+      );
+    });
+
+    await Promise.all(totalAssets);
+  }
+
+  setupAudioPlayback() {
+    this.playAudio = (soundName, options = {}) => {
+      const {
+        volume = 1,
+        loop = false,
+        trackAs = "effect",
+        onEnd = null,
+      } = options;
 
       const sound = this.audio.sounds[soundName];
-      if (sound) {
-        // reset and play for overlapping sounds
-        sound.currentTime = 0;
-        sound.play().catch(() => {
-          // ignore autoplay errors silently
-        });
+      if (!sound) {
+        console.warn(`No sound found for: ${soundName}`);
+        return;
       }
+
+      if (trackAs === "select") this.stopSelectSound();
+      else if (trackAs === "transition") this.stopTransitionSound();
+      else if (trackAs === "winLose") this.stopWinLoseSound();
+
+      sound.currentTime = 0;
+      sound.loop = loop;
+      sound.volume = this.audio.enabled ? this.audio.volume * volume : 0;
+
+      if (trackAs === "select") {
+        this.audio.selectSound = sound;
+      } else if (trackAs === "transition") {
+        this.audio.transitionSound = sound;
+      } else if (trackAs === "winLose") {
+        this.audio.winLoseSound = sound;
+      } else {
+        sound._volumeMultiplier = volume;
+        this.audio.currentEffects.push(sound);
+      }
+
+      const onEndHandler = () => {
+        if (trackAs === "effect") {
+          const index = this.audio.currentEffects.indexOf(sound);
+          if (index > -1) this.audio.currentEffects.splice(index, 1);
+          delete sound._volumeMultiplier;
+        } else if (trackAs === "winLose") {
+          this.audio.winLoseSound = null;
+        }
+
+        if (onEnd) onEnd();
+        sound.removeEventListener("ended", onEndHandler);
+      };
+
+      if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
+        sound.addEventListener("ended", onEndHandler);
+      }
+
+      sound.play().catch(() => {
+        if (trackAs === "effect") {
+          const index = this.audio.currentEffects.indexOf(sound);
+          if (index > -1) this.audio.currentEffects.splice(index, 1);
+          delete sound._volumeMultiplier;
+        } else if (trackAs === "winLose") {
+          this.audio.winLoseSound = null;
+        }
+        if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
+          sound.removeEventListener("ended", onEndHandler);
+        }
+      });
+    };
+
+    this.playSound = (soundName) => {
+      this.playAudio(soundName, { trackAs: "effect" });
+    };
+
+    this.playSelectSound = (soundName) => {
+      this.playAudio(soundName, {
+        volume: this.selectVolume,
+        loop: true,
+        trackAs: "select",
+      });
     };
 
     this.playWinLoseSound = (soundName) => {
-      if (!this.audio.enabled) return;
-
-      this.stopWinLoseSound();
-
-      const sound = this.audio.sounds[soundName];
-      if (sound) {
-        sound.currentTime = 0;
-
-        this.audio.winLoseSound = sound;
-
-        const onEndHandler = () => {
-          this.audio.winLoseSound = null;
+      this.playAudio(soundName, {
+        volume: this.winLoseSoundVolume,
+        trackAs: "winLose",
+        onEnd: () => {
           if (
-            document
-              .getElementById("win-screen")
-              .classList.contains("hidden") === false
+            !document.getElementById("win-screen").classList.contains("hidden")
           ) {
-            this.playBackgroundMusic("continue");
+            this.playSelectSound(this.soundFiles.CONTINUE);
           }
-          sound.removeEventListener("ended", onEndHandler);
-        };
+        },
+      });
+    };
 
-        sound.addEventListener("ended", onEndHandler);
+    this.playTransitionSound = () => {
+      this.playAudio(this.soundFiles.TRANSITION, {
+        volume: this.transitionSoundVolume,
+        trackAs: "transition",
+      });
+    };
 
-        sound.play().catch(() => {
-          this.audio.winLoseSound = null;
-          sound.removeEventListener("ended", onEndHandler);
-          if (
-            document
-              .getElementById("win-screen")
-              .classList.contains("hidden") === false
-          ) {
-            this.playBackgroundMusic("continue");
-          }
-        });
+    this.playGameplayMusic = (character) => {
+      this.playAudio(character, {
+        volume: this.gameplayMusicVolume,
+        loop: true,
+        trackAs: "select",
+      });
+    };
+
+    this.playStartSound = () => {
+      this.playAudio(this.soundFiles.START, {
+        volume: this.startSoundVolume,
+        trackAs: "effect",
+      });
+    };
+
+    this.stopSelectSound = () => {
+      if (this.audio.selectSound) {
+        this.audio.selectSound.pause();
+        this.audio.selectSound.currentTime = 0;
+        this.audio.selectSound.loop = false;
+        this.audio.selectSound = null;
       }
     };
 
@@ -295,74 +407,11 @@ class StreetFighterGame {
       }
     };
 
-    this.playBackgroundMusic = (soundName) => {
-      if (!this.audio.enabled) return;
-
-      this.stopBackgroundMusic();
-
-      const sound = this.audio.sounds[soundName];
-      if (sound) {
-        sound.currentTime = 0;
-        sound.loop = true;
-        sound.volume = this.audio.volume * 0.1;
-        sound.play().catch(() => {
-          // ignore autoplay errors silently
-        });
-        this.audio.backgroundMusic = sound;
-      }
-    };
-
-    this.stopBackgroundMusic = () => {
-      if (this.audio.backgroundMusic) {
-        this.audio.backgroundMusic.pause();
-        this.audio.backgroundMusic.currentTime = 0;
-        this.audio.backgroundMusic.loop = false;
-        this.audio.backgroundMusic = null;
-      }
-    };
-
-    this.playTransitionSound = () => {
-      if (!this.audio.enabled) return;
-
-      this.stopTransitionSound();
-
-      const sound = this.audio.sounds["transition"];
-      if (sound) {
-        sound.currentTime = 0;
-        sound.volume = this.audio.volume;
-        sound.play().catch(() => {
-          // ignore autoplay errors silently
-        });
-        this.audio.transitionSound = sound;
-      }
-    };
-
     this.stopTransitionSound = () => {
       if (this.audio.transitionSound) {
         this.audio.transitionSound.pause();
         this.audio.transitionSound.currentTime = 0;
         this.audio.transitionSound = null;
-      }
-    };
-
-    this.playGameplayMusic = (character) => {
-      if (!this.audio.enabled) return;
-
-      this.stopBackgroundMusic();
-
-      const sound = this.audio.sounds[character.toLowerCase()];
-      if (sound) {
-        sound.currentTime = 0;
-        sound.volume = this.audio.volume * 0.3;
-        sound.loop = true;
-
-        sound.play().catch((err) => {
-          console.error(`Failed to play music for ${character}:`, err);
-        });
-
-        this.audio.backgroundMusic = sound;
-      } else {
-        console.warn(`No music found for character: ${character}`);
       }
     };
 
@@ -373,55 +422,52 @@ class StreetFighterGame {
       const muteIcon = document.getElementById("mute-icon");
       if (muteIcon) {
         muteIcon.src = this.audio.enabled
-          ? "/icons/unmute.svg"
-          : "/icons/mute.svg";
+          ? this.staticImages.UNMUTE
+          : this.staticImages.MUTE;
       }
 
-      if (!this.audio.enabled) {
-        this.stopBackgroundMusic();
-        this.stopTransitionSound();
-        this.stopWinLoseSound();
-      } else {
-        if (
-          document
-            .getElementById("settings-screen")
-            .classList.contains("hidden") === false
-        ) {
-          this.playBackgroundMusic("select");
-        } else if (
-          document.getElementById("win-screen").classList.contains("hidden") ===
-          false
-        ) {
-          if (!this.audio.winLoseSound) {
-            this.playBackgroundMusic("continue");
-          }
-        } else if (
-          this.gameLoaded &&
-          document
-            .getElementById("game-display")
-            .classList.contains("hidden") === false
-        ) {
-          this.playGameplayMusic(this.gameSettings.player1.character);
-        }
+      if (this.audio.selectSound) {
+        this.audio.selectSound.volume = this.audio.enabled
+          ? this.audio.volume * this.selectVolume
+          : 0;
       }
+
+      if (this.audio.transitionSound) {
+        this.audio.transitionSound.volume = this.audio.enabled
+          ? this.audio.volume * this.transitionSoundVolume
+          : 0;
+      }
+
+      if (this.audio.winLoseSound) {
+        this.audio.winLoseSound.volume = this.audio.enabled
+          ? this.audio.volume * this.winLoseSoundVolume
+          : 0;
+      }
+
+      this.audio.currentEffects.forEach((sound) => {
+        const multiplier = sound._volumeMultiplier || 1;
+        sound.volume = this.audio.enabled ? this.audio.volume * multiplier : 0;
+      });
     };
+  }
 
+  setupMuteButton() {
     const muteButton = document.getElementById("mute-toggle");
     if (muteButton) {
       muteButton.addEventListener("click", () => {
         this.toggleMute();
-        this.playSound("click");
+        this.playSound(this.soundFiles.CLICK);
       });
 
       muteButton.addEventListener("mouseenter", () => {
-        this.playSound("hover");
+        this.playSound(this.soundFiles.HOVER);
       });
 
       const muteIcon = document.getElementById("mute-icon");
       if (muteIcon) {
         muteIcon.src = this.audio.enabled
-          ? "/icons/unmute.svg"
-          : "/icons/mute.svg";
+          ? this.staticImages.UNMUTE
+          : this.staticImages.MUTE;
       }
     }
   }
@@ -429,13 +475,12 @@ class StreetFighterGame {
   // init ui
 
   initializeUI() {
-    // in order that user sees
+    // in the order that user sees them
     this.initializeCoinScreen();
-    this.showScreen("coin");
-    this.initializeSplashScreen();
+    this.showScreen(this.screens.COIN);
     this.initializeCharacterGrid();
-    this.initializeDifficultySlider();
     this.loadExtraMovesDisplay();
+    this.initializeDifficultySlider();
   }
 
   initializeCoinScreen() {
@@ -447,30 +492,15 @@ class StreetFighterGame {
         coinBtn.classList.remove("animate-coin-shine");
         coinBtn.classList.add("animate-coin-insert");
 
-        this.playSound("coin");
+        this.playSound(this.soundFiles.COIN);
 
-        if (this.audio.enabled && this.audio.sounds.coin) {
-          const coinSound = this.audio.sounds.coin;
-          coinSound.addEventListener(
-            "ended",
-            () => {
-              this.transitionToSplash();
-            },
-            { once: true }
-          );
-
-          setTimeout(() => {
-            this.transitionToSplash();
-          }, this.coinSoundDuration);
-        } else {
-          setTimeout(() => {
-            this.transitionToSplash();
-          }, this.coinSoundDuration);
-        }
+        setTimeout(() => {
+          this.transitionToSplash();
+        }, this.coinSoundDuration);
       });
 
       coinBtn.addEventListener("mouseenter", () => {
-        this.playSound("hover");
+        this.playSound(this.soundFiles.HOVER);
       });
     }
   }
@@ -480,28 +510,12 @@ class StreetFighterGame {
       document.getElementById("coin-screen").classList.contains("hidden") ===
       false
     ) {
-      this.showScreen("splash");
+      this.showScreen(this.screens.SPLASH);
+      this.playSound(this.soundFiles.CAPCOM);
 
       setTimeout(() => {
-        this.playSound("capcom");
-
-        this.splashTimeout = setTimeout(() => {
-          this.showScreen("settings");
-        }, this.capcomSoundDuration);
-      }, 100);
-    }
-  }
-
-  initializeSplashScreen() {
-    const splashScreen = document.getElementById("splash-screen");
-    if (splashScreen) {
-      splashScreen.addEventListener("click", () => {
-        if (this.splashTimeout) {
-          clearTimeout(this.splashTimeout);
-          this.splashTimeout = null;
-        }
-        this.showScreen("settings");
-      });
+        this.showScreen(this.screens.SETTINGS);
+      }, this.capcomSoundDuration);
     }
   }
 
@@ -519,7 +533,9 @@ class StreetFighterGame {
 
     const p2SuperArt = document.getElementById("super-art-select-p2");
     if (p2SuperArt) {
-      p2SuperArt.addEventListener("change", () => this.playSound("click"));
+      p2SuperArt.addEventListener("change", () =>
+        this.playSound(this.soundFiles.CLICK)
+      );
     }
   }
 
@@ -531,12 +547,11 @@ class StreetFighterGame {
       const value = parseInt(e.target.value);
       this.gameSettings.difficulty = value;
       label.textContent = this.difficultyLabels[value];
-      this.playSound("click");
+      this.playSound(this.soundFiles.CLICK);
     });
   }
 
   async loadExtraMovesDisplay() {
-    // async b/c requires api call
     const elements = {
       combosLoading: document.getElementById("combos-loading"),
       superArtsLoading: document.getElementById("super-arts-loading"),
@@ -547,8 +562,8 @@ class StreetFighterGame {
     try {
       const response = await fetch("/api/extra-moves");
       const data = await response.json();
-      this.allCombos = data.combos;
-      this.allSpecialMoves = data.special_moves;
+      this.combos = data.combos;
+      this.specialMoves = data.special_moves;
 
       this.preprocessMoves();
       this.updateCombosDisplay(this.currentCharacter);
@@ -561,7 +576,7 @@ class StreetFighterGame {
         this.gameSettings.player1.superArt = parseInt(superArtSelect.value);
         this.updateSuperArtsDisplay(this.currentCharacter);
         this.preprocessMoves();
-        this.playSound("click");
+        this.playSound(this.soundFiles.CLICK);
       });
 
       elements.combosLoading.classList.add("hidden");
@@ -577,35 +592,39 @@ class StreetFighterGame {
     }
   }
 
-  // init event listen
+  // init event listeners
 
   initializeEventListeners() {
     this.buttons.forEach((btnId) => {
       const btn = document.getElementById(btnId);
       if (btn) {
-        btn.addEventListener("mouseenter", () => this.playSound("hover"));
+        btn.addEventListener("mouseenter", () =>
+          this.playSound(this.soundFiles.HOVER)
+        );
       }
     });
 
     this.hoverElements.forEach((elemId) => {
       const elem = document.getElementById(elemId);
       if (elem) {
-        elem.addEventListener("mouseenter", () => this.playSound("hover"));
+        elem.addEventListener("mouseenter", () =>
+          this.playSound(this.soundFiles.HOVER)
+        );
       }
     });
 
     document.getElementById("start-game-btn").addEventListener("click", () => {
-      this.playSound("click");
+      this.playSound(this.soundFiles.CLICK);
       this.startGame();
     });
     document.getElementById("play-again-btn").addEventListener("click", () => {
-      this.playSound("click");
+      this.playSound(this.soundFiles.CLICK);
       this.resetSelections();
-      this.showScreen("settings");
+      this.showScreen(this.screens.SETTINGS);
     });
     document.getElementById("error-back-btn").addEventListener("click", () => {
-      this.playSound("click");
-      this.showScreen("settings");
+      this.playSound(this.soundFiles.CLICK);
+      this.showScreen(this.screens.SETTINGS);
     });
 
     const handleKeyEvent = (e, isDown) => {
@@ -616,10 +635,10 @@ class StreetFighterGame {
 
       this.sendMessage("player_action", {
         action,
-        move: this.idxToMove[action],
+        move: this.idxToMove[action].name,
       });
 
-      if (action !== this.actions.NONE) {
+      if (action !== this.actions.NO_MOVE) {
         this.inputHistory.push({ action, time: Date.now() });
 
         if (this.inputHistory.length > this.maxInputHistory) {
@@ -647,7 +666,7 @@ class StreetFighterGame {
         .getElementById(`${player}-selected-portrait`)
         .addEventListener("click", () => {
           this.switchActivePlayer(player);
-          this.playSound("click");
+          this.playSound(this.soundFiles.CLICK);
         });
     });
   }
@@ -683,11 +702,15 @@ class StreetFighterGame {
       document.getElementById("difficulty-slider").value
     );
 
-    this.resetGameState();
-    this.playSound("start");
-    this.showScreen("loading");
-    document.getElementById("loading-status").textContent = "Starting game...";
-    this.sendMessage("start_game", this.gameSettings);
+    this.playStartSound();
+
+    setTimeout(() => {
+      this.resetGameState();
+      this.showScreen(this.screens.LOADING);
+      document.getElementById("loading-status").textContent =
+        "Starting game...";
+      this.sendMessage("start_game", this.gameSettings);
+    }, 10);
   }
 
   resetGameState() {
@@ -820,13 +843,13 @@ class StreetFighterGame {
         break;
       case "running":
         this.gameLoaded = true;
-        this.showScreen("game");
+        this.showScreen(this.screens.GAME);
         this.playGameplayMusic(this.gameSettings.player1.character);
         break;
       case "finished":
         this.gameLoaded = false;
 
-        this.stopBackgroundMusic();
+        this.stopSelectSound();
 
         const winner = data.winner || "Unknown";
         document.getElementById(
@@ -834,16 +857,16 @@ class StreetFighterGame {
         ).textContent = `Winner: ${winner}`;
 
         if (winner === "You") {
-          this.playWinLoseSound("win");
+          this.playWinLoseSound(this.soundFiles.WIN);
         } else {
-          this.playWinLoseSound("lose");
+          this.playWinLoseSound(this.soundFiles.LOSE);
         }
 
-        this.showScreen("win");
+        this.showScreen(this.screens.WIN);
         break;
       case "error":
         this.gameLoaded = false;
-        this.stopBackgroundMusic();
+        this.stopSelectSound();
         this.showError(data.error || "Unknown game error");
         break;
     }
@@ -854,7 +877,7 @@ class StreetFighterGame {
     this.transitionStartTime = Date.now();
     this.readyToHideTransition = false;
 
-    this.stopBackgroundMusic();
+    this.stopSelectSound();
     this.playTransitionSound();
 
     const status = document.getElementById("canvas-loading-status");
@@ -873,6 +896,11 @@ class StreetFighterGame {
     const canvas = document.getElementById("game-canvas");
     canvas.classList.add("hidden");
 
+    const header = document.getElementById("game-header");
+    if (header) {
+      header.classList.remove("hidden");
+    }
+
     setTimeout(() => {
       if (this.readyToHideTransition && this.inTransition) {
         this.hideTransitionOverlay();
@@ -887,8 +915,17 @@ class StreetFighterGame {
 
     this.stopTransitionSound();
 
-    if (this.gameLoaded) {
+    if (
+      this.gameLoaded &&
+      document.getElementById("game-display").classList.contains("hidden") ===
+        false
+    ) {
       this.playGameplayMusic(this.gameSettings.player1.character);
+
+      const header = document.getElementById("game-header");
+      if (header) {
+        header.classList.add("hidden");
+      }
     }
 
     const canvas = document.getElementById("game-canvas");
@@ -917,8 +954,8 @@ class StreetFighterGame {
 
     if (!this.currentCharacter) return;
 
-    const characterMoves = this.allSpecialMoves[this.currentCharacter];
-    const characterCombos = this.allCombos[this.currentCharacter];
+    const characterMoves = this.specialMoves[this.currentCharacter];
+    const characterCombos = this.combos[this.currentCharacter];
     const selectedSuperArt = this.gameSettings.player1.superArt;
 
     if (characterMoves) {
@@ -982,16 +1019,16 @@ class StreetFighterGame {
       HK: this.keyState["KeyO"],
     };
 
-    if (attacks.LP && attacks.LK) return this.actions.LP_LK;
-    if (attacks.MP && attacks.MK) return this.actions.MP_MK;
-    if (attacks.HP && attacks.HK) return this.actions.HP_HK;
+    if (attacks.LP && attacks.LK) return this.actions.LOW_PUNCH_LOW_KICK;
+    if (attacks.MP && attacks.MK) return this.actions.MEDIUM_PUNCH_MEDIUM_KICK;
+    if (attacks.HP && attacks.HK) return this.actions.HIGH_PUNCH_HIGH_KICK;
 
-    if (attacks.HP) return this.actions.HEAVY_PUNCH;
+    if (attacks.HP) return this.actions.HIGH_PUNCH;
     if (attacks.MP) return this.actions.MEDIUM_PUNCH;
-    if (attacks.LP) return this.actions.LIGHT_PUNCH;
-    if (attacks.HK) return this.actions.HEAVY_KICK;
+    if (attacks.LP) return this.actions.LOW_PUNCH;
+    if (attacks.HK) return this.actions.HIGH_KICK;
     if (attacks.MK) return this.actions.MEDIUM_KICK;
-    if (attacks.LK) return this.actions.LIGHT_KICK;
+    if (attacks.LK) return this.actions.LOW_KICK;
 
     const directions = {
       left: this.keyState["KeyA"] || this.keyState["ArrowLeft"],
@@ -1001,8 +1038,8 @@ class StreetFighterGame {
     };
 
     if (directions.left && directions.up) return this.actions.LEFT_UP;
-    if (directions.right && directions.up) return this.actions.RIGHT_UP;
-    if (directions.left && directions.down) return this.actions.LEFT_DOWN;
+    if (directions.right && directions.up) return this.actions.UP_RIGHT;
+    if (directions.left && directions.down) return this.actions.DOWN_LEFT;
     if (directions.right && directions.down) return this.actions.RIGHT_DOWN;
 
     if (directions.left) return this.actions.LEFT;
@@ -1010,7 +1047,7 @@ class StreetFighterGame {
     if (directions.up) return this.actions.UP;
     if (directions.down) return this.actions.DOWN;
 
-    return this.actions.NONE;
+    return this.actions.NO_MOVE;
   }
 
   detectExtra() {
@@ -1061,13 +1098,13 @@ class StreetFighterGame {
 
   showScreen(screenId) {
     const screens = [
-      { id: "coin-screen", show: screenId === "coin" },
-      { id: "splash-screen", show: screenId === "splash" },
-      { id: "settings-screen", show: screenId === "settings" },
-      { id: "loading-screen", show: screenId === "loading" },
-      { id: "game-display", show: screenId === "game" },
-      { id: "win-screen", show: screenId === "win" },
-      { id: "error-screen", show: screenId === "error" },
+      { id: "coin-screen", show: screenId === this.screens.COIN },
+      { id: "splash-screen", show: screenId === this.screens.SPLASH },
+      { id: "settings-screen", show: screenId === this.screens.SETTINGS },
+      { id: "loading-screen", show: screenId === this.screens.LOADING },
+      { id: "game-display", show: screenId === this.screens.GAME },
+      { id: "win-screen", show: screenId === this.screens.WIN },
+      { id: "error-screen", show: screenId === this.screens.ERROR },
     ];
     screens.forEach((screen) => {
       const el = document.getElementById(screen.id);
@@ -1082,24 +1119,24 @@ class StreetFighterGame {
 
     const header = document.getElementById("game-header");
     if (header) {
-      if (screenId === "game" || screenId === "splash") {
+      if (screenId === this.screens.GAME || screenId === this.screens.SPLASH) {
         header.classList.add("hidden");
       } else {
         header.classList.remove("hidden");
       }
     }
 
-    if (screenId === "settings") {
-      this.playBackgroundMusic("select");
+    if (screenId === this.screens.SETTINGS) {
+      this.playSelectSound(this.soundFiles.SELECT);
       this.stopWinLoseSound();
     } else {
-      this.stopBackgroundMusic();
-      if (screenId !== "win") {
+      this.stopSelectSound();
+      if (screenId !== this.screens.WIN) {
         this.stopWinLoseSound();
       }
     }
 
-    if (screenId === "coin") {
+    if (screenId === this.screens.COIN) {
       const coinBtn = document.getElementById("insert-coin-btn");
       if (coinBtn) {
         coinBtn.disabled = false;
@@ -1112,14 +1149,14 @@ class StreetFighterGame {
   showError(message) {
     document.getElementById("error-details").textContent =
       new Date().toLocaleString() + "\n" + message;
-    this.showScreen("error");
+    this.showScreen(this.screens.ERROR);
   }
 
   // character move display
 
   updateCombosDisplay(character) {
     const combosList = document.getElementById("combos-list");
-    const combos = this.allCombos[character];
+    const combos = this.combos[character];
 
     const moves = Object.entries(combos).map(([name, data]) => ({
       name,
@@ -1134,7 +1171,7 @@ class StreetFighterGame {
     const selectedSuperArt = document.getElementById(
       "super-art-select-p1"
     ).value;
-    const characterMoves = this.allSpecialMoves[character];
+    const characterMoves = this.specialMoves[character];
     const moves = [];
 
     for (const [moveKey, moveData] of Object.entries(characterMoves)) {
@@ -1182,7 +1219,7 @@ class StreetFighterGame {
   getExtraElements(sequence) {
     return sequence
       .map((action, index) => {
-        const symbol = this.actionNames[action] || "?";
+        const symbol = this.idxToMove[action].display;
         const isLast = index === sequence.length - 1;
         return `
                 <span class="control-key">${symbol}</span>
@@ -1418,7 +1455,7 @@ class StreetFighterGame {
     this.gameSettings.player1.superArt = 1;
     this.gameSettings.player2.superArt = 1;
 
-    if (this.currentCharacter && this.allCombos && this.allSpecialMoves) {
+    if (this.currentCharacter && this.combos && this.specialMoves) {
       this.updateCombosDisplay(this.currentCharacter);
       this.updateSuperArtsDisplay(this.currentCharacter);
       this.preprocessMoves();
@@ -1462,7 +1499,7 @@ class StreetFighterGame {
       ) {
         outfit.classList.remove("border-transparent");
         outfit.classList.add(borderColor);
-        this.playSound("hover");
+        this.playSound(this.soundFiles.HOVER);
       }
     });
 
@@ -1477,7 +1514,7 @@ class StreetFighterGame {
 
     outfit.addEventListener("click", () => {
       this.selectOutfit(this.characterGrid.activePlayer, index);
-      this.playSound("click");
+      this.playSound(this.soundFiles.CLICK);
     });
 
     return outfit;
@@ -1508,7 +1545,7 @@ class StreetFighterGame {
         )}`;
         portrait.classList.remove("border-transparent");
         portrait.classList.add(borderColor);
-        this.playSound("hover");
+        this.playSound(this.soundFiles.HOVER);
       }
     });
 
@@ -1520,7 +1557,7 @@ class StreetFighterGame {
 
     portrait.addEventListener("click", () => {
       this.selectCharacter(this.characterGrid.activePlayer, character);
-      this.playSound("click");
+      this.playSound(this.soundFiles.CLICK);
     });
 
     return portrait;
