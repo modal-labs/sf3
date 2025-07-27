@@ -138,7 +138,7 @@ class Web:
             await self.yolo.boot.remote.aio()
         print("YOLO created")
 
-    @modal.asgi_app()
+    @modal.asgi_app(custom_domains=["sf3.modal.dev"])
     def app(self):
         import asyncio
         import json
@@ -217,6 +217,7 @@ class Web:
                         "outfit": 1,
                         "superArt": 1,
                     },
+                    "humanVsLlm": True,
                 }
                 self.game_state = create_initial_game_state()
 
@@ -254,6 +255,9 @@ class Web:
 
             async def handle_player_action(self, action_data):
                 if self.observation is None:
+                    return
+
+                if not self.game_settings.get("humanVsLlm", True):
                     return
 
                 action = action_data["action"]
@@ -461,6 +465,17 @@ class Web:
                             last_move=session.player2_last_move,
                         )
 
+                        if not session.game_settings.get("humanVsLlm", True):
+                            messages_p1 = create_messages(game_info, player2, player1)
+
+                            move_name_p1, moves_p1 = await self.llm.chat.remote.aio(
+                                messages_p1,
+                                p1_character,
+                                obs_p1["side"],
+                            )
+                            session.player1_last_move = move_name_p1
+                            session.player1_next_moves.extend(moves_p1)
+
                         messages = create_messages(game_info, player1, player2)
 
                         move_name, moves = await self.llm.chat.remote.aio(
@@ -492,7 +507,9 @@ class Web:
                         settings = EnvironmentSettingsMultiAgent(
                             step_ratio=1,
                             role=(Roles.P1, Roles.P2),
-                            disable_keyboard=False,
+                            disable_keyboard=not session.game_settings.get(
+                                "humanVsLlm", True
+                            ),
                             render_mode="rgb_array",
                             splash_screen=False,
                             grpc_timeout=1 * minutes,
@@ -557,7 +574,11 @@ class Web:
                                 session.actions = {
                                     "agent_0": session.player1_next_moves.pop(0)
                                     if session.player1_next_moves
-                                    else session.player1_current_action,
+                                    else (
+                                        session.player1_current_action
+                                        if session.game_settings.get("humanVsLlm", True)
+                                        else 0
+                                    ),
                                     "agent_1": session.player2_next_moves.pop(0)
                                     if session.player2_next_moves
                                     else 0,
@@ -630,14 +651,24 @@ class Web:
                                         f"Game finished - P1: {p1_wins}, P2: {p2_wins}"
                                     )
 
-                                    if p1_wins > p2_wins:
-                                        session.game_state["scores"][0] += 1
-                                        winner = "You"
-                                    elif p2_wins > p1_wins:
-                                        session.game_state["scores"][1] += 1
-                                        winner = "LLM"
+                                    if session.game_settings.get("humanVsLlm", True):
+                                        if p1_wins > p2_wins:
+                                            session.game_state["scores"][0] += 1
+                                            winner = "YOU"
+                                        elif p2_wins > p1_wins:
+                                            session.game_state["scores"][1] += 1
+                                            winner = "LLM"
+                                        else:
+                                            winner = "Draw"
                                     else:
-                                        winner = "Draw"
+                                        if p1_wins > p2_wins:
+                                            session.game_state["scores"][0] += 1
+                                            winner = "LLM 1"
+                                        elif p2_wins > p1_wins:
+                                            session.game_state["scores"][1] += 1
+                                            winner = "LLM 2"
+                                        else:
+                                            winner = "Draw"
 
                                     session.game_state["status"] = "finished"
                                     session.game_state["winner"] = winner
@@ -693,8 +724,12 @@ class Web:
         async def index():
             return FileResponse(f"{remote_frontend_dir}/index.html")
 
+        @web_app.get("/icons/{icon}.png")
+        async def icon_png(icon: str):
+            return FileResponse(f"{remote_icons_dir}/{icon}.png")
+
         @web_app.get("/icons/{icon}.svg")
-        async def icon(icon: str):
+        async def icon_svg(icon: str):
             return FileResponse(f"{remote_icons_dir}/{icon}.svg")
 
         @web_app.get("/capcom.svg")

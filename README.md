@@ -45,6 +45,8 @@ modal deploy -m src.app
 ### Icons
 
 - [Feathericons](https://feathericons.com/)
+- [Human](https://www.flaticon.com/free-icons/muscle)
+- [LLM](https://www.flaticon.com/free-icons/robot)
 
 ### LLM
 
