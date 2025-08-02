@@ -18,8 +18,6 @@ random.seed(seed)
 
 X_SIZE = 384
 Y_SIZE = 224
-MIN_Y = 80
-MAX_Y = 200
 
 STUN_BAR_MAX = 72
 SUPER_BAR_MAX = 128
@@ -1712,7 +1710,6 @@ class PlayerState:
     health: int
     super_count: int
     super_bar: int
-    last_move: str
 
 
 @dataclass
@@ -1812,9 +1809,6 @@ def create_messages(
     # power
     power_prompt = f"Super bar max: {SUPER_BAR_MAX}. Your super bar is at {player2.super_bar}. Your opponent's super bar is at {player1.super_bar}."
 
-    # last move
-    last_move_prompt = f"Your last move was {player2.last_move}. Your opponent's last move was {player1.last_move}."
-
     # moves
     moves_prompt = "You can use the following moves:\n"
     moves_prompt += chr(10).join(
@@ -1836,10 +1830,9 @@ def create_messages(
                 {health_prompt}
                 {stun_prompt}
                 {power_prompt}
-                {last_move_prompt}
                 {moves_prompt}
 
-                Respond simply with the best move.
+                Simply respond with just the name of the best move, no other text.
                 """
             ),
         },

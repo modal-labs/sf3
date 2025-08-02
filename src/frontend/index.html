@@ -49,6 +49,15 @@
             .static-noise {
                 background-image: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 4px);
             }
+            .gamepad-hover {
+                @apply drop-shadow-[0_0_8px_#ffd700] animate-gamepad-pulse;
+            }
+            .gamepad-connected {
+                cursor: none !important;
+            }
+            .gamepad-connected * {
+                cursor: none !important;
+            }
         }
     </style>
     <script>
@@ -168,6 +177,14 @@
                             '50%': { 
                                 boxShadow: '0 0 40px rgba(255, 215, 0, 1), inset 0 0 30px rgba(255, 215, 0, 0.6)' 
                             }
+                        },
+                        'gamepad-pulse': {
+                            '0%, 100%': { 
+                                filter: 'drop-shadow(0 0 8px #ffd700) brightness(1)' 
+                            },
+                            '50%': { 
+                                filter: 'drop-shadow(0 0 20px #ffd700) brightness(1.2)' 
+                            }
                         }
                     },
                     animation: {
@@ -179,7 +196,8 @@
                         'capcom-intro': 'capcom-intro 6s ease-out forwards',
                         'static-flicker': 'static-flicker 0.5s steps(10) infinite',
                         'coin-insert': 'coin-insert 2s ease-in forwards',
-                        'coin-shine': 'coin-shine 2s ease-in-out infinite'
+                        'coin-shine': 'coin-shine 2s ease-in-out infinite',
+                        'gamepad-pulse': 'gamepad-pulse 1.5s ease-in-out infinite'
                     },
                 }
             }
@@ -203,36 +221,65 @@
     </header>
     
     <button id="player-toggle"
-        class="hidden fixed bottom-4 left-4 z-50 p-3 bg-sf-dark border-2 border-sf-green rounded-full hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl transition-all duration-200 shadow-lg"
+        class="hidden fixed bottom-36 right-4 z-50 p-3 bg-sf-dark border-2 border-sf-green rounded-full hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl transition-all duration-200 shadow-lg"
         title="Toggle Player vs LLM">
-        <img id="player-icon" src="/icons/human.png" alt="Player Toggle" class="w-6 h-6 filter invert">
-    </button>
-    
-    <button id="mute-toggle"
-        class="hidden fixed bottom-4 right-4 z-50 p-3 bg-sf-dark border-2 border-sf-green rounded-full hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl transition-all duration-200 shadow-lg"
-        title="Toggle Sound">
-        <img id="mute-icon" src="/icons/unmute.svg" alt="Sound Toggle" class="w-6 h-6 filter invert">
+        <img id="player-icon" src="/icons/human.png" alt="Player Toggle" class="size-6 filter invert">
     </button>
 
+    <button id="mute-toggle"
+        class="hidden fixed bottom-20 right-4 z-50 p-3 bg-sf-dark border-2 border-sf-green rounded-full hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl transition-all duration-200 shadow-lg"
+        title="Toggle Sound">
+        <img id="mute-icon" src="/icons/unmute.svg" alt="Sound Toggle" class="size-6 filter invert">
+    </button>
+
+    <button id="gamepad-status"
+        class="hidden fixed bottom-4 right-4 z-50 p-3 bg-sf-darker border-2 border-sf-gold-dark rounded-full shadow-lg cursor-default"
+        title="Gamepad Status">
+        <img id="gamepad-icon" src="/icons/gamepad.png" alt="Gamepad Status" class="size-6 filter invert">
+    </button>
+
+    <div id="gamepad-help"
+        class="hidden fixed bottom-4 left-4 z-50 p-4 flex flex-col gap-4 bg-sf-darker border-2 border-sf-green rounded-lg shadow-lg">
+        <h3 class="text-sf-green font-bold">Gamepad Controls</h3>
+        <div class="flex flex-col gap-2 text-sf-beige text-xs">
+            <div class="flex justify-between items-center gap-4">
+                <span class="control-key">D-Pad/Left Stick</span>
+                <span class="text-right">Navigate</span>
+            </div>
+            <div class="flex justify-between items-center gap-4">
+                <span class="control-key">LB/L1 • RB/R1</span>
+                <span class="text-right">Change Section</span>
+            </div>
+            <div class="flex justify-between items-center gap-4">
+                <span class="control-key">A/X</span>
+                <span class="text-right">Select</span>
+            </div>
+            <div class="flex justify-between items-center gap-4">
+                <span class="control-key">Left/Right</span>
+                <span class="text-right">Adjust Sliders</span>
+            </div>
+        </div>
+    </div>
+
     <main class="relative flex-1 flex justify-center items-center">
-        <div id="loading-screen" class="w-full h-full flex flex-col items-center justify-center gap-8">
+        <div id="loading-screen" class="size-full flex flex-col items-center justify-center gap-8">
             <div class="size-16 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
             </div>
             <h2 id="loading-status" class="text-2xl text-sf-green text-glow animate-pulse">
                 Loading
                 assets...</h2>
         </div>
-        <div id="coin-screen" class="hidden w-full h-full flex flex-col justify-center items-center">
+        <div id="coin-screen" class="hidden size-full flex flex-col justify-center items-center">
             <button id="insert-coin-btn" class="py-4 px-8 bg-sf-darker hover:bg-sf-dark border-2 border-sf-gold hover:border-sf-gold-dark font-bold rounded-lg text-2xl text-sf-gold hover:text-sf-gold-dark transition-all duration-200 animate-coin-shine cursor-pointer">
                 INSERT COIN
             </button>
         </div>
-        <div id="splash-screen" class="hidden w-full h-full flex flex-col justify-center items-center cursor-pointer">
+        <div id="splash-screen" class="hidden size-full flex flex-col justify-center items-center cursor-pointer">
             <div class="absolute inset-0 animate-static-flicker static-noise"></div>
-            <img src="/capcom.svg" alt="Capcom" class="capcom-logo w-96 h-auto relative z-10">
-            <p class="absolute bottom-8 text-sf-beige-dark text-sm animate-pulse">Click anywhere to skip</p>
+            <img src="/capcom.svg" alt="Capcom" class="capcom-logo w-96 h-auto z-10">
+            <p id="splash-skip-text" class="absolute bottom-8 text-sf-beige-dark text-sm animate-pulse">Click anywhere to skip</p>
         </div>
-        <div id="settings-screen" class="hidden p-16 w-full h-full flex flex-col justify-center items-center gap-8">
+        <div id="settings-screen" class="hidden p-16 size-full flex flex-col justify-center items-center gap-8">
             <div class="flex justify-center items-start gap-8">
                 <div class="panel flex-shrink-0">
                     <h1 class="text-4xl text-sf-green text-glow mb-6 tracking-wider">CHARACTER
@@ -241,14 +288,14 @@
                         <div id="p1-selection-box" class="flex flex-col justify-center items-center gap-4">
                             <h2 class="text-sf-red text-2xl text-glow">YOU</h2>
                             <div id="p1-selected-portrait" class="portrait-box border-sf-red">
-                                <img src="" alt="" class="hidden w-full h-full object-cover rounded-lg">
+                                <img src="" alt="" class="hidden size-full object-cover rounded-lg">
                             </div>
                             <p id="p1-selected-name" class="text-sf-gold text-xl font-bold">-</p>
                         </div>
                         <div id="p2-selection-box" class="flex flex-col justify-center items-center gap-4">
                             <h2 class="text-sf-blue text-2xl text-glow">LLM</h2>
                             <div id="p2-selected-portrait" class="portrait-box border-transparent">
-                                <img src="" alt="" class="hidden w-full h-full object-cover rounded-lg">
+                                <img src="" alt="" class="hidden size-full object-cover rounded-lg">
                             </div>
                             <p id="p2-selected-name" class="text-sf-gold text-xl font-bold">-</p>
                         </div>
@@ -265,9 +312,9 @@
             </div>
             <div class="panel-md">
                 <h2 class="text-sf-green text-2xl text-glow">Controls</h2>
-                <div class="w-full flex justify-between md:justify-center items-center gap-8">
+                <div class="w-full flex justify-between items-center gap-8">
                     <h3 class="text-sf-gold text-lg">Movement:</h3>
-                    <span class="control-key">WASD / Arrow Keys</span>
+                    <span class="control-key" id="movement-display">WASD / Arrow Keys</span>
                 </div>
                 <div
                     class="pt-8 w-full border-t border-sf-green flex flex-col md:flex-row justify-center items-center gap-8">
@@ -275,15 +322,15 @@
                         <h3 class="text-sf-gold text-lg">Punches</h3>
                         <div class="w-full flex justify-between md:justify-between items-center gap-2">
                             <p>Light:</p>
-                            <span class="control-key">J</span>
+                            <span class="control-key" id="lp-display">J</span>
                         </div>
                         <div class="w-full flex justify-between md:justify-between items-center gap-2">
                             <p>Medium:</p>
-                            <span class="control-key">K</span>
+                            <span class="control-key" id="mp-display">K</span>
                         </div>
                         <div class="w-full flex justify-between md:justify-between items-center gap-2">
                             <p>Heavy:</p>
-                            <span class="control-key">L</span>
+                            <span class="control-key" id="hp-display">L</span>
                         </div>
                     </div>
                     <div
@@ -291,15 +338,15 @@
                         <h3 class="text-sf-gold text-lg">Kicks</h3>
                         <div class="w-full flex justify-between md:justify-between items-center gap-2">
                             <p>Light:</p>
-                            <span class="control-key">U</span>
+                            <span class="control-key" id="lk-display">U</span>
                         </div>
                         <div class="w-full flex justify-between md:justify-between items-center gap-2">
                             <p>Medium:</p>
-                            <span class="control-key">I</span>
+                            <span class="control-key" id="mk-display">I</span>
                         </div>
                         <div class="w-full flex justify-between md:justify-between items-center gap-2">
                             <p>Heavy:</p>
-                            <span class="control-key">O</span>
+                            <span class="control-key" id="hk-display">O</span>
                         </div>
                     </div>
                 </div>
@@ -307,15 +354,15 @@
                     <h3 class="text-sf-gold text-lg">Special Combos</h3>
                     <div class="w-full flex justify-between md:justify-center items-center gap-8">
                         <p>LP + LK:</p>
-                        <span class="control-key">J + U</span>
+                        <span class="control-key" id="lplk-display">J + U</span>
                     </div>
                     <div class="w-full flex justify-between md:justify-center items-center gap-8">
                         <p>MP + MK:</p>
-                        <span class="control-key">K + I</span>
+                        <span class="control-key" id="mpmk-display">K + I</span>
                     </div>
                     <div class="w-full flex justify-between md:justify-center items-center gap-8">
                         <p>HP + HK:</p>
-                        <span class="control-key">L + O</span>
+                        <span class="control-key" id="hphk-display">L + O</span>
                     </div>
                 </div>
             </div>
@@ -409,7 +456,7 @@
                 Connecting to server...
             </button>
         </div>
-        <div id="game-display" class="hidden w-full h-full">
+        <div id="game-screen" class="hidden size-full">
             <div class="flex items-center justify-center">
                 <canvas id="game-canvas" width="768" height="448"
                     class="bg-sf-darker border-2 border-sf-green rounded-lg hidden"></canvas>

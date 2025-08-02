@@ -40,13 +40,24 @@ modal serve -m src.app
 modal deploy -m src.app
 ```
 
+## Training
+
+```bash
+# Prepare the data, train the YOLO model, and export to ONNX
+modal run -m src.training.yolo --prepare --train --export
+
+# Prepare the data and train the LLM
+modal run -m src.training.yolo --prepare --train
+```
+
 ## Credit
 
 ### Icons
 
-- [Feathericons](https://feathericons.com/)
+- [Gamepad](https://www.flaticon.com/free-icons/controller)
 - [Human](https://www.flaticon.com/free-icons/muscle)
 - [LLM](https://www.flaticon.com/free-icons/robot)
+- [Mute/unmute icons](https://feathericons.com/)
 
 ### LLM
 
@@ -65,6 +76,8 @@ modal deploy -m src.app
 
 ### Sounds
 
+- [Gamepad connect](https://orangefreesounds.com/usb-connection-sound-effect/)
+- [Gamepad disconnect](https://www.myinstants.com/en/instant/windows-10-usb-disconnect-8906/)
 - [Button click](https://freesound.org/people/orginaljun/sounds/157871/)
 - [Button/link hover](https://freesound.org/people/steaq/sounds/757328/)
 - [Coin insert](https://www.myinstants.com/en/instant/street-fighter-ii-coin/)

@@ -67,9 +67,12 @@ image = (
     .apt_install(
         "ffmpeg",
     )
-    .pip_install("uv")
-    .run_commands(
-        "uv pip install --system --compile-bytecode diambra-arena==2.2.7 diambra==0.0.20 fastapi[standard]==0.116.1 websockets==15.0.1 numpy==2.3.1",
+    .uv_pip_install(
+        "diambra-arena==2.2.7",
+        "diambra==0.0.20",
+        "fastapi[standard]==0.116.1",
+        "websockets==15.0.1",
+        "numpy==2.3.1",
     )
     # engine
     .add_local_file(
@@ -218,6 +221,7 @@ class Web:
                         "superArt": 1,
                     },
                     "humanVsLlm": True,
+                    "gamepadConnected": False,
                 }
                 self.game_state = create_initial_game_state()
 
@@ -225,8 +229,6 @@ class Web:
 
                 self.observation = None
                 self.info = None
-                self.player1_last_move = ""
-                self.player2_last_move = ""
 
                 # transition state
 
@@ -266,7 +268,6 @@ class Web:
 
                 if action == 18:
                     super_art_name = action_data["super_art"]
-                    self.player1_last_move = super_art_name
 
                     p1_obs = self.observation["P1"]
                     p1_character = CHARACTER_MAPPING[p1_obs["character"]]
@@ -284,7 +285,6 @@ class Web:
 
                 elif action == 19:
                     combo_name = action_data["combo"]
-                    self.player1_last_move = combo_name
 
                     p1_obs = self.observation["P1"]
                     p1_character = CHARACTER_MAPPING[p1_obs["character"]]
@@ -298,8 +298,6 @@ class Web:
                 # normal move
 
                 else:
-                    self.player1_last_move = action_data.get("move", "unknown")
-
                     if action <= 8:  # directional, so don't queue
                         self.player1_current_action = action
                     else:  # attack moves (9-17), so queue
@@ -327,8 +325,6 @@ class Web:
                 self.game_state = create_initial_game_state()
                 self.observation = None
                 self.info = None
-                self.player1_last_move = ""
-                self.player2_last_move = ""
                 self.player1_next_moves = []
                 self.player2_next_moves = []
                 self.player1_current_action = 0
@@ -376,6 +372,10 @@ class Web:
                                 session.game_running = True
                         elif message_type == "player_action":
                             await session.handle_player_action(data["data"])
+                        elif message_type == "gamepad_status":
+                            session.game_settings["gamepadConnected"] = data.get(
+                                "data", {}
+                            ).get("connected", False)
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in message processor")
@@ -449,7 +449,6 @@ class Web:
                             health=obs_p1["health"][0],
                             super_count=obs_p1["super_count"][0],
                             super_bar=obs_p1["super_bar"][0],
-                            last_move=session.player1_last_move,
                         )
 
                         player2 = PlayerState(
@@ -462,28 +461,25 @@ class Web:
                             health=obs_p2["health"][0],
                             super_count=obs_p2["super_count"][0],
                             super_bar=obs_p2["super_bar"][0],
-                            last_move=session.player2_last_move,
                         )
 
                         if not session.game_settings.get("humanVsLlm", True):
                             messages_p1 = create_messages(game_info, player2, player1)
 
-                            move_name_p1, moves_p1 = await self.llm.chat.remote.aio(
+                            moves_p1 = await self.llm.chat.remote.aio(
                                 messages_p1,
                                 p1_character,
                                 obs_p1["side"],
                             )
-                            session.player1_last_move = move_name_p1
                             session.player1_next_moves.extend(moves_p1)
 
                         messages = create_messages(game_info, player1, player2)
 
-                        move_name, moves = await self.llm.chat.remote.aio(
+                        moves = await self.llm.chat.remote.aio(
                             messages,
                             p2_character,
                             obs_p2["side"],
                         )
-                        session.player2_last_move = move_name
                         session.player2_next_moves.extend(moves)
 
                 except WebSocketDisconnect:
@@ -504,12 +500,18 @@ class Web:
                         p1_settings = session.game_settings["player1"]
                         p2_settings = session.game_settings["player2"]
 
+                        disable_keyboard = not session.game_settings.get(
+                            "humanVsLlm", True
+                        )
+                        disable_joystick = not session.game_settings.get(
+                            "gamepadConnected", False
+                        )
+
                         settings = EnvironmentSettingsMultiAgent(
                             step_ratio=1,
                             role=(Roles.P1, Roles.P2),
-                            disable_keyboard=not session.game_settings.get(
-                                "humanVsLlm", True
-                            ),
+                            disable_keyboard=disable_keyboard,
+                            disable_joystick=disable_joystick,
                             render_mode="rgb_array",
                             splash_screen=False,
                             grpc_timeout=1 * minutes,
