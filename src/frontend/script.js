@@ -1,42 +1,546 @@
+const AudioManager = {
+  sounds: {},
+  enabled: true,
+  volume: 0.5,
+  currentEffects: [],
+  selectSound: null,
+  transitionSound: null,
+  winLoseSound: null,
+
+  init() {
+    this.enabled = localStorage.getItem("audioEnabled") !== "false";
+    this.setupMuteButton();
+  },
+
+  async preloadSounds(soundFiles, gameplayMusicMap) {
+    const promises = [];
+
+    Object.entries(soundFiles).forEach(([, filename]) => {
+      const asset = new Audio(`/sounds/${filename}.mp3`);
+      asset.volume = this.volume;
+      asset.preload = "auto";
+      this.sounds[filename] = asset;
+      promises.push(
+        new Promise((resolve) => {
+          asset.addEventListener("canplaythrough", resolve, { once: true });
+          asset.addEventListener("error", resolve, { once: true });
+        })
+      );
+    });
+
+    Object.entries(gameplayMusicMap).forEach(([key, filename]) => {
+      const asset = new Audio(`/sounds/gameplay/${filename}.mp3`);
+      asset.volume = this.volume;
+      asset.preload = "auto";
+      this.sounds[key] = asset;
+      promises.push(
+        new Promise((resolve) => {
+          asset.addEventListener("canplaythrough", resolve, { once: true });
+          asset.addEventListener("error", resolve, { once: true });
+        })
+      );
+    });
+
+    await Promise.all(promises);
+  },
+
+  play(soundName, options = {}) {
+    const {
+      volume = 1,
+      loop = false,
+      trackAs = "effect",
+      onEnd = null,
+    } = options;
+
+    const sound = this.sounds[soundName];
+    if (!sound) {
+      console.warn(`No sound found for: ${soundName}`);
+      return;
+    }
+
+    if (trackAs === "select") this.stopTrack("select");
+    else if (trackAs === "transition") this.stopTrack("transition");
+    else if (trackAs === "winLose") this.stopTrack("winLose");
+
+    sound.currentTime = 0;
+    sound.loop = loop;
+    sound.volume = this.enabled ? this.volume * volume : 0;
+
+    if (trackAs === "select") {
+      this.selectSound = sound;
+    } else if (trackAs === "transition") {
+      this.transitionSound = sound;
+    } else if (trackAs === "winLose") {
+      this.winLoseSound = sound;
+    } else {
+      sound._volumeMultiplier = volume;
+      this.currentEffects.push(sound);
+    }
+
+    const onEndHandler = () => {
+      if (trackAs === "effect") {
+        const index = this.currentEffects.indexOf(sound);
+        if (index > -1) this.currentEffects.splice(index, 1);
+        delete sound._volumeMultiplier;
+      } else if (trackAs === "winLose") {
+        this.winLoseSound = null;
+      }
+
+      if (onEnd) onEnd();
+      sound.removeEventListener("ended", onEndHandler);
+    };
+
+    if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
+      sound.addEventListener("ended", onEndHandler);
+    }
+
+    sound.play().catch(() => {
+      if (trackAs === "effect") {
+        const index = this.currentEffects.indexOf(sound);
+        if (index > -1) this.currentEffects.splice(index, 1);
+        delete sound._volumeMultiplier;
+      } else if (trackAs === "winLose") {
+        this.winLoseSound = null;
+      }
+      if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
+        sound.removeEventListener("ended", onEndHandler);
+      }
+    });
+  },
+
+  playSound(soundName) {
+    this.play(soundName, { trackAs: "effect" });
+  },
+
+  stopTrack(trackType) {
+    const trackMap = {
+      select: "selectSound",
+      winLose: "winLoseSound",
+      transition: "transitionSound",
+    };
+
+    const soundProp = trackMap[trackType];
+    const sound = this[soundProp];
+
+    if (sound) {
+      sound.pause();
+      sound.currentTime = 0;
+      sound.loop = false;
+      this[soundProp] = null;
+    }
+  },
+
+  stopAll() {
+    this.stopTrack("select");
+    this.stopTrack("winLose");
+    this.stopTrack("transition");
+
+    this.currentEffects.forEach((sound) => {
+      sound.pause();
+      sound.currentTime = 0;
+    });
+    this.currentEffects = [];
+  },
+
+  toggleMute() {
+    this.enabled = !this.enabled;
+    localStorage.setItem("audioEnabled", this.enabled);
+
+    const muteIcon = document.getElementById("mute-icon");
+    if (muteIcon) {
+      muteIcon.src = this.enabled ? "/icons/unmute.svg" : "/icons/mute.svg";
+    }
+
+    if (this.selectSound) {
+      this.selectSound.volume = this.enabled ? this.volume * 0.2 : 0;
+    }
+
+    if (this.transitionSound) {
+      this.transitionSound.volume = this.enabled ? this.volume * 0.2 : 0;
+    }
+
+    if (this.winLoseSound) {
+      this.winLoseSound.volume = this.enabled ? this.volume * 0.2 : 0;
+    }
+
+    this.currentEffects.forEach((sound) => {
+      const multiplier = sound._volumeMultiplier || 1;
+      sound.volume = this.enabled ? this.volume * multiplier : 0;
+    });
+  },
+
+  setupMuteButton() {
+    const muteButton = document.getElementById("mute-toggle");
+    if (muteButton) {
+      muteButton.addEventListener("click", () => {
+        this.toggleMute();
+        AudioManager.playSound("click");
+      });
+
+      muteButton.addEventListener("mouseenter", () => {
+        AudioManager.playSound("hover");
+      });
+
+      const muteIcon = document.getElementById("mute-icon");
+      if (muteIcon) {
+        muteIcon.src = this.enabled ? "/icons/unmute.svg" : "/icons/mute.svg";
+      }
+    }
+  },
+};
+
+const GamepadManager = {
+  connected: false,
+  index: null,
+  animationFrame: null,
+  state: {
+    axes: { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } },
+    buttons: {},
+  },
+  deadzone: 0.2,
+  buttonMapping: {
+    0: "LP", // A/X button -> Light Punch
+    1: "MP", // B/Circle button -> Medium Punch
+    2: "LK", // X/Square button -> Light Kick
+    3: "MK", // Y/Triangle button -> Medium Kick
+    4: "HK", // Left Bumper -> Heavy Kick
+    5: "HP", // Right Bumper -> Heavy Punch
+    6: null, // Left Trigger
+    7: null, // Right Trigger
+    8: null, // Select/Back
+    9: null, // Start
+    10: null, // Left Stick Click
+    11: null, // Right Stick Click
+    12: "UP", // D-Pad Up
+    13: "DOWN", // D-Pad Down
+    14: "LEFT", // D-Pad Left
+    15: "RIGHT", // D-Pad Right
+  },
+
+  // ui nav state
+  uiActive: false,
+  uiState: {
+    currentScreen: null,
+    currentSection: 0,
+    currentElement: 0,
+    sections: [],
+    lastInput: { x: 0, y: 0, button: null },
+    inputCooldown: 100,
+    lastInputTime: 0,
+  },
+
+  // callbacks
+  onStatusChange: null,
+  onInput: null,
+  onUIAction: null,
+
+  init(callbacks = {}) {
+    this.onStatusChange = callbacks.onStatusChange || (() => {});
+    this.onInput = callbacks.onInput || (() => {});
+    this.onUIAction = callbacks.onUIAction || (() => {});
+
+    window.addEventListener("gamepadconnected", (e) => this.handleConnect(e));
+    window.addEventListener("gamepaddisconnected", (e) =>
+      this.handleDisconnect(e)
+    );
+  },
+
+  handleConnect(e) {
+    console.log(
+      `Gamepad connected at index ${e.gamepad.index}: ${e.gamepad.id}`
+    );
+    this.connected = true;
+    this.index = e.gamepad.index;
+
+    const gamepadStatus = document.getElementById("gamepad-status");
+    if (gamepadStatus) {
+      gamepadStatus.classList.remove("bg-sf-darker", "border-sf-gold-dark");
+      gamepadStatus.classList.add("bg-sf-dark", "border-sf-green");
+      gamepadStatus.title = `Gamepad Connected: ${e.gamepad.id}`;
+    }
+
+    const gamepadHelp = document.getElementById("gamepad-help");
+    if (gamepadHelp) {
+      gamepadHelp.classList.remove("hidden");
+    }
+
+    const splashText = document.getElementById("splash-skip-text");
+    if (splashText) {
+      splashText.textContent = "Press A/X to skip";
+    }
+
+    document.body.classList.add("gamepad-connected");
+
+    AudioManager.playSound("gamepad-connect");
+    this.onStatusChange(true);
+    this.startPolling();
+  },
+
+  handleDisconnect(e) {
+    if (e.gamepad.index !== this.index) return;
+
+    console.log(
+      `Gamepad disconnected from index ${e.gamepad.index}: ${e.gamepad.id}`
+    );
+    this.connected = false;
+    this.index = null;
+
+    const gamepadStatus = document.getElementById("gamepad-status");
+    if (gamepadStatus) {
+      gamepadStatus.classList.remove("bg-sf-dark", "border-sf-green");
+      gamepadStatus.classList.add("bg-sf-darker", "border-sf-gold-dark");
+      gamepadStatus.title = "No Gamepad Connected";
+    }
+
+    const gamepadHelp = document.getElementById("gamepad-help");
+    if (gamepadHelp) {
+      gamepadHelp.classList.add("hidden");
+    }
+
+    const splashText = document.getElementById("splash-skip-text");
+    if (splashText) {
+      splashText.textContent = "Click anywhere to skip";
+    }
+
+    document.querySelectorAll(".gamepad-hover").forEach((el) => {
+      el.classList.remove("gamepad-hover");
+    });
+
+    document.body.classList.remove("gamepad-connected");
+
+    AudioManager.playSound("gamepad-disconnect");
+    this.onStatusChange(false);
+    this.stopPolling();
+  },
+
+  startPolling() {
+    if (!this.connected) return;
+
+    const gamepads = navigator.getGamepads();
+    const gamepad = gamepads[this.index];
+
+    if (!gamepad) {
+      this.animationFrame = requestAnimationFrame(() => this.startPolling());
+      return;
+    }
+
+    const currentState = this.readState(gamepad);
+
+    if (this.uiActive) {
+      this.processUIInput(currentState);
+    } else {
+      this.onInput(currentState);
+    }
+
+    this.animationFrame = requestAnimationFrame(() => this.startPolling());
+  },
+
+  stopPolling() {
+    if (this.animationFrame) {
+      cancelAnimationFrame(this.animationFrame);
+      this.animationFrame = null;
+    }
+  },
+
+  readState(gamepad) {
+    const state = {
+      axes: {
+        left: {
+          x: this.applyDeadzone(gamepad.axes[0]),
+          y: this.applyDeadzone(gamepad.axes[1]),
+        },
+        right: {
+          x: this.applyDeadzone(gamepad.axes[2]),
+          y: this.applyDeadzone(gamepad.axes[3]),
+        },
+      },
+      buttons: {},
+    };
+
+    gamepad.buttons.forEach((button, index) => {
+      state.buttons[index] = button.pressed;
+    });
+
+    return state;
+  },
+
+  applyDeadzone(value) {
+    if (Math.abs(value) < this.deadzone) {
+      return 0;
+    }
+    return value;
+  },
+
+  processUIInput(currentState) {
+    const currentTime = Date.now();
+
+    if (currentTime - this.uiState.lastInputTime < this.uiState.inputCooldown) {
+      return;
+    }
+
+    const directions = {
+      left: currentState.axes.left.x < -0.5 || currentState.buttons[14],
+      right: currentState.axes.left.x > 0.5 || currentState.buttons[15],
+      up: currentState.axes.left.y < -0.5 || currentState.buttons[12],
+      down: currentState.axes.left.y > 0.5 || currentState.buttons[13],
+    };
+
+    const buttons = {
+      a: currentState.buttons[0],
+      b: currentState.buttons[1],
+      lb: currentState.buttons[4],
+      rb: currentState.buttons[5],
+    };
+
+    let inputX = 0,
+      inputY = 0;
+    if (directions.left) inputX = -1;
+    else if (directions.right) inputX = 1;
+    if (directions.up) inputY = -1;
+    else if (directions.down) inputY = 1;
+
+    const hasInput =
+      inputX !== 0 ||
+      inputY !== 0 ||
+      buttons.a ||
+      buttons.b ||
+      buttons.lb ||
+      buttons.rb;
+    const inputChanged =
+      inputX !== this.uiState.lastInput.x ||
+      inputY !== this.uiState.lastInput.y ||
+      buttons.a !== this.uiState.lastInput.a ||
+      buttons.b !== this.uiState.lastInput.b ||
+      buttons.lb !== this.uiState.lastInput.lb ||
+      buttons.rb !== this.uiState.lastInput.rb;
+
+    if (inputChanged && hasInput) {
+      this.onUIAction(inputX, inputY, buttons);
+      this.uiState.lastInputTime = currentTime;
+    }
+
+    this.uiState.lastInput = { x: inputX, y: inputY, ...buttons };
+  },
+
+  setUIActive(active) {
+    this.uiActive = active;
+  },
+
+  getMapping() {
+    return this.buttonMapping;
+  },
+
+  isConnected() {
+    return this.connected;
+  },
+};
+
+const WebSocketManager = {
+  socket: null,
+  onMessage: null,
+
+  init(callbacks = {}) {
+    this.onMessage = callbacks.onMessage || (() => {});
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+    this.socket = new WebSocket(wsUrl);
+    const startButton = document.getElementById("start-game-btn");
+
+    this.socket.onopen = () => console.log("Connected to server");
+
+    this.socket.onclose = () => {
+      console.log("Disconnected from server");
+      if (startButton && !startButton.textContent.includes("START GAME")) {
+        startButton.textContent = "Connection Lost";
+        startButton.disabled = true;
+        startButton.classList.add("opacity-50");
+      }
+    };
+
+    this.socket.onerror = (event) => {
+      console.error("WebSocket connection error", event);
+      if (startButton && !startButton.textContent.includes("START GAME")) {
+        startButton.textContent = "Connection Error";
+        startButton.disabled = true;
+        startButton.classList.add("opacity-50");
+      }
+    };
+
+    this.socket.onmessage = (event) => this.onMessage(event);
+
+    startButton.disabled = true;
+    startButton.classList.add("opacity-50");
+  },
+
+  send(type, data) {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      try {
+        this.socket.send(
+          JSON.stringify({
+            type: type,
+            data: data,
+          })
+        );
+      } catch (e) {
+        console.error("websocket send fail", e);
+      }
+    }
+  },
+
+  close() {
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+  },
+};
+
 class StreetFighterGame {
   // init
 
   constructor() {
     this.initializeState();
     this.initializeConstants();
-    this.showScreen(this.screens.LOADING);
-    document.getElementById("loading-status").textContent = "Loading assets...";
     this.preloadAllAssets().then(() => {
       this.assetsLoaded = true;
       document.getElementById("loading-status").textContent =
         "Connecting to server...";
 
-      this.initializeAudio();
+      AudioManager.init();
       this.initializeUI();
       this.initializeEventListeners();
-      this.initializeWebSocket();
+      this.initializeGamepadManager();
+      this.initializeWebSocketManager();
     });
+
+    window.addEventListener("beforeunload", () => this.cleanup());
   }
 
   initializeState() {
     // per session
-    this.socket = null;
     this.assetsLoaded = false;
     this.capcomTimeout = null;
 
-    // per game
-    this.gameSettings = {
+    // game state
+    this.gameState = {
+      // settings
       difficulty: 1,
+      humanVsLlm: true,
+
+      // player state
       player1: { character: null, outfit: 1, superArt: 1 },
       player2: { character: null, outfit: 1, superArt: 1 },
-      humanVsLlm: true,
+
+      // game status
+      loaded: false,
+      serverReady: false,
+      firstFrameReceived: false,
+      inTransition: false,
+      transitionStartTime: null,
+      readyToHideTransition: false,
     };
-    this.gameLoaded = false;
-    this.serverReady = false;
-    this.firstFrameReceived = false;
-    this.inTransition = false;
-    this.transitionStartTime = null;
-    this.readyToHideTransition = false;
 
     // keys
     this.keyState = {};
@@ -44,6 +548,14 @@ class StreetFighterGame {
     this.movesByLength = {};
     this.combos = {};
     this.specialMoves = {};
+
+    // gamepad UI state
+    this.gamepadUIState = {
+      currentScreen: null,
+      currentSection: 0,
+      currentElement: 0,
+      sections: [],
+    };
 
     // character select
     this.currentCharacter = null;
@@ -79,24 +591,36 @@ class StreetFighterGame {
       "Yun",
     ];
     this.idxToMove = [
-      { name: "No-Move", display: "" },
-      { name: "Left", display: "←" },
-      { name: "Left+Up", display: "↖" },
-      { name: "Up", display: "↑" },
-      { name: "Up+Right", display: "↗" },
-      { name: "Right", display: "→" },
-      { name: "Right+Down", display: "↘" },
-      { name: "Down", display: "↓" },
-      { name: "Down+Left", display: "↙" },
-      { name: "Low Punch", display: "J" },
-      { name: "Medium Punch", display: "K" },
-      { name: "High Punch", display: "L" },
-      { name: "Low Kick", display: "U" },
-      { name: "Medium Kick", display: "I" },
-      { name: "High Kick", display: "O" },
-      { name: "Low Punch+Low Kick", display: "J + U" },
-      { name: "Medium Punch+Medium Kick", display: "K + I" },
-      { name: "High Punch+High Kick", display: "L + O" },
+      { name: "No-Move", display: "", gamepadDisplay: "" },
+      { name: "Left", display: "←", gamepadDisplay: "←" },
+      { name: "Left+Up", display: "↖", gamepadDisplay: "↖" },
+      { name: "Up", display: "↑", gamepadDisplay: "↑" },
+      { name: "Up+Right", display: "↗", gamepadDisplay: "↗" },
+      { name: "Right", display: "→", gamepadDisplay: "→" },
+      { name: "Right+Down", display: "↘", gamepadDisplay: "↘" },
+      { name: "Down", display: "↓", gamepadDisplay: "↓" },
+      { name: "Down+Left", display: "↙", gamepadDisplay: "↙" },
+      { name: "Low Punch", display: "J", gamepadDisplay: "A/X" },
+      { name: "Medium Punch", display: "K", gamepadDisplay: "B/◯" },
+      { name: "High Punch", display: "L", gamepadDisplay: "RB/R1" },
+      { name: "Low Kick", display: "U", gamepadDisplay: "X/□" },
+      { name: "Medium Kick", display: "I", gamepadDisplay: "Y/△" },
+      { name: "High Kick", display: "O", gamepadDisplay: "LB/L1" },
+      {
+        name: "Low Punch+Low Kick",
+        display: "J + U",
+        gamepadDisplay: "A/X + X/□",
+      },
+      {
+        name: "Medium Punch+Medium Kick",
+        display: "K + I",
+        gamepadDisplay: "B/◯ + Y/△",
+      },
+      {
+        name: "High Punch+High Kick",
+        display: "L + O",
+        gamepadDisplay: "RB/R1 + LB/L1",
+      },
     ];
 
     this.actions = {};
@@ -142,6 +666,8 @@ class StreetFighterGame {
       MODAL: "/modal.svg",
       MUTE: "/icons/mute.svg",
       UNMUTE: "/icons/unmute.svg",
+      HUMAN: "/icons/human.png",
+      LLM: "/icons/llm.png",
     };
     this.screens = {
       COIN: "coin",
@@ -178,6 +704,8 @@ class StreetFighterGame {
       WIN: "win",
       LOSE: "lose",
       CONTINUE: "continue",
+      GAMEPAD_CONNECT: "gamepad-connect",
+      GAMEPAD_DISCONNECT: "gamepad-disconnect",
     };
     this.gameplayMusicFiles = [
       "alex,ken",
@@ -210,205 +738,56 @@ class StreetFighterGame {
   }
 
   async preloadAllAssets() {
-    const totalAssets = [];
+    const imagePromises = [];
 
-    this.audio = {
-      sounds: {},
-      enabled: localStorage.getItem("audioEnabled") !== "false",
-      volume: this.volume,
-      selectSound: null,
-      transitionSound: null,
-      winLoseSound: null,
-      currentEffects: [],
+    const preloadImage = (src) => {
+      const asset = new Image();
+      asset.src = src;
+      return new Promise((resolve) => {
+        asset.onload = resolve;
+        asset.onerror = resolve;
+      });
     };
-
-    const preloadAsset = (type, src, key) => {
-      let asset, promise;
-
-      if (type === "audio") {
-        asset = new Audio(src);
-        asset.volume = this.audio.volume;
-        asset.preload = "auto";
-        this.audio.sounds[key] = asset;
-        promise = new Promise((resolve) => {
-          asset.addEventListener("canplaythrough", resolve, { once: true });
-          asset.addEventListener("error", resolve, { once: true });
-        });
-      } else if (type === "image") {
-        asset = new Image();
-        asset.src = src;
-        promise = new Promise((resolve) => {
-          asset.onload = resolve;
-          asset.onerror = resolve;
-        });
-      }
-
-      totalAssets.push(promise);
-    };
-
-    Object.entries(this.soundFiles).forEach(([, filename]) => {
-      preloadAsset("audio", `/sounds/${filename}.mp3`, filename);
-    });
-
-    Object.entries(this.gameplayMusicMap).forEach(([key, filename]) => {
-      preloadAsset("audio", `/sounds/gameplay/${filename}.mp3`, key);
-    });
 
     this.characters.forEach((character) => {
-      preloadAsset("image", `/portraits/${character.toLowerCase()}.png`);
+      imagePromises.push(
+        preloadImage(`/portraits/${character.toLowerCase()}.png`)
+      );
     });
 
     Object.entries(this.staticImages).forEach(([, src]) => {
-      preloadAsset("image", src);
+      imagePromises.push(preloadImage(src));
     });
 
-    await Promise.all(totalAssets);
+    await Promise.all([
+      AudioManager.preloadSounds(this.soundFiles, this.gameplayMusicMap),
+      ...imagePromises,
+    ]);
   }
 
-  initializeAudio() {
-    this.playAudio = (soundName, options = {}) => {
-      const {
-        volume = 1,
-        loop = false,
-        trackAs = "effect",
-        onEnd = null,
-      } = options;
+  initializeGamepadManager() {
+    GamepadManager.init({
+      onStatusChange: (connected) => {
+        WebSocketManager.send("gamepad_status", { connected });
+        this.updateControlsDisplay();
+        this.updateCombosDisplay(this.currentCharacter);
+        this.updateSuperArtsDisplay(this.currentCharacter);
+      },
+      onInput: (state) => {
+        this.processGamepadInput(state);
+      },
+      onUIAction: (inputX, inputY, buttons) => {
+        this.handleGamepadUIAction(inputX, inputY, buttons);
+      },
+    });
 
-      const sound = this.audio.sounds[soundName];
-      if (!sound) {
-        console.warn(`No sound found for: ${soundName}`);
-        return;
-      }
+    GamepadManager.setUIActive(true);
+  }
 
-      if (trackAs === "select") this.stopSelectSound();
-      else if (trackAs === "transition") this.stopTransitionSound();
-      else if (trackAs === "winLose") this.stopWinLoseSound();
-
-      sound.currentTime = 0;
-      sound.loop = loop;
-      sound.volume = this.audio.enabled ? this.audio.volume * volume : 0;
-
-      if (trackAs === "select") {
-        this.audio.selectSound = sound;
-      } else if (trackAs === "transition") {
-        this.audio.transitionSound = sound;
-      } else if (trackAs === "winLose") {
-        this.audio.winLoseSound = sound;
-      } else {
-        sound._volumeMultiplier = volume;
-        this.audio.currentEffects.push(sound);
-      }
-
-      const onEndHandler = () => {
-        if (trackAs === "effect") {
-          const index = this.audio.currentEffects.indexOf(sound);
-          if (index > -1) this.audio.currentEffects.splice(index, 1);
-          delete sound._volumeMultiplier;
-        } else if (trackAs === "winLose") {
-          this.audio.winLoseSound = null;
-        }
-
-        if (onEnd) onEnd();
-        sound.removeEventListener("ended", onEndHandler);
-      };
-
-      if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
-        sound.addEventListener("ended", onEndHandler);
-      }
-
-      sound.play().catch(() => {
-        if (trackAs === "effect") {
-          const index = this.audio.currentEffects.indexOf(sound);
-          if (index > -1) this.audio.currentEffects.splice(index, 1);
-          delete sound._volumeMultiplier;
-        } else if (trackAs === "winLose") {
-          this.audio.winLoseSound = null;
-        }
-        if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
-          sound.removeEventListener("ended", onEndHandler);
-        }
-      });
-    };
-
-    this.playSound = (soundName) => {
-      this.playAudio(soundName, { trackAs: "effect" });
-    };
-
-    this.stopTrackSound = (trackType) => {
-      const trackMap = {
-        select: "selectSound",
-        winLose: "winLoseSound",
-        transition: "transitionSound",
-      };
-
-      const soundProp = trackMap[trackType];
-      const sound = this.audio[soundProp];
-
-      if (sound) {
-        sound.pause();
-        sound.currentTime = 0;
-        sound.loop = false;
-        this.audio[soundProp] = null;
-      }
-    };
-
-    this.stopSelectSound = () => this.stopTrackSound("select");
-    this.stopWinLoseSound = () => this.stopTrackSound("winLose");
-    this.stopTransitionSound = () => this.stopTrackSound("transition");
-
-    this.toggleMute = () => {
-      this.audio.enabled = !this.audio.enabled;
-      localStorage.setItem("audioEnabled", this.audio.enabled);
-
-      const muteIcon = document.getElementById("mute-icon");
-      if (muteIcon) {
-        muteIcon.src = this.audio.enabled
-          ? this.staticImages.UNMUTE
-          : this.staticImages.MUTE;
-      }
-
-      if (this.audio.selectSound) {
-        this.audio.selectSound.volume = this.audio.enabled
-          ? this.audio.volume * this.selectVolume
-          : 0;
-      }
-
-      if (this.audio.transitionSound) {
-        this.audio.transitionSound.volume = this.audio.enabled
-          ? this.audio.volume * this.transitionSoundVolume
-          : 0;
-      }
-
-      if (this.audio.winLoseSound) {
-        this.audio.winLoseSound.volume = this.audio.enabled
-          ? this.audio.volume * this.winLoseSoundVolume
-          : 0;
-      }
-
-      this.audio.currentEffects.forEach((sound) => {
-        const multiplier = sound._volumeMultiplier || 1;
-        sound.volume = this.audio.enabled ? this.audio.volume * multiplier : 0;
-      });
-    };
-
-    const muteButton = document.getElementById("mute-toggle");
-    if (muteButton) {
-      muteButton.addEventListener("click", () => {
-        this.toggleMute();
-        this.playSound(this.soundFiles.CLICK);
-      });
-
-      muteButton.addEventListener("mouseenter", () => {
-        this.playSound(this.soundFiles.HOVER);
-      });
-
-      const muteIcon = document.getElementById("mute-icon");
-      if (muteIcon) {
-        muteIcon.src = this.audio.enabled
-          ? this.staticImages.UNMUTE
-          : this.staticImages.MUTE;
-      }
-    }
+  initializeWebSocketManager() {
+    WebSocketManager.init({
+      onMessage: (event) => this.handleWebSocketMessage(event),
+    });
   }
 
   // init ui
@@ -423,6 +802,7 @@ class StreetFighterGame {
     this.initializeOutfitGrid(null);
     this.loadExtraMovesDisplay();
     this.initializeDifficultySlider();
+    this.updateControlsDisplay();
   }
 
   initializeCoinScreen() {
@@ -434,7 +814,7 @@ class StreetFighterGame {
         coinBtn.classList.remove("animate-coin-shine");
         coinBtn.classList.add("animate-coin-insert");
 
-        this.playSound(this.soundFiles.COIN);
+        AudioManager.playSound(this.soundFiles.COIN);
 
         setTimeout(() => {
           this.transitionToSplash();
@@ -442,7 +822,7 @@ class StreetFighterGame {
       });
 
       coinBtn.addEventListener("mouseenter", () => {
-        this.playSound(this.soundFiles.HOVER);
+        AudioManager.playSound(this.soundFiles.HOVER);
       });
     }
   }
@@ -459,9 +839,9 @@ class StreetFighterGame {
         this.capcomTimeout = null;
       }
 
-      if (this.audio.sounds[this.soundFiles.CAPCOM]) {
-        this.audio.sounds[this.soundFiles.CAPCOM].pause();
-        this.audio.sounds[this.soundFiles.CAPCOM].currentTime = 0;
+      if (AudioManager.sounds[this.soundFiles.CAPCOM]) {
+        AudioManager.sounds[this.soundFiles.CAPCOM].pause();
+        AudioManager.sounds[this.soundFiles.CAPCOM].currentTime = 0;
       }
 
       this.showScreen(this.screens.SETTINGS);
@@ -469,12 +849,9 @@ class StreetFighterGame {
   }
 
   transitionToSplash() {
-    if (
-      document.getElementById("coin-screen").classList.contains("hidden") ===
-      false
-    ) {
+    if (!document.getElementById("coin-screen").classList.contains("hidden")) {
       this.showScreen(this.screens.SPLASH);
-      this.playSound(this.soundFiles.CAPCOM);
+      AudioManager.playSound(this.soundFiles.CAPCOM);
 
       this.capcomTimeout = setTimeout(() => {
         this.capcomTimeout = null;
@@ -487,30 +864,30 @@ class StreetFighterGame {
     const playerToggle = document.getElementById("player-toggle");
     if (playerToggle) {
       playerToggle.addEventListener("click", () => {
-        this.gameSettings.humanVsLlm = !this.gameSettings.humanVsLlm;
+        this.gameState.humanVsLlm = !this.gameState.humanVsLlm;
 
         const playerIcon = document.getElementById("player-icon");
-        if (this.gameSettings.humanVsLlm) {
-          playerIcon.src = "/icons/human.png";
+        if (this.gameState.humanVsLlm) {
+          playerIcon.src = this.staticImages.HUMAN;
         } else {
-          playerIcon.src = "/icons/llm.png";
+          playerIcon.src = this.staticImages.LLM;
         }
 
         const p1Label = document.querySelector("#p1-selection-box h2");
         const p2Label = document.querySelector("#p2-selection-box h2");
 
         if (p1Label) {
-          p1Label.textContent = this.gameSettings.humanVsLlm ? "YOU" : "LLM 1";
+          p1Label.textContent = this.gameState.humanVsLlm ? "YOU" : "LLM 1";
         }
         if (p2Label) {
-          p2Label.textContent = this.gameSettings.humanVsLlm ? "LLM" : "LLM 2";
+          p2Label.textContent = this.gameState.humanVsLlm ? "LLM" : "LLM 2";
         }
 
-        this.playSound(this.soundFiles.CLICK);
+        AudioManager.playSound(this.soundFiles.CLICK);
       });
 
       playerToggle.addEventListener("mouseenter", () => {
-        this.playSound(this.soundFiles.HOVER);
+        AudioManager.playSound(this.soundFiles.HOVER);
       });
     }
   }
@@ -520,7 +897,7 @@ class StreetFighterGame {
     gridContainer.innerHTML = "";
 
     this.characters.forEach((character, index) => {
-      const portrait = this.createPortrait(character, index, "character");
+      const portrait = this.createPortrait(character, index);
       gridContainer.appendChild(portrait);
     });
 
@@ -530,7 +907,7 @@ class StreetFighterGame {
     const p2SuperArt = document.getElementById("super-art-select-p2");
     if (p2SuperArt) {
       p2SuperArt.addEventListener("change", () =>
-        this.playSound(this.soundFiles.CLICK)
+        AudioManager.playSound(this.soundFiles.CLICK)
       );
     }
   }
@@ -541,9 +918,9 @@ class StreetFighterGame {
 
     slider.addEventListener("input", (e) => {
       const value = parseInt(e.target.value);
-      this.gameSettings.difficulty = value;
+      this.gameState.difficulty = value;
       label.textContent = this.difficultyLabels[value];
-      this.playSound(this.soundFiles.CLICK);
+      AudioManager.playSound(this.soundFiles.CLICK);
     });
   }
 
@@ -566,13 +943,13 @@ class StreetFighterGame {
       this.updateSuperArtsDisplay(this.currentCharacter);
 
       const superArtSelect = document.getElementById("super-art-select-p1");
-      this.gameSettings.player1.superArt = parseInt(superArtSelect.value);
+      this.gameState.player1.superArt = parseInt(superArtSelect.value);
 
       superArtSelect.addEventListener("change", () => {
-        this.gameSettings.player1.superArt = parseInt(superArtSelect.value);
+        this.gameState.player1.superArt = parseInt(superArtSelect.value);
         this.updateSuperArtsDisplay(this.currentCharacter);
         this.preprocessMoves();
-        this.playSound(this.soundFiles.CLICK);
+        AudioManager.playSound(this.soundFiles.CLICK);
       });
 
       elements.combosLoading.classList.add("hidden");
@@ -595,34 +972,33 @@ class StreetFighterGame {
       const elem = document.getElementById(elemId);
       if (elem) {
         elem.addEventListener("mouseenter", () =>
-          this.playSound(this.soundFiles.HOVER)
+          AudioManager.playSound(this.soundFiles.HOVER)
         );
       }
     });
 
     document.getElementById("start-game-btn").addEventListener("click", () => {
-      this.playSound(this.soundFiles.CLICK);
+      AudioManager.playSound(this.soundFiles.CLICK);
       this.startGame();
     });
     document.getElementById("play-again-btn").addEventListener("click", () => {
-      this.playSound(this.soundFiles.CLICK);
+      AudioManager.playSound(this.soundFiles.CLICK);
       this.resetSelections();
       this.showScreen(this.screens.SETTINGS);
     });
     document.getElementById("error-back-btn").addEventListener("click", () => {
-      this.playSound(this.soundFiles.CLICK);
+      AudioManager.playSound(this.soundFiles.CLICK);
       this.showScreen(this.screens.SETTINGS);
     });
 
     const handleKeyEvent = (e, isDown) => {
-      if (!this.gameLoaded || !this.gameSettings.humanVsLlm) return;
+      if (!this.gameState.loaded || !this.gameState.humanVsLlm) return;
 
       this.keyState[e.code] = isDown;
       const action = this.getActionFromKeys();
 
-      this.sendMessage("player_action", {
+      WebSocketManager.send("player_action", {
         action,
-        move: this.idxToMove[action].name,
       });
 
       if (action !== this.actions.NO_MOVE) {
@@ -634,7 +1010,7 @@ class StreetFighterGame {
 
         const detectedMove = this.detectExtra();
         if (detectedMove) {
-          this.sendMessage("player_action", {
+          WebSocketManager.send("player_action", {
             action: detectedMove.type === "super_art" ? 18 : 19,
             [detectedMove.type === "super_art" ? "super_art" : "combo"]:
               detectedMove.name,
@@ -653,16 +1029,430 @@ class StreetFighterGame {
         .getElementById(`${player}-selected-portrait`)
         .addEventListener("click", () => {
           this.switchActivePlayer(player);
-          this.playSound(this.soundFiles.CLICK);
+          AudioManager.playSound(this.soundFiles.CLICK);
         });
     });
   }
+
+  // gamepad support
+
+  handleGamepadUIAction(inputX, inputY, buttons) {
+    this.updateGamepadSections();
+
+    const currentScreen = this.getCurrentScreen();
+    if (currentScreen === this.screens.SPLASH && buttons.a) {
+      const splashScreen = document.getElementById("splash-screen");
+      if (splashScreen) {
+        splashScreen.click();
+      }
+      return;
+    }
+
+    if (!this.gamepadUIState.sections.length) return;
+
+    if (buttons.lb) {
+      this.changeGamepadSection(-1);
+      return;
+    } else if (buttons.rb) {
+      this.changeGamepadSection(1);
+      return;
+    }
+
+    if (buttons.a) {
+      this.handleGamepadSelect();
+      return;
+    }
+
+    if (inputX !== 0 || inputY !== 0) {
+      this.handleGamepadNavigation(inputX, inputY);
+    }
+  }
+
+  updateGamepadSections(forceUpdate = false) {
+    const currentScreen = this.getCurrentScreen();
+    if (!forceUpdate && currentScreen === this.gamepadUIState.currentScreen)
+      return;
+
+    const preservePosition =
+      forceUpdate && currentScreen === this.gamepadUIState.currentScreen;
+    const oldSection = preservePosition
+      ? this.gamepadUIState.currentSection
+      : 0;
+    const oldElement = preservePosition
+      ? this.gamepadUIState.currentElement
+      : 0;
+
+    this.gamepadUIState.currentScreen = currentScreen;
+    this.gamepadUIState.currentSection = 0;
+    this.gamepadUIState.currentElement = 0;
+    this.gamepadUIState.sections = [];
+
+    switch (currentScreen) {
+      case this.screens.COIN:
+        this.gamepadUIState.sections = [
+          { elements: this.getVisibleHeaderElements() },
+          { elements: ["#insert-coin-btn"] },
+        ];
+        break;
+      case this.screens.SPLASH:
+        this.gamepadUIState.sections = [];
+        break;
+      case this.screens.SETTINGS:
+        this.gamepadUIState.sections = [
+          { elements: ["#modal-link", "#player-toggle", "#mute-toggle"] },
+          { elements: ["#p1-selected-portrait", "#p2-selected-portrait"] },
+          { elements: this.getCharacterGridElements(), grid: true, cols: 5 },
+          { elements: this.getOutfitElements(), grid: true, cols: 1 },
+          { elements: ["#super-art-select-p1"], controls: true },
+          { elements: ["#super-art-select-p2"], controls: true },
+          { elements: ["#difficulty-slider"], controls: true },
+          { elements: ["#start-game-btn"] },
+        ];
+        break;
+      case this.screens.WIN:
+        this.gamepadUIState.sections = [
+          { elements: this.getVisibleHeaderElements() },
+          { elements: ["#play-again-btn"] },
+        ];
+        break;
+      case this.screens.ERROR:
+        this.gamepadUIState.sections = [
+          { elements: this.getVisibleHeaderElements() },
+          { elements: ["#error-back-btn"] },
+        ];
+        break;
+      case this.screens.LOADING:
+        this.gamepadUIState.sections = [
+          { elements: this.getVisibleHeaderElements() },
+        ];
+        break;
+      case this.screens.GAME:
+        this.gamepadUIState.sections = [];
+        break;
+    }
+
+    this.gamepadUIState.sections = this.gamepadUIState.sections.filter(
+      (section) => section.elements && section.elements.length > 0
+    );
+
+    switch (currentScreen) {
+      case this.screens.COIN:
+        this.gamepadUIState.currentSection =
+          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        break;
+      case this.screens.SPLASH:
+        this.gamepadUIState.currentSection =
+          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        break;
+      case this.screens.SETTINGS:
+        if (this.gamepadUIState.sections.length > 1) {
+          this.gamepadUIState.currentSection = 1;
+        }
+        break;
+      case this.screens.WIN:
+        this.gamepadUIState.currentSection =
+          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        break;
+      case this.screens.ERROR:
+        this.gamepadUIState.currentSection =
+          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        break;
+    }
+
+    if (preservePosition) {
+      if (oldSection < this.gamepadUIState.sections.length) {
+        this.gamepadUIState.currentSection = oldSection;
+        const section = this.gamepadUIState.sections[oldSection];
+        if (
+          section &&
+          section.elements &&
+          oldElement < section.elements.length
+        ) {
+          this.gamepadUIState.currentElement = oldElement;
+        }
+      }
+    }
+
+    this.updateGamepadHover();
+  }
+
+  getCharacterGridElements() {
+    const portraits = document.querySelectorAll("#character-grid > div");
+    return Array.from(portraits).map(
+      (el) => `#${el.id || this.generateElementId(el)}`
+    );
+  }
+
+  getOutfitElements() {
+    const outfits = document.querySelectorAll("#outfit-grid > div");
+    return Array.from(outfits).map(
+      (el) => `#${el.id || this.generateElementId(el)}`
+    );
+  }
+
+  getVisibleHeaderElements() {
+    const elements = [];
+
+    const header = document.getElementById("game-header");
+    if (header && !header.classList.contains("hidden")) {
+      elements.push("#modal-link");
+    }
+
+    const playerToggle = document.getElementById("player-toggle");
+
+    if (playerToggle && !playerToggle.classList.contains("hidden")) {
+      elements.push("#player-toggle");
+    }
+
+    elements.push("#mute-toggle");
+
+    return elements;
+  }
+
+  generateElementId(element) {
+    const id = `gamepad-el-${Math.random().toString(36).substr(2, 9)}`;
+    element.id = id;
+    return id;
+  }
+
+  changeGamepadSection(direction) {
+    const numSections = this.gamepadUIState.sections.length;
+    if (numSections === 0) return;
+
+    this.gamepadUIState.currentSection =
+      (this.gamepadUIState.currentSection + direction + numSections) %
+      numSections;
+    this.gamepadUIState.currentElement = 0;
+
+    this.updateGamepadHover();
+    AudioManager.playSound(this.soundFiles.HOVER);
+  }
+
+  handleGamepadNavigation(inputX, inputY) {
+    const section =
+      this.gamepadUIState.sections[this.gamepadUIState.currentSection];
+    if (!section || !section.elements.length) return;
+
+    if (section.grid) {
+      this.navigateGrid(inputX, inputY, section);
+    } else if (section.controls) {
+      this.navigateControls(inputX, inputY, section);
+    } else {
+      this.navigateList(inputX, inputY, section);
+    }
+
+    this.updateGamepadHover();
+    AudioManager.playSound(this.soundFiles.HOVER);
+  }
+
+  navigateGrid(inputX, inputY, section) {
+    const cols = section.cols || 1;
+    const rows = Math.ceil(section.elements.length / cols);
+    const currentRow = Math.floor(this.gamepadUIState.currentElement / cols);
+    const currentCol = this.gamepadUIState.currentElement % cols;
+
+    let newRow = currentRow;
+    let newCol = currentCol;
+
+    if (inputY < 0) newRow = Math.max(0, currentRow - 1);
+    else if (inputY > 0) newRow = Math.min(rows - 1, currentRow + 1);
+
+    if (inputX < 0) newCol = Math.max(0, currentCol - 1);
+    else if (inputX > 0) newCol = Math.min(cols - 1, currentCol + 1);
+
+    const newIndex = newRow * cols + newCol;
+    if (newIndex < section.elements.length) {
+      this.gamepadUIState.currentElement = newIndex;
+    }
+  }
+
+  navigateControls(inputX, inputY, section) {
+    const currentEl = document.querySelector(
+      section.elements[this.gamepadUIState.currentElement]
+    );
+
+    if (
+      currentEl &&
+      (currentEl.tagName === "INPUT" || currentEl.tagName === "SELECT")
+    ) {
+      if (currentEl.type === "range") {
+        const step = parseFloat(currentEl.step);
+        const min = parseFloat(currentEl.min);
+        const max = parseFloat(currentEl.max);
+        const current = parseFloat(currentEl.value);
+
+        if (inputX < 0) {
+          currentEl.value = Math.max(min, current - step);
+          currentEl.dispatchEvent(new Event("input", { bubbles: true }));
+        } else if (inputX > 0) {
+          currentEl.value = Math.min(max, current + step);
+          currentEl.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      } else if (currentEl.tagName === "SELECT") {
+        const options = currentEl.options;
+        const current = currentEl.selectedIndex;
+
+        if (inputX < 0) {
+          currentEl.selectedIndex = Math.max(0, current - 1);
+          currentEl.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (inputX > 0) {
+          currentEl.selectedIndex = Math.min(options.length - 1, current + 1);
+          currentEl.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+    }
+
+    const isSlider =
+      currentEl && currentEl.tagName === "INPUT" && currentEl.type === "range";
+
+    if (inputY !== 0) {
+      this.navigateList(0, inputY, section);
+    } else if (inputX !== 0 && section.elements.length > 1) {
+      if (!isSlider) {
+        this.navigateList(inputX, 0, section);
+      }
+    }
+  }
+
+  navigateList(inputX, inputY, section) {
+    if (inputY < 0 || inputX < 0) {
+      this.gamepadUIState.currentElement = Math.max(
+        0,
+        this.gamepadUIState.currentElement - 1
+      );
+    } else if (inputY > 0 || inputX > 0) {
+      this.gamepadUIState.currentElement = Math.min(
+        section.elements.length - 1,
+        this.gamepadUIState.currentElement + 1
+      );
+    }
+  }
+
+  handleGamepadSelect() {
+    const section =
+      this.gamepadUIState.sections[this.gamepadUIState.currentSection];
+    if (!section) return;
+
+    const elementSelector =
+      section.elements[this.gamepadUIState.currentElement];
+    const element = document.querySelector(elementSelector);
+
+    if (element) {
+      element.click();
+      AudioManager.playSound(this.soundFiles.CLICK);
+    }
+  }
+
+  updateGamepadHover() {
+    document.querySelectorAll(".gamepad-hover").forEach((el) => {
+      el.classList.remove("gamepad-hover");
+    });
+
+    const section =
+      this.gamepadUIState.sections[this.gamepadUIState.currentSection];
+    if (section && section.elements[this.gamepadUIState.currentElement]) {
+      const element = document.querySelector(
+        section.elements[this.gamepadUIState.currentElement]
+      );
+      if (element) {
+        element.classList.add("gamepad-hover");
+        element.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }
+
+  getCurrentScreen() {
+    for (const [, screenId] of Object.entries(this.screens)) {
+      const el = document.getElementById(`${screenId}-screen`);
+      if (el && !el.classList.contains("hidden")) {
+        return screenId;
+      }
+    }
+    return null;
+  }
+
+  processGamepadInput(currentState) {
+    const directions = {
+      left: currentState.axes.left.x < -0.5 || currentState.buttons[14],
+      right: currentState.axes.left.x > 0.5 || currentState.buttons[15],
+      up: currentState.axes.left.y < -0.5 || currentState.buttons[12],
+      down: currentState.axes.left.y > 0.5 || currentState.buttons[13],
+    };
+
+    const attacks = {
+      LP: currentState.buttons[0],
+      MP: currentState.buttons[1],
+      LK: currentState.buttons[2],
+      MK: currentState.buttons[3],
+      HK: currentState.buttons[4],
+      HP: currentState.buttons[5],
+    };
+
+    let action = this.actions.NO_MOVE;
+
+    if (attacks.LP && attacks.LK) {
+      action = this.actions.LOW_PUNCH_LOW_KICK;
+    } else if (attacks.MP && attacks.MK) {
+      action = this.actions.MEDIUM_PUNCH_MEDIUM_KICK;
+    } else if (attacks.HP && attacks.HK) {
+      action = this.actions.HIGH_PUNCH_HIGH_KICK;
+    } else if (attacks.HP) {
+      action = this.actions.HIGH_PUNCH;
+    } else if (attacks.MP) {
+      action = this.actions.MEDIUM_PUNCH;
+    } else if (attacks.LP) {
+      action = this.actions.LOW_PUNCH;
+    } else if (attacks.HK) {
+      action = this.actions.HIGH_KICK;
+    } else if (attacks.MK) {
+      action = this.actions.MEDIUM_KICK;
+    } else if (attacks.LK) {
+      action = this.actions.LOW_KICK;
+    } else if (directions.left && directions.up) {
+      action = this.actions.LEFT_UP;
+    } else if (directions.right && directions.up) {
+      action = this.actions.UP_RIGHT;
+    } else if (directions.left && directions.down) {
+      action = this.actions.DOWN_LEFT;
+    } else if (directions.right && directions.down) {
+      action = this.actions.RIGHT_DOWN;
+    } else if (directions.left) {
+      action = this.actions.LEFT;
+    } else if (directions.right) {
+      action = this.actions.RIGHT;
+    } else if (directions.up) {
+      action = this.actions.UP;
+    } else if (directions.down) {
+      action = this.actions.DOWN;
+    }
+
+    WebSocketManager.send("player_action", { action });
+
+    if (action !== this.actions.NO_MOVE) {
+      this.inputHistory.push({ action, time: Date.now() });
+
+      if (this.inputHistory.length > this.maxInputHistory) {
+        this.inputHistory.shift();
+      }
+
+      const detectedMove = this.detectExtra();
+      if (detectedMove) {
+        WebSocketManager.send("player_action", {
+          action: detectedMove.type === "super_art" ? 18 : 19,
+          [detectedMove.type === "super_art" ? "super_art" : "combo"]:
+            detectedMove.name,
+        });
+      }
+    }
+  }
+
+  // start game
 
   startGame() {
     const { p1, p2 } = this.characterGrid;
 
     if (!p1.selected || !p2.selected) {
-      if (this.gameSettings.humanVsLlm) {
+      if (this.gameState.humanVsLlm) {
         alert(
           "Both you and the LLM must have characters selected before starting!"
         );
@@ -674,23 +1464,23 @@ class StreetFighterGame {
       return;
     }
 
-    Object.assign(this.gameSettings.player1, {
+    Object.assign(this.gameState.player1, {
       character: p1.character,
       outfit: p1.outfit,
       superArt: parseInt(document.getElementById("super-art-select-p1").value),
     });
 
-    Object.assign(this.gameSettings.player2, {
+    Object.assign(this.gameState.player2, {
       character: p2.character,
       outfit: p2.outfit,
       superArt: parseInt(document.getElementById("super-art-select-p2").value),
     });
 
-    this.gameSettings.difficulty = parseInt(
+    this.gameState.difficulty = parseInt(
       document.getElementById("difficulty-slider").value
     );
 
-    this.playAudio(this.soundFiles.START, {
+    AudioManager.play(this.soundFiles.START, {
       volume: this.startSoundVolume,
       trackAs: "effect",
     });
@@ -700,17 +1490,23 @@ class StreetFighterGame {
       this.showScreen(this.screens.LOADING);
       document.getElementById("loading-status").textContent =
         "Starting game...";
-      this.sendMessage("start_game", this.gameSettings);
+      WebSocketManager.send("start_game", {
+        difficulty: this.gameState.difficulty,
+        humanVsLlm: this.gameState.humanVsLlm,
+        player1: this.gameState.player1,
+        player2: this.gameState.player2,
+        gamepadConnected: GamepadManager.isConnected(),
+      });
     }, 10); //  delay to allow sound to play first
   }
 
   resetGameState() {
-    this.gameLoaded = false;
-    this.serverReady = false;
-    this.firstFrameReceived = false;
-    this.inTransition = false;
-    this.transitionStartTime = null;
-    this.readyToHideTransition = false;
+    this.gameState.loaded = false;
+    this.gameState.serverReady = false;
+    this.gameState.firstFrameReceived = false;
+    this.gameState.inTransition = false;
+    this.gameState.transitionStartTime = null;
+    this.gameState.readyToHideTransition = false;
     this.keyState = {};
     this.inputHistory = [];
 
@@ -727,40 +1523,6 @@ class StreetFighterGame {
   }
 
   // init ws
-
-  initializeWebSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
-    this.socket = new WebSocket(wsUrl);
-    const startButton = document.getElementById("start-game-btn");
-
-    this.socket.onopen = () => console.log("Connected to server");
-
-    this.socket.onclose = () => {
-      console.log("Disconnected from server");
-      if (!this.serverReady) {
-        startButton.textContent = "Connection Lost";
-        startButton.disabled = true;
-        startButton.classList.add("opacity-50");
-      }
-    };
-
-    this.socket.onerror = (event) => {
-      console.error("WebSocket connection error", event);
-      this.showError("WebSocket connection error");
-      if (!this.serverReady) {
-        startButton.textContent = "Connection Error";
-        startButton.disabled = true;
-        startButton.classList.add("opacity-50");
-      }
-    };
-
-    this.socket.onmessage = (event) => this.handleWebSocketMessage(event);
-
-    startButton.disabled = true;
-    startButton.classList.add("opacity-50");
-  }
 
   async handleWebSocketMessage(event) {
     if (event.data instanceof Blob) {
@@ -779,23 +1541,26 @@ class StreetFighterGame {
   handleFrameData(blob) {
     const overlay = document.getElementById("canvas-loading-overlay");
 
-    if (!this.firstFrameReceived) {
-      this.firstFrameReceived = true;
+    if (!this.gameState.firstFrameReceived) {
+      this.gameState.firstFrameReceived = true;
       overlay.classList.add("hidden");
       const canvas = document.getElementById("game-canvas");
       canvas.classList.remove("hidden");
     }
 
-    if (this.inTransition) {
-      this.readyToHideTransition = true;
+    if (this.gameState.inTransition) {
+      this.gameState.readyToHideTransition = true;
 
-      const elapsedTime = Date.now() - this.transitionStartTime;
+      const elapsedTime = Date.now() - this.gameState.transitionStartTime;
       if (elapsedTime >= this.transitionMinDisplayTime) {
         this.hideTransitionOverlay();
       } else {
         const remainingTime = this.transitionMinDisplayTime - elapsedTime;
         setTimeout(() => {
-          if (this.readyToHideTransition && this.inTransition) {
+          if (
+            this.gameState.readyToHideTransition &&
+            this.gameState.inTransition
+          ) {
             this.hideTransitionOverlay();
           }
         }, remainingTime);
@@ -819,8 +1584,8 @@ class StreetFighterGame {
     console.log("Game state:", data.status);
     const startButton = document.getElementById("start-game-btn");
 
-    if (!this.serverReady) {
-      this.serverReady = true;
+    if (!this.gameState.serverReady) {
+      this.gameState.serverReady = true;
       startButton.disabled = false;
       startButton.textContent = "START GAME";
       startButton.classList.remove("opacity-50");
@@ -833,18 +1598,20 @@ class StreetFighterGame {
           "Starting game...";
         break;
       case "running":
-        this.gameLoaded = true;
+        this.gameState.loaded = true;
         this.showScreen(this.screens.GAME);
-        this.playAudio(this.gameSettings.player1.character, {
+        GamepadManager.setUIActive(!this.gameState.humanVsLlm);
+        AudioManager.play(this.gameState.player1.character, {
           volume: this.gameplayMusicVolume,
           loop: true,
           trackAs: "select",
         });
         break;
       case "finished":
-        this.gameLoaded = false;
+        this.gameState.loaded = false;
+        GamepadManager.setUIActive(true);
 
-        this.stopSelectSound();
+        AudioManager.stopTrack("select");
 
         const winner = data.winner || "Unknown";
         let displayWinner = winner;
@@ -854,11 +1621,11 @@ class StreetFighterGame {
         ).textContent = `Winner: ${displayWinner}`;
 
         const winSound =
-          !this.gameSettings.humanVsLlm || winner === "YOU"
+          !this.gameState.humanVsLlm || winner === "YOU"
             ? this.soundFiles.WIN
             : this.soundFiles.LOSE;
 
-        this.playAudio(winSound, {
+        AudioManager.play(winSound, {
           volume: this.winLoseSoundVolume,
           trackAs: "winLose",
           onEnd: () => {
@@ -867,7 +1634,7 @@ class StreetFighterGame {
                 .getElementById("win-screen")
                 .classList.contains("hidden")
             ) {
-              this.playAudio(this.soundFiles.CONTINUE, {
+              AudioManager.play(this.soundFiles.CONTINUE, {
                 volume: this.selectVolume,
                 loop: true,
                 trackAs: "select",
@@ -879,20 +1646,20 @@ class StreetFighterGame {
         this.showScreen(this.screens.WIN);
         break;
       case "error":
-        this.gameLoaded = false;
-        this.stopSelectSound();
+        this.gameState.loaded = false;
+        AudioManager.stopTrack("select");
         this.showError(data.error || "Unknown game error");
         break;
     }
   }
 
   handleTransition(data) {
-    this.inTransition = true;
-    this.transitionStartTime = Date.now();
-    this.readyToHideTransition = false;
+    this.gameState.inTransition = true;
+    this.gameState.transitionStartTime = Date.now();
+    this.gameState.readyToHideTransition = false;
 
-    this.stopSelectSound();
-    this.playAudio(this.soundFiles.TRANSITION, {
+    AudioManager.stopTrack("select");
+    AudioManager.play(this.soundFiles.TRANSITION, {
       volume: this.transitionSoundVolume,
       trackAs: "transition",
     });
@@ -919,25 +1686,24 @@ class StreetFighterGame {
     }
 
     setTimeout(() => {
-      if (this.readyToHideTransition && this.inTransition) {
+      if (this.gameState.readyToHideTransition && this.gameState.inTransition) {
         this.hideTransitionOverlay();
       }
     }, this.transitionMinDisplayTime);
   }
 
   hideTransitionOverlay() {
-    this.inTransition = false;
-    this.transitionStartTime = null;
-    this.readyToHideTransition = false;
+    this.gameState.inTransition = false;
+    this.gameState.transitionStartTime = null;
+    this.gameState.readyToHideTransition = false;
 
-    this.stopTransitionSound();
+    AudioManager.stopTrack("transition");
 
     if (
-      this.gameLoaded &&
-      document.getElementById("game-display").classList.contains("hidden") ===
-        false
+      this.gameState.loaded &&
+      !document.getElementById("game-screen").classList.contains("hidden")
     ) {
-      this.playAudio(this.gameSettings.player1.character, {
+      AudioManager.play(this.gameState.player1.character, {
         volume: this.gameplayMusicVolume,
         loop: true,
         trackAs: "select",
@@ -956,17 +1722,6 @@ class StreetFighterGame {
     overlay.classList.add("hidden");
   }
 
-  sendMessage(type, data) {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(
-        JSON.stringify({
-          type: type,
-          data: data,
-        })
-      );
-    }
-  }
-
   // helper fns
   // input handling
 
@@ -977,7 +1732,7 @@ class StreetFighterGame {
 
     const characterMoves = this.specialMoves[this.currentCharacter];
     const characterCombos = this.combos[this.currentCharacter];
-    const selectedSuperArt = this.gameSettings.player1.superArt;
+    const selectedSuperArt = this.gameState.player1.superArt;
 
     if (characterMoves) {
       this.addMovesToLength(characterMoves, selectedSuperArt, "super_art");
@@ -1118,79 +1873,61 @@ class StreetFighterGame {
   // ui
 
   showScreen(screenId) {
-    const screenConfigs = {
-      [this.screens.COIN]: {
-        hideHeader: false,
-        hidePlayerToggle: true,
-        hideMute: false,
-      },
-      [this.screens.SPLASH]: {
-        hideHeader: true,
-        hidePlayerToggle: true,
-        hideMute: false,
-      },
-      [this.screens.SETTINGS]: {
-        hideHeader: false,
-        hidePlayerToggle: false,
-        hideMute: false,
-      },
-      [this.screens.LOADING]: {
-        hideHeader: !this.assetsLoaded,
-        hidePlayerToggle: true,
-        hideMute: !this.assetsLoaded,
-      },
-      [this.screens.GAME]: {
-        hideHeader: true,
-        hidePlayerToggle: true,
-        hideMute: false,
-      },
-      [this.screens.WIN]: {
-        hideHeader: false,
-        hidePlayerToggle: true,
-        hideMute: false,
-      },
-      [this.screens.ERROR]: {
-        hideHeader: false,
-        hidePlayerToggle: true,
-        hideMute: false,
-      },
-    };
-
     Object.values(this.screens).forEach((screen) => {
-      const el =
-        document.getElementById(`${screen}-screen`) ||
-        document.getElementById(`${screen}-display`);
+      const el = document.getElementById(`${screen}-screen`);
       if (el) {
         el.classList.toggle("hidden", screen !== screenId);
       }
     });
 
-    const config = screenConfigs[screenId];
-    if (config) {
-      const header = document.getElementById("game-header");
-      if (header) header.classList.toggle("hidden", config.hideHeader);
+    const isLoading = screenId === this.screens.LOADING;
+    const hideAll = isLoading && !this.assetsLoaded;
 
-      const playerToggle = document.getElementById("player-toggle");
-      if (playerToggle)
-        playerToggle.classList.toggle("hidden", config.hidePlayerToggle);
+    const header = document.getElementById("game-header");
+    if (header) {
+      const hideHeader =
+        screenId === this.screens.SPLASH ||
+        screenId === this.screens.GAME ||
+        hideAll;
+      header.classList.toggle("hidden", hideHeader);
+    }
 
-      const muteButton = document.getElementById("mute-toggle");
-      if (muteButton) muteButton.classList.toggle("hidden", config.hideMute);
+    const playerToggle = document.getElementById("player-toggle");
+    if (playerToggle) {
+      const showPlayerToggle = screenId === this.screens.SETTINGS;
+      playerToggle.classList.toggle("hidden", !showPlayerToggle);
+    }
+
+    const muteButton = document.getElementById("mute-toggle");
+    if (muteButton) {
+      muteButton.classList.toggle("hidden", hideAll);
+    }
+
+    const gamepadStatus = document.getElementById("gamepad-status");
+    if (gamepadStatus) {
+      gamepadStatus.classList.toggle("hidden", hideAll);
+    }
+
+    const gamepadHelp = document.getElementById("gamepad-help");
+    if (gamepadHelp) {
+      const hideGamepadHelp =
+        !GamepadManager.isConnected() ||
+        screenId === this.screens.LOADING ||
+        screenId === this.screens.GAME;
+      gamepadHelp.classList.toggle("hidden", hideGamepadHelp);
     }
 
     if (screenId === this.screens.SETTINGS) {
-      if (this.playAudio) {
-        this.playAudio(this.soundFiles.SELECT, {
-          volume: this.selectVolume,
-          loop: true,
-          trackAs: "select",
-        });
-      }
-      if (this.stopWinLoseSound) this.stopWinLoseSound();
+      AudioManager.play(this.soundFiles.SELECT, {
+        volume: this.selectVolume,
+        loop: true,
+        trackAs: "select",
+      });
+      AudioManager.stopTrack("winLose");
     } else {
-      if (this.stopSelectSound) this.stopSelectSound();
-      if (screenId !== this.screens.WIN && this.stopWinLoseSound) {
-        this.stopWinLoseSound();
+      AudioManager.stopTrack("select");
+      if (screenId !== this.screens.WIN) {
+        AudioManager.stopTrack("winLose");
       }
     }
 
@@ -1202,6 +1939,11 @@ class StreetFighterGame {
         coinBtn.classList.add("animate-coin-shine");
       }
     }
+
+    if (GamepadManager.isConnected()) {
+      this.gamepadUIState.currentScreen = null;
+      this.updateGamepadSections();
+    }
   }
 
   showError(message) {
@@ -1211,6 +1953,30 @@ class StreetFighterGame {
   }
 
   // character move display
+
+  updateControlsDisplay() {
+    const controls = {
+      "movement-display": GamepadManager.isConnected()
+        ? "Left Stick / D-Pad"
+        : "WASD / Arrow Keys",
+      "lp-display": GamepadManager.isConnected() ? "A/X" : "J",
+      "mp-display": GamepadManager.isConnected() ? "B/◯" : "K",
+      "hp-display": GamepadManager.isConnected() ? "RB/R1" : "L",
+      "lk-display": GamepadManager.isConnected() ? "X/□" : "U",
+      "mk-display": GamepadManager.isConnected() ? "Y/△" : "I",
+      "hk-display": GamepadManager.isConnected() ? "LB/L1" : "O",
+      "lplk-display": GamepadManager.isConnected() ? "A/X + X/□" : "J + U",
+      "mpmk-display": GamepadManager.isConnected() ? "B/◯ + Y/△" : "K + I",
+      "hphk-display": GamepadManager.isConnected() ? "RB/R1 + LB/L1" : "L + O",
+    };
+
+    Object.entries(controls).forEach(([id, text]) => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.textContent = text;
+      }
+    });
+  }
 
   updateCombosDisplay(character) {
     const combosList = document.getElementById("combos-list");
@@ -1291,7 +2057,10 @@ class StreetFighterGame {
   getExtraElements(sequence) {
     return sequence
       .map((action, index) => {
-        const symbol = this.idxToMove[action].display;
+        const move = this.idxToMove[action];
+        const symbol = GamepadManager.isConnected()
+          ? move.gamepadDisplay
+          : move.display;
         const isLast = index === sequence.length - 1;
         return `
                 <span class="control-key">${symbol}</span>
@@ -1330,6 +2099,7 @@ class StreetFighterGame {
       gridContainer.innerHTML = "";
       indicator.textContent = "Select a character to see outfits";
     }
+    this.updateGamepadSections(true);
   }
 
   updatePlayerBoxes() {
@@ -1394,6 +2164,7 @@ class StreetFighterGame {
       this.updatePlayerPortrait(player, character);
       this.updateCharacterBorders();
       this.initializeOutfitGrid(character);
+      this.updateGamepadSections(true);
     }, this.animationDuration);
   }
 
@@ -1490,7 +2261,7 @@ class StreetFighterGame {
     const colorClass = `text-${this.getPlayerColor(activePlayer)}`;
 
     let playerText = "";
-    if (!this.gameSettings.humanVsLlm) {
+    if (!this.gameState.humanVsLlm) {
       playerText = activePlayer === "p1" ? "LLM 1" : "LLM 2";
     } else {
       playerText = activePlayer === "p1" ? "YOU" : "LLM";
@@ -1532,9 +2303,9 @@ class StreetFighterGame {
     document.getElementById("p1-selected-name").textContent = "-";
     document.getElementById("p2-selected-name").textContent = "-";
 
-    this.gameSettings.player1 = { character: null, outfit: 1, superArt: 1 };
-    this.gameSettings.player2 = { character: null, outfit: 1, superArt: 1 };
-    this.gameSettings.difficulty = 1;
+    this.gameState.player1 = { character: null, outfit: 1, superArt: 1 };
+    this.gameState.player2 = { character: null, outfit: 1, superArt: 1 };
+    this.gameState.difficulty = 1;
 
     document.getElementById("super-art-select-p1").value = "1";
     document.getElementById("super-art-select-p2").value = "1";
@@ -1549,6 +2320,7 @@ class StreetFighterGame {
     this.updateCharacterBorders();
 
     this.initializeOutfitGrid(null);
+    this.updateGamepadSections(true);
   }
 
   // ui element creation
@@ -1564,7 +2336,7 @@ class StreetFighterGame {
       imageSrc,
       imageAlt,
       imageClassName: isPortrait
-        ? "relative w-full h-full object-contain rounded-lg"
+        ? "relative size-full object-contain rounded-lg"
         : "relative size-full object-contain bg-sf-dark rounded-lg",
     });
 
@@ -1591,7 +2363,7 @@ class StreetFighterGame {
           this.characterGrid.activePlayer
         )}`;
         element.classList.add(currentBorderColor);
-        this.playSound(this.soundFiles.HOVER);
+        AudioManager.playSound(this.soundFiles.HOVER);
       }
     });
 
@@ -1612,14 +2384,14 @@ class StreetFighterGame {
 
     element.addEventListener("click", () => {
       onClick();
-      this.playSound(this.soundFiles.CLICK);
+      AudioManager.playSound(this.soundFiles.CLICK);
     });
 
     return element;
   }
 
   createOutfitBox(character, index) {
-    return this.createSelectable("outfit", {
+    const outfit = this.createSelectable("outfit", {
       character,
       index,
       imageSrc: `/outfits/${character}/${index}.png`,
@@ -1627,10 +2399,16 @@ class StreetFighterGame {
       labelText: `${index + 1}`,
       onClick: () => this.selectOutfit(this.characterGrid.activePlayer, index),
     });
+
+    if (!outfit.id) {
+      outfit.id = `outfit-${character.toLowerCase()}-${index}`;
+    }
+
+    return outfit;
   }
 
-  createPortrait(character, index, type) {
-    return this.createSelectable("portrait", {
+  createPortrait(character, index) {
+    const portrait = this.createSelectable("portrait", {
       character,
       index,
       imageSrc: `/portraits/${character.toLowerCase()}.png`,
@@ -1639,6 +2417,12 @@ class StreetFighterGame {
       onClick: () =>
         this.selectCharacter(this.characterGrid.activePlayer, character),
     });
+
+    if (!portrait.id) {
+      portrait.id = `character-portrait-${character.toLowerCase()}`;
+    }
+
+    return portrait;
   }
 
   createImageBox({ className, imageSrc, imageAlt, imageClassName }) {
@@ -1678,6 +2462,18 @@ class StreetFighterGame {
 
     box.appendChild(img);
     return box;
+  }
+
+  cleanup() {
+    GamepadManager.stopPolling();
+    WebSocketManager.close();
+
+    if (this.capcomTimeout) {
+      clearTimeout(this.capcomTimeout);
+      this.capcomTimeout = null;
+    }
+
+    AudioManager.stopAll();
   }
 }
 
