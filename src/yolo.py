@@ -144,6 +144,8 @@ class YOLOServer:
         import cv2
         import numpy as np
 
+        # prepare frame
+
         if use_dummy_frame:
             frame = np.random.randint(0, 256, (Y_SIZE, X_SIZE, 3), dtype=np.uint8)
 
@@ -155,15 +157,20 @@ class YOLOServer:
         input_img = input_img.transpose(2, 0, 1)
         input_tensor = input_img[np.newaxis, :, :, :].astype(np.float16)
 
+        # run inference
+
         outputs = self.session.run(
             self.output_names,
             {self.input_names[0]: input_tensor},
         )
 
-        predictions = np.squeeze(outputs[0])
+        # postprocess
 
+        predictions = np.squeeze(outputs[0])
         scores = predictions[:, 4]
         class_ids = predictions[:, 5].astype(int)
+
+        ## filter by confidence
 
         confidence_mask = scores >= confidence_threshold
         predictions = predictions[confidence_mask]
@@ -175,32 +182,26 @@ class YOLOServer:
         filtered_scores = scores[character_mask]
         filtered_class_ids = class_ids[character_mask]
 
-        if len(set(character_ids)) == 1:
-            if len(filtered_scores) > 2:
-                top_indices = np.argsort(filtered_scores)[-2:][::-1]
-                filtered_predictions = filtered_predictions[top_indices]
-                filtered_scores = filtered_scores[top_indices]
-                filtered_class_ids = filtered_class_ids[top_indices]
-        else:
-            final_predictions = []
-            final_scores = []
-            final_class_ids = []
+        final_predictions = []
+        final_class_ids = []
+        for char_id in character_ids:
+            char_mask = filtered_class_ids == char_id
+            if np.any(char_mask):
+                char_predictions = filtered_predictions[char_mask]
+                char_scores = filtered_scores[char_mask]
+                best_idx = np.argmax(char_scores)
+                final_predictions.append(char_predictions[best_idx])
+                final_class_ids.append(char_id)
+            else:
+                final_predictions.append(
+                    np.array([0, 0, 0, 0, 0, -1], dtype=np.float32)
+                )
+                final_class_ids.append(-1)
 
-            for char_id in character_ids:
-                char_mask = filtered_class_ids == char_id
-                if np.any(char_mask):
-                    char_predictions = filtered_predictions[char_mask]
-                    char_scores = filtered_scores[char_mask]
+        filtered_predictions = np.array(final_predictions)
+        filtered_class_ids = np.array(final_class_ids)
 
-                    best_idx = np.argmax(char_scores)
-                    final_predictions.append(char_predictions[best_idx])
-                    final_scores.append(char_scores[best_idx])
-                    final_class_ids.append(char_id)
-
-            if len(final_predictions) > 0:
-                filtered_predictions = np.array(final_predictions)
-                filtered_scores = np.array(final_scores)
-                filtered_class_ids = np.array(final_class_ids)
+        ## resize boxes to original frame size
 
         boxes = filtered_predictions[:, :4]
         input_shape = np.array(
@@ -216,10 +217,15 @@ class YOLOServer:
             [self.img_width, self.img_height, self.img_width, self.img_height]
         )
 
-        print(f"Detected {len(boxes)} characters")
+        boxes[:, 0] = np.clip(boxes[:, 0], 0, self.img_width)  # xmin
+        boxes[:, 1] = np.clip(boxes[:, 1], 0, self.img_height)  # ymin
+        boxes[:, 2] = np.clip(boxes[:, 2], 0, self.img_width)  # xmax
+        boxes[:, 3] = np.clip(boxes[:, 3], 0, self.img_height)  # ymax
+
+        print(f"Detected {np.sum(filtered_class_ids != -1)} characters")
 
         if return_objects:
-            return boxes, filtered_class_ids
+            return boxes.tolist(), filtered_class_ids.tolist()
 
 
 @app.local_entrypoint()

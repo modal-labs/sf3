@@ -7,7 +7,7 @@ import modal.experimental
 from .llm import LLMServer
 from .llm import app as llm_app
 from .utils import (
-    CHARACTER_MAPPING,
+    CHARACTER_TO_ID,
     COMBOS,
     SPECIAL_MOVES,
     GameInfo,
@@ -270,7 +270,9 @@ class Web:
                     super_art_name = action_data["super_art"]
 
                     p1_obs = self.observation["P1"]
-                    p1_character = CHARACTER_MAPPING[p1_obs["character"]]
+                    p1_character = CHARACTER_TO_ID[
+                        self.game_settings["player1"]["character"]
+                    ]
                     p1_direction = "left" if p1_obs["side"] == 0 else "right"
 
                     if (
@@ -287,7 +289,9 @@ class Web:
                     combo_name = action_data["combo"]
 
                     p1_obs = self.observation["P1"]
-                    p1_character = CHARACTER_MAPPING[p1_obs["character"]]
+                    p1_character = CHARACTER_TO_ID[
+                        self.game_settings["player1"]["character"]
+                    ]
                     p1_direction = "left" if p1_obs["side"] == 0 else "right"
 
                     if p1_character in COMBOS and combo_name in COMBOS[p1_character]:
@@ -412,25 +416,31 @@ class Web:
                         ):  # in case env was just reset
                             continue
 
-                        # store values immediately to avoid race conditions
+                        # store values to avoid race condition
+                        # TODO: remove since condition above should be enough
                         stage = session.observation["stage"][0]
                         timer = session.observation["timer"][0]
                         frame = session.observation["frame"]
+
                         obs_p1 = session.observation["P1"]
                         obs_p2 = session.observation["P2"]
+
+                        p1_settings = session.game_settings["player1"]
+                        p2_settings = session.game_settings["player2"]
+
+                        p1_character = p1_settings["character"]
+                        p2_character = p2_settings["character"]
 
                         (
                             boxes,
                             class_ids,
                         ) = await self.yolo.detect_characters.remote.aio(
-                            [obs_p1["character"], obs_p2["character"]],
+                            [
+                                CHARACTER_TO_ID[p1_character],
+                                CHARACTER_TO_ID[p2_character],
+                            ],
                             frame,
                         )
-
-                        p1_character = CHARACTER_MAPPING[obs_p1["character"]]
-                        p2_character = CHARACTER_MAPPING[obs_p2["character"]]
-                        p1_settings = session.game_settings["player1"]
-                        p2_settings = session.game_settings["player2"]
 
                         game_info = GameInfo(
                             stage=stage,
@@ -469,6 +479,8 @@ class Web:
                             moves_p1 = await self.llm.chat.remote.aio(
                                 messages_p1,
                                 p1_character,
+                                p1_settings["superArt"],
+                                obs_p1["super_count"][0],
                                 obs_p1["side"],
                             )
                             session.player1_next_moves.extend(moves_p1)
@@ -478,6 +490,8 @@ class Web:
                         moves = await self.llm.chat.remote.aio(
                             messages,
                             p2_character,
+                            p2_settings["superArt"],
+                            obs_p2["super_count"][0],
                             obs_p2["side"],
                         )
                         session.player2_next_moves.extend(moves)

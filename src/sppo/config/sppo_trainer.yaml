@@ -1,0 +1,18 @@
+# the sppo config will override default ppo_trainer.yaml
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+actor_rollout_ref:
+  actor:
+    _target_: recipe.sppo.config.SPPOActorConfig
+    sppo_eta: 1.0
+
+algorithm:
+  sppo_eta: 1.0
+  adv_estimator: null # SPPO doesn't use traditional advantage estimation

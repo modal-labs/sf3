@@ -1348,6 +1348,10 @@ class StreetFighterGame {
       el.classList.remove("gamepad-hover");
     });
 
+    if (!GamepadManager.isConnected()) {
+      return;
+    }
+
     const section =
       this.gamepadUIState.sections[this.gamepadUIState.currentSection];
     if (section && section.elements[this.gamepadUIState.currentElement]) {

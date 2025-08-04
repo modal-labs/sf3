@@ -23,7 +23,33 @@ STUN_BAR_MAX = 72
 SUPER_BAR_MAX = 128
 HEALTH_MAX = 160
 
-# moves + characters
+# characters
+
+CHARACTER_MAPPING = {
+    1: "Alex",
+    2: "Chun-Li",
+    3: "Dudley",
+    4: "Elena",
+    0: "Gouki",
+    5: "Hugo",
+    6: "Ibuki",
+    7: "Ken",
+    8: "Makoto",
+    9: "Necro",
+    10: "Oro",
+    11: "Q",
+    12: "Remy",
+    13: "Ryu",
+    14: "Sean",
+    15: "Twelve",
+    16: "Urien",
+    17: "Yang",
+    18: "Yun",
+}
+CHARACTER_TO_ID = {v: k for k, v in CHARACTER_MAPPING.items()}
+
+
+# moves
 
 MOVES = {
     "No-Move": 0,
@@ -45,6 +71,8 @@ MOVES = {
     "Medium Punch+Medium Kick": 16,
     "High Punch+High Kick": 17,
 }
+
+INDEX_TO_MOVE = {v: k for k, v in MOVES.items()}
 
 
 def mirror_moves(moves):
@@ -1669,8 +1697,10 @@ BASE_META_INSTRUCTIONS = {
     },
 }
 
+# instructions
 
-def get_meta_instructions_for_character(
+
+def get_available_instructions_for_character(
     character: str, super_art: int, super_count: int
 ) -> list[str]:
     instructions = []
@@ -1740,43 +1770,54 @@ def create_messages(
 
     if player1_char_id != player2_char_id:  # characters are different
         for i, class_id in enumerate(game_info.class_ids):
+            if class_id == -1:
+                continue
             if class_id == player1_char_id and i < len(game_info.boxes):
                 player1_box = game_info.boxes[i]
             elif class_id == player2_char_id and i < len(game_info.boxes):
                 player2_box = game_info.boxes[i]
     else:  # characters are the same
-        if len(game_info.boxes) == 2:  # two characters detected
-            x_center_0 = (game_info.boxes[0][0] + game_info.boxes[0][2]) / 2
-            x_center_1 = (game_info.boxes[1][0] + game_info.boxes[1][2]) / 2
+        valid_boxes = [
+            (i, box)
+            for i, (class_id, box) in enumerate(
+                zip(game_info.class_ids, game_info.boxes)
+            )
+            if class_id != -1
+        ]
+        if len(valid_boxes) == 2:  # two characters detected
+            (i0, box0), (i1, box1) = valid_boxes
+            x_center_0 = (box0[0] + box0[2]) / 2
+            x_center_1 = (box1[0] + box1[2]) / 2
 
             if player1.side == 0:
                 if x_center_0 < x_center_1:
-                    player1_box = game_info.boxes[0]
-                    player2_box = game_info.boxes[1]
+                    player1_box = box0
+                    player2_box = box1
                 else:
-                    player1_box = game_info.boxes[1]
-                    player2_box = game_info.boxes[0]
+                    player1_box = box1
+                    player2_box = box0
             else:
                 if x_center_0 > x_center_1:
-                    player1_box = game_info.boxes[0]
-                    player2_box = game_info.boxes[1]
+                    player1_box = box0
+                    player2_box = box1
                 else:
-                    player1_box = game_info.boxes[1]
-                    player2_box = game_info.boxes[0]
-        elif len(game_info.boxes) == 1:  # only one character detected
-            x_center = (game_info.boxes[0][0] + game_info.boxes[0][2]) / 2
+                    player1_box = box1
+                    player2_box = box0
+        elif len(valid_boxes) == 1:  # only one character detected
+            _, box = valid_boxes[0]
+            x_center = (box[0] + box[2]) / 2
             x_mid = X_SIZE / 2
 
             if player1.side == 0:
                 if x_center < x_mid:
-                    player1_box = game_info.boxes[0]
+                    player1_box = box
                 else:
-                    player2_box = game_info.boxes[0]
+                    player2_box = box
             else:
                 if x_center > x_mid:
-                    player1_box = game_info.boxes[0]
+                    player1_box = box
                 else:
-                    player2_box = game_info.boxes[0]
+                    player2_box = box
 
     position_prompt = f"Arena width: {X_SIZE}, height: {Y_SIZE}. "
 
@@ -1813,7 +1854,7 @@ def create_messages(
     moves_prompt = "You can use the following moves:\n"
     moves_prompt += chr(10).join(
         "- " + move
-        for move in get_meta_instructions_for_character(
+        for move in get_available_instructions_for_character(
             player2.character, player2.super_art, player2.super_count
         )
     )
@@ -1840,27 +1881,97 @@ def create_messages(
     ]
 
 
-INDEX_TO_MOVE = {v: k for k, v in MOVES.items()}
+def calculate_super_count(super_bar: int) -> int:
+    if super_bar == SUPER_BAR_MAX:
+        return 3
+    elif super_bar >= (SUPER_BAR_MAX // 3) * 2:
+        return 2
+    elif super_bar >= SUPER_BAR_MAX // 3:
+        return 1
+    else:
+        return 0
 
-CHARACTER_MAPPING = {
-    1: "Alex",
-    2: "Chun-Li",
-    3: "Dudley",
-    4: "Elena",
-    0: "Gouki",
-    5: "Hugo",
-    6: "Ibuki",
-    7: "Ken",
-    8: "Makoto",
-    9: "Necro",
-    10: "Oro",
-    11: "Q",
-    12: "Remy",
-    13: "Ryu",
-    14: "Sean",
-    15: "Twelve",
-    16: "Urien",
-    17: "Yang",
-    18: "Yun",
-}
-CHARACTER_TO_ID = {v: k for k, v in CHARACTER_MAPPING.items()}
+
+def create_random_messages():  # for warmup, testing
+    import random
+
+    n_detected_characters = random.randint(1, 2)
+
+    player1_character = random.choice(list(CHARACTER_MAPPING.values()))
+    player2_character = random.choice(list(CHARACTER_MAPPING.values()))
+
+    player1_super_art = random.randint(1, 3)
+    player2_super_art = random.randint(1, 3)
+
+    side = random.randint(0, 1)
+
+    player1_stun_bar = random.randint(0, STUN_BAR_MAX)
+    player2_stun_bar = random.randint(0, STUN_BAR_MAX)
+
+    player1_super_bar = random.randint(0, SUPER_BAR_MAX)
+    player2_super_bar = random.randint(0, SUPER_BAR_MAX)
+
+    player1_super_count = calculate_super_count(player1_super_bar)
+    player2_super_count = calculate_super_count(player2_super_bar)
+
+    game_info = GameInfo(
+        stage=random.randint(1, 3),
+        timer=random.randint(0, 100),
+        boxes=[
+            [
+                random.randint(0, X_SIZE),
+                random.randint(0, Y_SIZE),
+                random.randint(0, X_SIZE),
+                random.randint(0, Y_SIZE),
+            ]
+            for _ in range(n_detected_characters)
+        ],
+        class_ids=[
+            CHARACTER_TO_ID[player1_character],
+            CHARACTER_TO_ID[player2_character],
+        ][:n_detected_characters],
+    )
+
+    player1 = PlayerState(
+        character=player1_character,
+        super_art=player1_super_art,
+        wins=random.randint(0, 2),
+        side=side,
+        stunned=player1_stun_bar == STUN_BAR_MAX,
+        stun_bar=player1_stun_bar,
+        health=random.randint(0, HEALTH_MAX),
+        super_count=player1_super_count,
+        super_bar=player1_super_bar,
+    )
+
+    player2 = PlayerState(
+        character=player2_character,
+        super_art=player2_super_art,
+        wins=random.randint(0, 2),
+        side=1 - side,
+        stunned=player2_stun_bar == STUN_BAR_MAX,
+        stun_bar=player2_stun_bar,
+        health=random.randint(0, HEALTH_MAX),
+        super_count=player2_super_count,
+        super_bar=player2_super_bar,
+    )
+
+    return (
+        create_messages(game_info, player1, player2),
+        player2_character,
+        player2_super_art,
+        player2_super_count,
+        side,
+    )
+
+
+def parse_move(character: str, move_name: str, side: int) -> list[int] | None:
+    current_direction = "left" if side == 0 else "right"
+
+    if move_name in BASE_META_INSTRUCTIONS:
+        return BASE_META_INSTRUCTIONS[move_name][current_direction]
+    elif move_name in COMBOS[character]:
+        return COMBOS[character][move_name][current_direction]
+    elif move_name in SPECIAL_MOVES[character]:
+        return SPECIAL_MOVES[character][move_name][current_direction]
+    return None
