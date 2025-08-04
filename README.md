@@ -27,11 +27,14 @@ then store it as `assets/engine/sfiii3n.zip`.
 ## Quickstart
 
 ```bash
-# Test the LLM
+# Test the (trained) YOLO model
+modal run -m src.yolo
+
+# Test the (pretrained) LLM
 modal run -m src.llm
 
-# Test the YOLO model
-modal run -m src.yolo
+# Test the (pretrained) RM
+modal run -m src.training.rm
 
 # Serve the web app
 modal serve -m src.app
@@ -46,8 +49,11 @@ modal deploy -m src.app
 # Prepare the data, train the YOLO model, and export to ONNX
 modal run -m src.training.yolo --prepare --train --export
 
+# Deploy the RM for LLM training
+modal deploy -m src.training.rm
+
 # Prepare the data and train the LLM
-modal run -m src.training.yolo --prepare --train
+modal run -m src.training.llm --prepare --train
 ```
 
 ## Credit
