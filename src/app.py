@@ -545,7 +545,10 @@ class Web:
                             ],
                         )
                         try:
-                            session.env = arena.make("sfiii3n", settings)
+                            session.env = await asyncio.wait_for(
+                                asyncio.to_thread(arena.make, "sfiii3n", settings),
+                                timeout=1 * minutes,
+                            )
                         except Exception as e:
                             print(f"Error creating DIAMBRA environment: {e}")
                             session.game_state["status"] = "error"
@@ -600,13 +603,17 @@ class Web:
                                     else 0,
                                 }
 
-                                (
-                                    session.observation,
-                                    reward,
-                                    terminated,
-                                    truncated,
-                                    session.info,
-                                ) = session.env.step(session.actions)
+                                try:
+                                    (
+                                        session.observation,
+                                        reward,
+                                        terminated,
+                                        truncated,
+                                        session.info,
+                                    ) = session.env.step(session.actions)
+                                except Exception as e:
+                                    print(f"Error during env.step: {e}")
+                                    continue
 
                                 if session.info.get("game_done", False):
                                     session.in_transition = True

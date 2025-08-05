@@ -39,7 +39,7 @@ vllm_image = (
     )
 )
 
-MODEL_NAME = "Qwen/Qwen3-0.6B"
+MODEL_NAME = "Qwen/Qwen3-8B"
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
 
@@ -94,7 +94,7 @@ class LLMServer:
             enforce_eager=True,
             swap_space=0,
             enable_prefix_caching=True,  # https://docs.vllm.ai/en/stable/features/automatic_prefix_caching.html#example-workloads,
-            gpu_memory_utilization=0.95,
+            gpu_memory_utilization=0.9,
             disable_log_stats=True,  # reduce overhead
         )
 

@@ -1760,7 +1760,7 @@ def create_messages(
     game_info_prompt += f", Best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds"
 
     # position
-    position_prompt = ""
+    position_prompt = f"Arena width: {X_SIZE}, height: {Y_SIZE}. "
 
     player1_box = None
     player2_box = None
@@ -1819,16 +1819,14 @@ def create_messages(
                 else:
                     player2_box = box
 
-    position_prompt = f"Arena width: {X_SIZE}, height: {Y_SIZE}. "
-
     if player2_box is not None:
         player2_x_center = (player2_box[0] + player2_box[2]) / 2
         player2_y_center = (player2_box[1] + player2_box[3]) / 2
-        position_prompt = (
+        position_prompt += (
             f"You are at position ({int(player2_x_center)}, {int(player2_y_center)}). "
         )
     else:
-        position_prompt = "Your position is unknown. "
+        position_prompt += "Your position is unknown. "
 
     if player1_box is not None:
         player1_x_center = (player1_box[0] + player1_box[2]) / 2
@@ -1873,7 +1871,7 @@ def create_messages(
                 {power_prompt}
                 {moves_prompt}
 
-                Simply respond with just the name of the best move, no other text.
+                Simply respond with just the entire name of the best move.
                 """
             ),
         },
