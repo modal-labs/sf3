@@ -35,9 +35,13 @@ onnx_image = (
     # install system dependencies
     .apt_install("python3-opencv", "ffmpeg")
     # install Python dependencies
-    .pip_install("uv")
-    .run_commands(
-        "uv pip install --system --compile-bytecode ultralytics==8.3.167 onnx==1.17.0 onnxslim==0.1.59 onnxruntime-gpu==1.21.0 opencv-python==4.11.0.86 tensorrt==10.9.0.34"
+    .uv_pip_install(
+        "ultralytics==8.3.167",
+        "onnx==1.17.0",
+        "onnxslim==0.1.59",
+        "onnxruntime-gpu==1.21.0",
+        "opencv-python==4.11.0.86",
+        "tensorrt==10.9.0.34",
     )
 )
 
@@ -48,7 +52,7 @@ volumes = {volume_path: volume}
 runs_dir = volume_path / "runs"
 
 
-def find_best_model(suffix: str = ""):
+def find_best_model(suffix: str):
     import glob
     import os
 
@@ -60,7 +64,7 @@ def find_best_model(suffix: str = ""):
     return runs_dir / best_pts[0]
 
 
-MAX_INPUTS = 64
+MAX_INPUTS = 32
 
 
 @app.cls(
@@ -86,6 +90,8 @@ class YOLOServer:
         model_file = find_best_model("onnx")
         if model_file is None:
             raise ValueError("No best model found")
+
+        print(f"Loading model from {model_file}")
 
         self.session = onnxruntime.InferenceSession(
             model_file,

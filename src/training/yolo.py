@@ -5,8 +5,6 @@ import modal
 
 from ..utils import (
     CHARACTER_MAPPING,
-    MAX_Y,
-    MIN_Y,
     X_SIZE,
     Y_SIZE,
     minutes,
@@ -55,9 +53,11 @@ onnx_image = (
     .apt_install("python3-opencv", "ffmpeg")
     # install Python dependencies
     .uv_pip_install(
+        "ultralytics==8.3.167",
         "onnx==1.17.0",
         "onnxslim==0.1.59",
         "onnxruntime-gpu==1.21.0",
+        "opencv-python==4.11.0.86",
         "tensorrt==10.9.0.34",
     )
 )
@@ -213,11 +213,11 @@ def prepare_dataset():
         char2_x = random.randint(max_x_char2, X_SIZE - char2_img.width - 10)
 
         # clamp Y position to ensure characters are at least partially visible
-        max_y_char1 = max(MIN_Y, MAX_Y - char1_img.height)
-        max_y_char2 = max(MIN_Y, MAX_Y - char2_img.height)
+        max_y_char1 = max(0, Y_SIZE - char1_img.height)
+        max_y_char2 = max(0, Y_SIZE - char2_img.height)
 
-        char1_y = random.randint(MIN_Y, max_y_char1) if max_y_char1 > MIN_Y else MIN_Y
-        char2_y = random.randint(MIN_Y, max_y_char2) if max_y_char2 > MIN_Y else MIN_Y
+        char1_y = random.randint(0, max_y_char1) if max_y_char1 > 0 else 0
+        char2_y = random.randint(0, max_y_char2) if max_y_char2 > 0 else 0
 
         scene.paste(char1_img, (char1_x, char1_y), char1_img)
         scene.paste(char2_img, (char2_x, char2_y), char2_img)
@@ -319,7 +319,7 @@ def prepare_dataset():
 
 model_size = "yolov10n.pt"
 
-TRAIN_GPU_COUNT = 1
+TRAIN_GPU_COUNT = 4
 TRAIN_CPU_COUNT = TRAIN_GPU_COUNT * 8
 
 
@@ -330,8 +330,8 @@ TRAIN_CPU_COUNT = TRAIN_GPU_COUNT * 8
     cpu=TRAIN_CPU_COUNT,
     timeout=24 * 60 * minutes,
 )
-def train_model(epochs: int, batch_size_per_gpu: int):
-    from datetime import datetime
+def train_model():
+    import time
 
     from ultralytics import YOLO
 
@@ -343,9 +343,9 @@ def train_model(epochs: int, batch_size_per_gpu: int):
         data=str(dataset_dir / "data.yaml"),
         # optimization config
         device=list(range(TRAIN_GPU_COUNT)),  # use the GPU(s)
-        epochs=epochs,
-        batch=batch_size_per_gpu * TRAIN_GPU_COUNT,
+        batch=512 * TRAIN_GPU_COUNT,
         seed=seed,
+        epochs=50,
         # data processing config
         workers=max(
             TRAIN_CPU_COUNT // TRAIN_GPU_COUNT, 1
@@ -353,10 +353,13 @@ def train_model(epochs: int, batch_size_per_gpu: int):
         cache="disk",  # cache preprocessed images deterministically
         # model saving config
         project=str(runs_dir),
-        name=datetime.now().strftime("%Y-%m-%d"),
-        exist_ok=True,  # overwrite previous model if it exists
-        verbose=True,  # detailed logs
-        # disable geometric transforms since camera POV is fixed
+        name=time.strftime("%Y%m%d_%H%M%S"),
+        exist_ok=True,
+        verbose=True,
+        # disable all color, geometric, and complex augmentations
+        hsv_h=0.0,
+        hsv_s=0.0,
+        hsv_v=0.0,
         degrees=0.0,
         translate=0.0,
         scale=0.0,
@@ -365,16 +368,16 @@ def train_model(epochs: int, batch_size_per_gpu: int):
         flipud=0.0,
         fliplr=0.0,
         bgr=0.0,
-        # disable complex augmentations since we create synthetic scenes
-        mosaic=0.0,  # no mosaic (we control character placements)
-        mixup=0.0,  # no mixup (character identities must be preserved)
+        mosaic=0.0,
+        mixup=0.0,
+        cutmix=0.0,
         copy_paste=0.0,
-        auto_augment=None,  # disable auto augment for classification
+        auto_augment=None,
         erasing=0.0,
     )
 
 
-def find_best_model(suffix: str = ""):
+def find_best_model(suffix: str):
     import glob
     import os
 
@@ -405,15 +408,13 @@ def export_onnx():
 async def main(
     prepare: bool = False,
     train: bool = False,
-    epochs: int = 30,
-    batch_size_per_gpu: int = 512,
     export: bool = False,
 ):
     if prepare:
         prepare_dataset.remote()
 
     if train:
-        train_model.remote(epochs, batch_size_per_gpu)
+        train_model.remote()
 
     if export:
         export_onnx.remote()
