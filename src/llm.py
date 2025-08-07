@@ -86,6 +86,8 @@ MAX_INPUTS = max_num_seqs = 8
     },
     gpu="b200",
     # region=region,
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * minutes,
     timeout=24 * 60 * minutes,
 )
@@ -99,8 +101,11 @@ class LLMServer:
 
         cache_volume.reload()
 
+        load_path = self.ckpt_path or get_latest_checkpoint_file_path()
+        print(f"Loading model from {load_path}")
+
         self.llm = LLM(
-            model=self.ckpt_path or get_latest_checkpoint_file_path(),
+            model=load_path,
             max_num_seqs=max_num_seqs,
             max_num_batched_tokens=40960,  # https://qwen.readthedocs.io/en/latest/deployment/vllm.html#faq, https://docs.vllm.ai/en/latest/configuration/optimization.html#performance-tuning-with-chunked-prefill
             enforce_eager=True,

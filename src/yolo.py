@@ -74,6 +74,8 @@ MAX_INPUTS = 512
     # region=region,
     scaledown_window=60 * minutes,
     timeout=24 * 60 * minutes,
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 @modal.concurrent(max_inputs=MAX_INPUTS)
 class YOLOServer:
