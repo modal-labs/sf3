@@ -209,7 +209,6 @@ class Web:
                 self.sandbox = None
                 self.game_running = False
                 self.game_settings = {
-                    "difficulty": 1,
                     "player1": {
                         "character": "Ken",
                         "outfit": 1,
@@ -529,7 +528,6 @@ class Web:
                             render_mode="rgb_array",
                             splash_screen=False,
                             grpc_timeout=1 * minutes,
-                            difficulty=session.game_settings["difficulty"],
                             action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
                             characters=[
                                 p1_settings["character"],

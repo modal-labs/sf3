@@ -526,7 +526,6 @@ class StreetFighterGame {
     // game state
     this.gameState = {
       // settings
-      difficulty: 1,
       humanVsLlm: true,
 
       // player state
@@ -631,17 +630,6 @@ class StreetFighterGame {
     this.actions.SUPER_ART = 18;
     this.actions.COMBO = 19;
 
-    this.difficultyLabels = [
-      "",
-      "Very Easy",
-      "Easy",
-      "Medium",
-      "Hard",
-      "Very Hard",
-      "Expert",
-      "Master",
-      "Extreme",
-    ];
     this.numOutfitsPerCharacter = 6;
     this.maxInputHistory = 20; // roughly max length of move sequence
 
@@ -688,7 +676,6 @@ class StreetFighterGame {
     this.hoverElements = [
       "super-art-select-p1",
       "super-art-select-p2",
-      "difficulty-slider",
       "modal-link",
     ];
 
@@ -801,7 +788,6 @@ class StreetFighterGame {
     this.initializeCharacterGrid();
     this.initializeOutfitGrid(null);
     this.loadExtraMovesDisplay();
-    this.initializeDifficultySlider();
     this.updateControlsDisplay();
   }
 
@@ -910,18 +896,6 @@ class StreetFighterGame {
         AudioManager.playSound(this.soundFiles.CLICK)
       );
     }
-  }
-
-  initializeDifficultySlider() {
-    const slider = document.getElementById("difficulty-slider");
-    const label = document.getElementById("difficulty-label");
-
-    slider.addEventListener("input", (e) => {
-      const value = parseInt(e.target.value);
-      this.gameState.difficulty = value;
-      label.textContent = this.difficultyLabels[value];
-      AudioManager.playSound(this.soundFiles.CLICK);
-    });
   }
 
   async loadExtraMovesDisplay() {
@@ -1105,7 +1079,6 @@ class StreetFighterGame {
           { elements: this.getOutfitElements(), grid: true, cols: 1 },
           { elements: ["#super-art-select-p1"], controls: true },
           { elements: ["#super-art-select-p2"], controls: true },
-          { elements: ["#difficulty-slider"], controls: true },
           { elements: ["#start-game-btn"] },
         ];
         break;
@@ -1480,10 +1453,6 @@ class StreetFighterGame {
       superArt: parseInt(document.getElementById("super-art-select-p2").value),
     });
 
-    this.gameState.difficulty = parseInt(
-      document.getElementById("difficulty-slider").value
-    );
-
     AudioManager.play(this.soundFiles.START, {
       volume: this.startSoundVolume,
       trackAs: "effect",
@@ -1495,7 +1464,6 @@ class StreetFighterGame {
       document.getElementById("loading-status").textContent =
         "Starting game...";
       WebSocketManager.send("start_game", {
-        difficulty: this.gameState.difficulty,
         humanVsLlm: this.gameState.humanVsLlm,
         player1: this.gameState.player1,
         player2: this.gameState.player2,
@@ -2309,16 +2277,12 @@ class StreetFighterGame {
 
     this.gameState.player1 = { character: null, outfit: 1, superArt: 1 };
     this.gameState.player2 = { character: null, outfit: 1, superArt: 1 };
-    this.gameState.difficulty = 1;
 
     document.getElementById("super-art-select-p1").value = "1";
     document.getElementById("super-art-select-p2").value = "1";
 
     document.getElementById("combos-list").innerHTML = "";
     document.getElementById("super-arts-list").innerHTML = "";
-
-    document.getElementById("difficulty-slider").value = "1";
-    document.getElementById("difficulty-label").textContent = "Very Easy";
 
     this.updatePlayerBoxes();
     this.updateCharacterBorders();
