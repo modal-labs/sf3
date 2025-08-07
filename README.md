@@ -30,7 +30,7 @@ then store it as `assets/engine/sfiii3n.zip`.
 # Test the (trained) YOLO model
 modal run -m src.yolo
 
-# Test the (pretrained) LLM
+# Test the LLM
 modal run -m src.llm
 
 # Test the (pretrained) RM
@@ -49,11 +49,8 @@ modal deploy -m src.app
 # Prepare the data, train the YOLO model, and export to ONNX
 modal run -m src.training.yolo --prepare --train --export
 
-# Deploy the RM for LLM training
-modal deploy -m src.training.rm
-
-# Prepare the data and train the LLM
-modal run -m src.training.llm --prepare --train
+# Train the LLM
+modal run -m src.training.llm
 ```
 
 ## Credit

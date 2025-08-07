@@ -1,3 +1,6 @@
+import os
+import sys
+import warnings
 from pathlib import Path
 
 import modal
@@ -6,63 +9,67 @@ import modal.experimental
 from ..llm import LLMServer
 from ..llm import app as llm_app
 from ..utils import (
-    CHARACTER_MAPPING,
     CHARACTER_TO_ID,
+    HEALTH_MAX,
     GameInfo,
     PlayerState,
     create_messages,
+    get_available_instructions_for_character,
     local_assets_dir,
     minutes,
+    parse_move,
+    seed,
 )
 from ..yolo import YOLOServer
 from ..yolo import app as yolo_app
-from .engine import create_environment, create_sandbox
 
 # Modal setup
-
 app = modal.App("sf3-llm-train").include(llm_app).include(yolo_app)
 
+engine_app = modal.App.lookup("sf3-engine-train", create_if_missing=True)
+
+engine_image = (
+    modal.experimental.raw_registry_image("docker.io/diambra/engine:v2.2.4")
+    .env(
+        {
+            "HOME": "/tmp",
+        }
+    )
+    .entrypoint([])
+    # since sandbox is created in app, files will be in Modal container, not locally
+    # so we need to add them to the web app image as well
+    .add_local_file(
+        "/root/sfiii3n.zip",
+        "/opt/diambraArena/roms/sfiii3n.zip",
+    )
+    .add_local_file(
+        "/root/credentials",
+        "/tmp/.diambra/credentials",
+    )
+)
+
 local_engine_dir = local_assets_dir / "engine"
-local_train_dir = Path(__file__).parent
-local_src_dir = Path(__file__).parent.parent
 
-remote_rm_path = "/root/rm.py"
-remote_reward_path = "/root/reward.py"
-remote_engine_path = "/root/engine.py"
-remote_utils_path = "/root/src/utils.py"
-
-
-def fix_opencv():
-    import opencv_fixer
-
-    opencv_fixer.AutoFix()
-
-
-verl_image = (
-    modal.Image.from_registry("verlai/verl:app-verl0.5-vllm0.9.1-mcore0.12.2-te2.2")
-    .apt_install("git")
-    .run_commands("git clone https://github.com/volcengine/verl /root/verl")
-    .run_commands("cd /root/verl && uv pip install --system -e '.[vllm]'")
+train_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("ffmpeg")
     .uv_pip_install(
-        "opencv-fixer==0.2.5",
+        "torch==2.7.1",
+        "trl==0.21.0",
+        "accelerate==1.8.1",
+        "datasets==3.6.0",
+        "flashinfer-python==0.2.6.post1",
         "diambra-arena==2.2.7",
         "diambra==0.0.20",
-        "psutil==7.0.0",
-        "huggingface_hub[hf_transfer]==0.33.4",
-        "aiohttp==3.12.15",
+        "wandb==0.21.0",
+        extra_index_url="https://download.pytorch.org/whl/cu128",
+        extra_options="--index-strategy unsafe-best-match",
     )
-    .run_function(fix_opencv)
     .env(
         {
             "HF_HUB_ENABLE_HF_TRANSFER": "1",
-            "VLLM_USE_V1": "1",
         }
     )
-    # sppo
-    .add_local_dir(local_src_dir / "sppo", "/root/sppo")
-    .add_local_file(local_train_dir / "reward.py", remote_reward_path)
-    .add_local_file(local_train_dir / "engine.py", remote_engine_path)
-    .add_local_file(local_src_dir / "utils.py", remote_utils_path)
     # engine
     .add_local_file(
         local_engine_dir / "sfiii3n.zip",
@@ -78,71 +85,172 @@ cache_path = Path("/cache")
 cache_volume = modal.Volume.from_name(f"{app.name}-cache", create_if_missing=True)
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
-
 vllm_cache_vol = modal.Volume.from_name("sf3-vllm-cache", create_if_missing=True)
 
-
-MODEL_NAME = "Qwen/Qwen3-0.6B"
+MODEL_NAME = "Qwen/Qwen3-8B"
 
 
 # data
 
-training_character = "Chun-Li"
-training_super_art = 1
+character = "Chun-Li"
+outfit = 1
+super_art = 1
 
-frozen_characters = list(CHARACTER_MAPPING.values())
+
+async def create_llm(ckpt_path: str = ""):
+    try:
+        print("Creating LLM...")
+        llm = LLMServer(ckpt_path=ckpt_path)
+        await llm.boot.remote.aio()
+        print("LLM created")
+        return llm
+    except Exception as e:
+        print(f"Couldn't create LLM: {e}", file=sys.stderr)
+        return None
 
 
 async def create_yolo():
-    print("Creating YOLO...")
-    yolo = YOLOServer()
-    await yolo.boot.remote.aio()
-    print("YOLO created")
-    return yolo
+    try:
+        print("Creating YOLO...")
+        yolo = YOLOServer()
+        await yolo.boot.remote.aio()
+        print("YOLO created")
+        return yolo
+    except Exception as e:
+        print(f"Couldn't create YOLO: {e}", file=sys.stderr)
+        return None
 
 
-async def create_llm():
-    print("Creating LLM...")
-    llm = LLMServer()
-    await llm.boot.remote.aio()
-    print("LLM created")
-    return llm
+async def create_sandbox():
+    print("Creating sandbox...")
+    engine_port = 50051
+    sandbox = modal.Sandbox.create(
+        "/bin/diambraEngineServer",
+        app=engine_app,
+        image=engine_image,
+        timeout=60 * minutes,
+        unencrypted_ports=[engine_port],
+        verbose=True,
+    )
+    tunnels = sandbox.tunnels()
+    tunnel = tunnels[engine_port]
+    host, port = tunnel.tcp_socket
+    os.environ["DIAMBRA_ENVS"] = f"{host}:{port}"
+    print(f"Created sandbox {sandbox.object_id} at {host}:{port}")
+    return sandbox
+
+
+def create_environment(
+    characters: list[str],
+    outfits: list[int],
+    super_arts: list[int],
+):
+    import diambra.arena as arena
+    from diambra.arena import EnvironmentSettingsMultiAgent, Roles, SpaceTypes
+
+    print("Creating diambra environment...")
+    settings = EnvironmentSettingsMultiAgent(
+        step_ratio=6,
+        role=(Roles.P1, Roles.P2),
+        render_mode="rgb_array",
+        splash_screen=False,
+        grpc_timeout=1 * minutes,
+        action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
+        characters=characters,
+        outfits=outfits,
+        super_art=super_arts,
+    )
+    try:
+        env = arena.make("sfiii3n", settings)
+    except Exception as e:
+        print(f"Couldn't create diambra environment: {e}", file=sys.stderr)
+        return None
+    print("diambra environment created successfully!")
+    return env
 
 
 @app.function(
-    image=verl_image,
+    image=train_image,
     volumes={cache_path: cache_volume},
     timeout=60 * minutes,
 )
 async def run_rl_episode(
     idx: int,
-    character: str,
-    super_art: int,
-    difficulty: int,
     split: str,
-    save_video: bool = False,
+    run_name: str,
+    n_move_returns: int,
+    frozen_random_prob: float,
+    save_video: bool,
+    max_steps_without_reward: int,
+    current_ckpt_path: str = "",
+    prior_ckpt_path: str = "",
 ):
     import asyncio
+    import random
 
     from tqdm import tqdm
 
     ## init
 
-    characters = [training_character, character]
-    super_arts = [training_super_art, super_art]
+    characters = [character, character]
+    outfits = [outfit, outfit]
+    super_arts = [super_art, super_art]
 
-    yolo, llm = await asyncio.gather(create_yolo(), create_llm())
+    tasks = [create_yolo(), create_sandbox(), create_llm(current_ckpt_path)]
 
-    sandbox = create_sandbox()
-    env = create_environment(difficulty, characters, super_arts)
+    if prior_ckpt_path:
+        tasks.append(create_llm(prior_ckpt_path))
+    else:
+        tasks.append(asyncio.to_thread(lambda: None))
+
+    yolo, sandbox, current_llm, prior_llm = await asyncio.gather(*tasks)
+
+    if yolo is None:
+        sandbox.terminate()
+        return []
+
+    if current_llm is None:
+        sandbox.terminate()
+        return []
+
+    if prior_ckpt_path and prior_llm is None:
+        sandbox.terminate()
+        return []
+
+    try:
+        env = await asyncio.wait_for(
+            asyncio.to_thread(
+                create_environment,
+                characters,
+                outfits,
+                super_arts,
+            ),
+            timeout=1 * minutes,
+        )
+    except asyncio.TimeoutError:
+        print("Timeout while creating environment", file=sys.stderr)
+        sandbox.terminate()
+        return []
     if env is None:
         sandbox.terminate()
         return []
+
     observation, info = env.reset()
 
     step_idx = 0
-    step_info = []
-    video_info = []
+    steps_without_reward = 0
+
+    # buffers for n-step returns
+    step_rewards: list[float] = []
+    step_prompts: list[list[dict[str, str]]] = []
+    step_training_responses: list[list[dict[str, str]]] = []
+    step_frozen_responses: list[list[dict[str, str]]] = []
+    step_timer: list[int] = []
+    step_p1_health: list[int] = []
+    step_p2_health: list[int] = []
+
+    step_data = []
+    frames = []
 
     print("Running episode...")
     pbar = tqdm(desc="step_idx", unit="step")
@@ -151,7 +259,7 @@ async def run_rl_episode(
         obs_p2 = observation["P2"]
 
         boxes, class_ids = await yolo.detect_characters.remote.aio(
-            [CHARACTER_TO_ID[training_character], CHARACTER_TO_ID[character]],
+            [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
             observation["frame"],
         )
 
@@ -165,7 +273,7 @@ async def run_rl_episode(
         p1_side = obs_p1["side"]
 
         player1 = PlayerState(
-            character=training_character,
+            character=character,
             super_art=super_arts[0],
             wins=obs_p1["wins"][0],
             side=p1_side,
@@ -189,67 +297,130 @@ async def run_rl_episode(
         )
 
         training_messages = create_messages(game_info, player2, player1)
-        frozen_messages = create_messages(game_info, player1, player2)
-
-        training_moves = await llm.chat.remote.aio(
-            training_messages,
-            training_character,
-            super_arts[0],
-            obs_p1["super_count"][0],
-            p1_side,
-        )
-        frozen_moves = await llm.chat.remote.aio(
-            frozen_messages,
-            character,
-            super_arts[1],
-            obs_p2["super_count"][0],
-            obs_p2["side"],
-        )
-
-        if len(training_moves) > len(frozen_moves):
-            frozen_moves = frozen_moves + [0] * (
-                len(training_moves) - len(frozen_moves)
+        try:
+            training_buttons, training_move_name = await current_llm.chat.remote.aio(
+                training_messages,
+                character,
+                super_arts[0],
+                obs_p1["super_count"][0],
+                p1_side,
+                return_move_name=True,
             )
-        elif len(frozen_moves) > len(training_moves):
-            training_moves = training_moves + [0] * (
-                len(frozen_moves) - len(training_moves)
+        except Exception as e:
+            print(f"current_llm.chat failed: {e}", file=sys.stderr)
+            available_moves = get_available_instructions_for_character(
+                character, super_arts[0], obs_p1["super_count"][0]
+            )
+            training_move_name = random.choice(available_moves)
+            training_buttons = parse_move(character, training_move_name, p1_side)
+
+        if prior_llm is None:
+            available_moves = get_available_instructions_for_character(
+                character, super_arts[1], obs_p2["super_count"][0]
+            )
+            frozen_move_name = random.choice(available_moves)
+            frozen_buttons = parse_move(character, frozen_move_name, obs_p2["side"])
+        else:
+            if random.random() < frozen_random_prob:
+                available_moves = get_available_instructions_for_character(
+                    character, super_arts[1], obs_p2["super_count"][0]
+                )
+                frozen_move_name = random.choice(available_moves)
+                frozen_buttons = parse_move(character, frozen_move_name, obs_p2["side"])
+            else:
+                frozen_messages = create_messages(game_info, player1, player2)
+                try:
+                    frozen_buttons, frozen_move_name = await prior_llm.chat.remote.aio(
+                        frozen_messages,
+                        character,
+                        super_arts[1],
+                        obs_p2["super_count"][0],
+                        obs_p2["side"],
+                        return_move_name=True,
+                    )
+                except Exception as e:
+                    print(f"prior_llm.chat failed: {e}", file=sys.stderr)
+                    available_moves = get_available_instructions_for_character(
+                        character, super_arts[1], obs_p2["super_count"][0]
+                    )
+                    frozen_move_name = random.choice(available_moves)
+                    frozen_buttons = parse_move(
+                        character, frozen_move_name, obs_p2["side"]
+                    )
+
+        if len(training_buttons) > len(frozen_buttons):
+            frozen_buttons = frozen_buttons + [0] * (
+                len(training_buttons) - len(frozen_buttons)
+            )
+        elif len(frozen_buttons) > len(training_buttons):
+            training_buttons = training_buttons + [0] * (
+                len(frozen_buttons) - len(training_buttons)
             )
 
-        for training_move, frozen_move in zip(training_moves, frozen_moves):
-            (
-                observation,
-                reward,
-                terminated,
-                truncated,
-                info,
-            ) = env.step(
-                {
-                    "agent_0": training_move,
-                    "agent_1": frozen_move,
-                }
-            )
+        # record pre-step info for tie-breaking and weighting later
+        current_timer = observation["timer"][0]
+        p1_health_before = obs_p1["health"][0]
+        p2_health_before = obs_p2["health"][0]
+
+        move_set_reward = 0
+        for training_button, frozen_button in zip(training_buttons, frozen_buttons):
+            try:
+                (
+                    observation,
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                ) = env.step(
+                    {
+                        "agent_0": training_button,
+                        "agent_1": frozen_button,
+                    }
+                )
+            except Exception as e:
+                print(f"env.step() failed for step {step_idx}: {e}", file=sys.stderr)
+                continue
+
+            move_set_reward += reward
 
             if save_video:
                 boxes, class_ids = await yolo.detect_characters.remote.aio(
-                    [CHARACTER_TO_ID[training_character], CHARACTER_TO_ID[character]],
+                    [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
                     observation["frame"],
                 )
 
-                video_info.append(
-                    {
-                        "frame": observation["frame"],
-                        "boxes": boxes,
-                        "class_ids": class_ids,
-                    }
-                )
+                frames.append(observation["frame"])
 
-        step_info.append(
-            {
-                "training_messages": training_messages,
-                "super_count": player1.super_count,
-                "side": p1_side,
-            }
+        # collect buffers for n-step computation later
+        step_prompts.append(training_messages)
+        step_training_responses.append(
+            [
+                {
+                    "role": "assistant",
+                    "content": training_move_name,
+                }
+            ]
         )
+        step_frozen_responses.append(
+            [
+                {
+                    "role": "assistant",
+                    "content": frozen_move_name,
+                }
+            ]
+        )
+        step_rewards.append(move_set_reward)
+        step_timer.append(current_timer)
+        step_p1_health.append(p1_health_before)
+        step_p2_health.append(p2_health_before)
+
+        if move_set_reward == 0:
+            steps_without_reward += 1
+            if steps_without_reward >= max_steps_without_reward:
+                warnings.warn("Max steps without reward reached")
+                break
+        else:
+            steps_without_reward = 0
 
         if terminated or truncated:
             break
@@ -260,54 +431,93 @@ async def run_rl_episode(
     pbar.close()
     print("Episode finished.")
 
-    if save_video:
+    # build n-step preferences, including zero-reward states with simple health/time weighting
+    def compute_weight(timer_value: int, p1_h: int, p2_h: int) -> float:
+        # later in round more important; timer assumed in [0,100]
+        time_factor = max(0.0, min(1.0, (100 - float(timer_value)) / 100.0))
+        health_diff = float(p1_h - p2_h)
+        health_factor = abs(health_diff) / float(HEALTH_MAX)
+        # scaled small to avoid dominating learned signal
+        return max(0.0, min(1.0, time_factor * health_factor))
+
+    num_steps = len(step_rewards)
+    for i in range(num_steps):
+        ret = sum(step_rewards[i : i + max(1, n_move_returns)])
+
+        training_response = step_training_responses[i]
+        frozen_response = step_frozen_responses[i]
+
+        if ret > 0:
+            step_data.append(
+                {
+                    "prompt": step_prompts[i],
+                    "chosen": training_response,
+                    "rejected": frozen_response,
+                    "score_chosen": ret,
+                    "score_rejected": -ret,
+                }
+            )
+        elif ret < 0:
+            step_data.append(
+                {
+                    "prompt": step_prompts[i],
+                    "chosen": frozen_response,
+                    "rejected": training_response,
+                    "score_chosen": ret,
+                    "score_rejected": -ret,
+                }
+            )
+        else:
+            w = compute_weight(step_timer[i], step_p1_health[i], step_p2_health[i])
+            if step_p1_health[i] >= step_p2_health[i]:
+                step_data.append(
+                    {
+                        "prompt": step_prompts[i],
+                        "chosen": training_response,
+                        "rejected": frozen_response,
+                        "score_chosen": w,
+                        "score_rejected": -w,
+                    }
+                )
+            else:
+                step_data.append(
+                    {
+                        "prompt": step_prompts[i],
+                        "chosen": frozen_response,
+                        "rejected": training_response,
+                        "score_chosen": w,
+                        "score_rejected": -w,
+                    }
+                )
+    if save_video and len(frames) > 0:
         import cv2
 
         print("Saving video...")
 
-        out_path = cache_path / f"{split}_{idx}.mp4"
+        out_path = cache_path / run_name / f"{split}_{idx}.mp4"
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         scale_factor = 3  # 384x224 -> 1152x672
-        orig_height, orig_width = video_info[0]["frame"].shape[:2]
+        orig_height, orig_width = frames[0].shape[:2]
         up_height, up_width = orig_height * scale_factor, orig_width * scale_factor
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         video_writer = cv2.VideoWriter(
-            str(out_path), fourcc, 60.0, (up_width, up_height)
+            str(out_path),
+            fourcc,
+            60.0,
+            (up_width, up_height),  # 60 fps
         )
 
-        for frame_data in video_info:
-            frame = cv2.cvtColor(frame_data["frame"], cv2.COLOR_RGB2BGR)
-            boxes = frame_data["boxes"]
-            class_ids = frame_data["class_ids"]
-
-            # upscale frame
-            frame = cv2.resize(
-                frame, (up_width, up_height), interpolation=cv2.INTER_LINEAR
-            )
-
-            for box, class_id in zip(boxes, class_ids):
-                if class_id == -1:
-                    continue
-
-                x1, y1, x2, y2 = [int(coord * scale_factor) for coord in box]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-                character_name = CHARACTER_MAPPING[class_id]
-                cv2.putText(
-                    frame,
-                    character_name,
-                    (x1, y1 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5 * scale_factor,
-                    (0, 255, 0),
-                    2,
+        try:
+            for frame in frames:
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                frame = cv2.resize(
+                    frame, (up_width, up_height), interpolation=cv2.INTER_LINEAR
                 )
-
-            video_writer.write(frame)
-
-        video_writer.release()
+                video_writer.write(frame)
+        finally:
+            video_writer.release()
 
         print(f"Saved video to {out_path}")
 
@@ -315,84 +525,83 @@ async def run_rl_episode(
     try:
         env.close()
     except Exception as e:
-        print(f"Warning: closing environment failed: {e}")
+        warnings.warn(f"Couldn't close environment: {e}")
     print("Done.")
 
     return [
         {
-            "data_source": f"{split}_{idx}",
-            "prompt": step["training_messages"],
-            "ability": "fighting_game",
-            "reward_model": {"style": "rule", "ground_truth": ""},
-            "extra_info": {
-                "messages": step["training_messages"],
-                "character": characters[0],
-                "super_art": super_arts[0],
-                "super_count": step["super_count"],
-                "side": step["side"],
-            },
+            "prompt": step["prompt"],
+            "chosen": step["chosen"],
+            "rejected": step["rejected"],
+            "score_chosen": step["score_chosen"],
+            "score_rejected": step["score_rejected"],
         }
-        for idx, step in enumerate(step_info)
+        for step in step_data
     ]
 
 
 @app.function(
-    image=verl_image, volumes={cache_path: cache_volume}, timeout=60 * minutes
+    image=train_image, volumes={cache_path: cache_volume}, timeout=60 * minutes
 )
 async def create_dataset(
     split: str,
-    n_samples: int | None = None,
-    n_videos: int | None = None,
+    run_name: str,
+    n_episodes: int,
+    n_move_returns: int,
+    frozen_random_prob: float,
+    n_videos: int,
+    max_steps_without_reward: int,
+    current_ckpt_path: str = "",
+    prior_ckpt_path: str = "",
 ):
-    import asyncio
-    import itertools
     import random
 
     from datasets import Dataset
 
-    player2_super_arts = list(range(1, 3 + 1))
-    player2_difficulties = list(range(1, 8 + 1))
-    combinations = list(
-        itertools.product(frozen_characters, player2_super_arts, player2_difficulties)
-    )
-    if n_samples is not None and n_samples < len(combinations):
-        combinations = random.sample(combinations, n_samples)
+    video_idxs = range(n_episodes)
+    if n_videos < n_episodes:
+        video_idxs = random.sample(range(n_episodes), n_videos)
 
-    if n_videos is not None and n_videos < len(combinations):
-        idxs = random.sample(range(len(combinations)), n_videos)
-    elif n_videos is not None:
-        idxs = range(len(combinations))
+    data = []
+    async for sublist in run_rl_episode.starmap.aio(
+        [
+            (
+                idx,
+                split,
+                run_name,
+                n_move_returns,
+                frozen_random_prob,
+                idx in video_idxs,
+                max_steps_without_reward,
+                current_ckpt_path,
+                prior_ckpt_path,
+            )
+            for idx in range(n_episodes)
+        ]
+    ):
+        try:
+            data.extend(sublist)
+        except Exception as e:
+            print(f"Ignoring failed episode batch: {e}", file=sys.stderr)
+            continue
 
-    data = [
-        item
-        for sublist in await asyncio.gather(
-            *[
-                run_rl_episode.remote.aio(
-                    idx, *combination, split, save_video=idx in idxs
-                )
-                for idx, combination in enumerate(combinations)
-            ]
-        )
-        if sublist
-        for item in sublist
-    ]
+    if len(data) == 0:
+        raise Exception("No data collected")
+
     ds = Dataset.from_list(data)
-    out_path = cache_path / f"{split}.parquet"
+    out_path = cache_path / run_name / f"{split}.parquet"
     ds.to_parquet(str(out_path))
     return f"Saved {len(ds)} samples to {out_path}"
 
 
 # training
 
-n_gpus = 4
-
-reward_function_name = "compute_reward"
+n_gpus = 1
 
 
 @app.function(
-    image=verl_image,
-    gpu=f"h200:{n_gpus}",
-    cpu=64,
+    image=train_image,
+    gpu=f"b200:{n_gpus}",
     volumes={
         cache_path: cache_volume,
         "/root/.cache/huggingface": hf_cache_vol,
@@ -401,100 +610,132 @@ reward_function_name = "compute_reward"
     secrets=[modal.Secret.from_name("ajhinh-wandb-secret")],
     timeout=24 * 60 * minutes,
 )
-def train_model(*arglist) -> None:
-    import subprocess
-    import time
+def train_model(
+    run_name: str,
+    max_steps: int,
+    current_ckpt_path: str = "",
+    prior_ckpt_path: str = "",
+):
+    import os
+
+    from datasets import load_dataset
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from trl import ORPOConfig, ORPOTrainer
 
     cache_volume.reload()
 
-    # Parameters taken from:
-    # https://github.com/modal-labs/modal-examples/pull/1245/files
-    # https://qwen.readthedocs.io/en/latest/training/verl.html
-    # https://verl.readthedocs.io/en/latest/examples/config.html
-    # https://github.com/volcengine/verl/blob/main/recipe/sppo/run_qwen2.5-7b_rm.sh
+    dataset = load_dataset(
+        "parquet",
+        data_files={
+            "train": str(cache_path / run_name / "train.parquet"),
+            "test": str(cache_path / run_name / "val.parquet"),
+        },
+    )
+    train_dataset = dataset["train"]
+    val_dataset = dataset["test"]
 
-    micro_batch_size_per_gpu = 4
+    os.environ["WANDB_PROJECT"] = f"{app.name}-{MODEL_NAME.split('/')[-1].lower()}-orpo"
+    save_path = cache_path / run_name
 
-    cmd = [
-        "python",
-        "-m",
-        "sppo.main_sppo",
-        # Algorithm configuration
-        "algorithm.adv_estimator=null",
-        "algorithm.use_kl_in_reward=False",
-        # Data configuration
-        f"data.train_files={cache_path / 'train.parquet'}",
-        f"data.val_files={cache_path / 'val.parquet'}",
-        "data.train_batch_size=64",  #  1024
-        "data.max_prompt_length=1024",
-        "data.max_response_length=512",
-        "data.filter_overlong_prompts=True",
-        "data.truncation='error'",
-        "data.return_raw_chat=True",
-        # Model configuration
-        f"actor_rollout_ref.model.path={MODEL_NAME}",
-        "actor_rollout_ref.model.use_remove_padding=True",
-        "actor_rollout_ref.model.enable_gradient_checkpointing=True",
-        # Actor configuration
-        "actor_rollout_ref.actor.optim.lr=1e-6",
-        "actor_rollout_ref.actor.optim.lr_warmup_steps=15",
-        "actor_rollout_ref.actor.ppo_mini_batch_size=16",  # 256
-        f"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu={micro_batch_size_per_gpu}",
-        "actor_rollout_ref.actor.use_kl_loss=False",
-        "actor_rollout_ref.actor.fsdp_config.param_offload=False",
-        "actor_rollout_ref.actor.fsdp_config.optimizer_offload=False",
-        "actor_rollout_ref.actor.checkpoint.save_contents='model,optimizer,extra,hf_model'",
-        # Rollout configuration
-        "actor_rollout_ref.rollout.name=vllm",
-        "actor_rollout_ref.rollout.tensor_model_parallel_size=1",
-        f"actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu={micro_batch_size_per_gpu}",
-        "actor_rollout_ref.rollout.gpu_memory_utilization=0.7",  # https://verl.readthedocs.io/en/latest/perf/perf_tuning.html
-        "actor_rollout_ref.rollout.max_num_batched_tokens=40960",
-        "actor_rollout_ref.rollout.temperature=0.6",
-        "actor_rollout_ref.rollout.top_p=0.95",
-        "actor_rollout_ref.rollout.top_k=20",
-        "actor_rollout_ref.rollout.val_kwargs.n=1",  # 2 will trigger validation, 1 will bypass
-        # Trainer configuration
-        "trainer.logger=['console', 'wandb']",
-        f"trainer.project_name={app.name}-{MODEL_NAME.lower().split('/')[1]}",
-        f"trainer.experiment_name=run_{time.strftime('%Y%m%d_%H%M%S')}",
-        f"trainer.n_gpus_per_node={n_gpus}",
-        "trainer.val_before_train=False",
-        "trainer.nnodes=1",
-        f"trainer.default_local_dir={cache_path}",
-        "trainer.resume_mode=auto",
-        # Parameters chosen to ensure easy automated testing. Remove if needed.
-        "trainer.total_epochs=1",
-        "trainer.total_training_steps=1",
-        "trainer.save_freq=1",
-        "trainer.test_freq=1",
-        # Custom reward function configuration
-        f"custom_reward_function.path={remote_reward_path}",
-        f"custom_reward_function.name={reward_function_name}",
-    ]
-    if arglist:
-        cmd.extend(arglist)
+    load_path = current_ckpt_path or MODEL_NAME
+    model = AutoModelForCausalLM.from_pretrained(load_path)
+    tokenizer = AutoTokenizer.from_pretrained(load_path)
 
-    subprocess.run(cmd, check=True)
+    batch_size = 8
+    log_steps = 10
+
+    training_args = ORPOConfig(
+        # sppo
+        beta=0.1,
+        # hp
+        max_steps=max_steps,
+        per_device_train_batch_size=batch_size,
+        gradient_accumulation_steps=1,
+        learning_rate=5e-5,
+        lr_scheduler_type="cosine",
+        bf16=True,
+        # eval
+        eval_strategy="steps",
+        eval_steps=log_steps,
+        per_device_eval_batch_size=batch_size,
+        # wandb
+        report_to="wandb",
+        run_name=run_name,
+        logging_steps=log_steps,
+        # ckpt
+        output_dir=save_path,
+        resume_from_checkpoint=current_ckpt_path,
+        # misc
+        seed=seed,
+        remove_unused_columns=False,
+    )
+    trainer = ORPOTrainer(
+        model=model,
+        args=training_args,
+        processing_class=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+    )
+    trainer.train()
+
+    return str(save_path / f"checkpoint-{max_steps}"), current_ckpt_path
 
 
 @app.local_entrypoint()
 async def local(
-    prepare: bool = False,
-    n_train_samples: int
-    | None = 2,  # 18 characters * 3 super arts * 8 difficulties = 432
-    n_train_videos: int | None = 1,
-    n_val_samples: int | None = 2,  # 10% of train samples = 43
-    n_val_videos: int | None = 1,
-    train: bool = False,
+    # data
+    n_rounds: int = 10,
+    n_train_episodes_per_round: int = 450,
+    n_val_episodes_per_round: int = 50,
+    n_move_returns: int = 5,
+    frozen_random_prob_start: float = 0.75,
+    frozen_random_prob_end: float = 0.25,
+    n_videos_per_round: int = 1,
+    max_steps_without_reward: int = 50,
+    # training
+    max_steps: int = 500,
 ):
     import asyncio
+    import time
 
-    if prepare:
-        await asyncio.gather(
-            create_dataset.remote.aio("train", n_train_samples, n_train_videos),
-            create_dataset.remote.aio("val", n_val_samples, n_val_videos),
+    prior_ckpt_path = ""
+    current_ckpt_path = ""
+
+    for round_idx in range(n_rounds):
+        run_name = f"{round_idx}-{time.strftime('%Y%m%d_%H%M%S')}"
+
+        # linear curriculum for opponent diversity
+        denom = max(1, n_rounds - 1)
+        frac = round_idx / denom
+        frozen_random_prob = max(
+            frozen_random_prob_end,
+            frozen_random_prob_start * (1.0 - frac),
         )
 
-    if train:
-        train_model.remote()
+        await asyncio.gather(
+            create_dataset.remote.aio(
+                "train",
+                run_name,
+                n_train_episodes_per_round,
+                n_move_returns,
+                frozen_random_prob,
+                n_videos_per_round,
+                max_steps_without_reward,
+                current_ckpt_path,
+                prior_ckpt_path,
+            ),
+            create_dataset.remote.aio(
+                "val",
+                run_name,
+                n_val_episodes_per_round,
+                n_move_returns,
+                frozen_random_prob,
+                n_videos_per_round,
+                max_steps_without_reward,
+                current_ckpt_path,
+                prior_ckpt_path,
+            ),
+        )
+        current_ckpt_path, prior_ckpt_path = train_model.remote(
+            run_name, max_steps, current_ckpt_path, prior_ckpt_path
+        )
