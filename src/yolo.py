@@ -64,7 +64,7 @@ def find_best_model(suffix: str):
     return runs_dir / best_pts[0]
 
 
-MAX_INPUTS = 32
+MAX_INPUTS = 512
 
 
 @app.cls(

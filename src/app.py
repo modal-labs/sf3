@@ -166,7 +166,7 @@ class Web:
                 "/bin/diambraEngineServer",
                 app=engine_app,
                 image=engine_image,
-                timeout=24 * 60 * minutes,
+                timeout=60 * minutes,
                 region=region,
                 unencrypted_ports=[engine_port],
                 verbose=True,

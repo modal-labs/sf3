@@ -45,26 +45,36 @@ hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing
 
 vllm_cache_vol = modal.Volume.from_name("sf3-vllm-cache", create_if_missing=True)
 
-models_path = Path("/models")
-checkpoints_volume = modal.Volume.from_name(
-    f"{app.name}-train-cache", create_if_missing=True
-)
+cache_path = Path("/cache")
+cache_volume = modal.Volume.from_name(f"{app.name}-train-cache", create_if_missing=True)
 
 # inference
 
 
 def get_latest_checkpoint_file_path():
-    if not (models_path / "latest_checkpointed_iteration.txt").exists():
+    import re
+
+    candidates = [d for d in cache_path.iterdir() if d.is_dir()]
+    if not candidates:
         return MODEL_NAME
 
-    with open(models_path / "latest_checkpointed_iteration.txt") as f:
-        latest_checkpoint_index = int(f.read())
-    return str(
-        models_path / f"global_step_{latest_checkpoint_index}" / "actor" / "huggingface"
-    )
+    candidates.sort(key=lambda d: d.name, reverse=True)
+    latest_dir = candidates[0]
+
+    ckpt_pattern = re.compile(r"checkpoint-(\d+)")
+    ckpt_dirs = [
+        d for d in latest_dir.iterdir() if d.is_dir() and ckpt_pattern.match(d.name)
+    ]
+    if not ckpt_dirs:
+        return MODEL_NAME
+
+    ckpt_dirs.sort(key=lambda d: int(ckpt_pattern.match(d.name).group(1)), reverse=True)
+    latest_ckpt = ckpt_dirs[0]
+
+    return str(latest_ckpt)
 
 
-MAX_INPUTS = max_num_seqs = 32
+MAX_INPUTS = max_num_seqs = 8
 
 
 @app.cls(
@@ -72,7 +82,7 @@ MAX_INPUTS = max_num_seqs = 32
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,
-        models_path: checkpoints_volume,
+        cache_path: cache_volume,
     },
     gpu="b200",
     # region=region,
@@ -81,14 +91,16 @@ MAX_INPUTS = max_num_seqs = 32
 )
 @modal.concurrent(max_inputs=MAX_INPUTS)
 class LLMServer:
+    ckpt_path: str = modal.parameter(default="")
+
     @modal.enter()
     async def enter(self):
         from vllm import LLM, SamplingParams
 
-        checkpoints_volume.reload()
+        cache_volume.reload()
 
         self.llm = LLM(
-            model=get_latest_checkpoint_file_path(),
+            model=self.ckpt_path or get_latest_checkpoint_file_path(),
             max_num_seqs=max_num_seqs,
             max_num_batched_tokens=40960,  # https://qwen.readthedocs.io/en/latest/deployment/vllm.html#faq, https://docs.vllm.ai/en/latest/configuration/optimization.html#performance-tuning-with-chunked-prefill
             enforce_eager=True,
@@ -129,6 +141,7 @@ class LLMServer:
         super_art: int,
         super_count: int,
         side: int,
+        return_move_name: bool = False,  # for training
     ) -> list[int]:
         from vllm.sampling_params import GuidedDecodingParams
 
@@ -148,13 +161,16 @@ class LLMServer:
         try:
             move_sequence = parse_move(character, move_name, side)
             if move_sequence is not None:
-                return list(move_sequence)
+                if return_move_name:
+                    return list(move_sequence), move_name
+                else:
+                    return list(move_sequence)
             else:
                 raise ValueError(f"Invalid move: {move_name}")
 
         except Exception as e:
             print(f"Error: {e}")
-            return [0]
+            return [0], ""
 
 
 @app.local_entrypoint()
