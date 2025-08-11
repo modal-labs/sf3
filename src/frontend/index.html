@@ -1,465 +1,624 @@
 <!DOCTYPE html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Street Fighter III</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style type="text/tailwindcss">
-        @layer components {
-            .btn-primary {
-                @apply py-4 px-8 bg-sf-darker hover:bg-sf-dark border-2 border-sf-green hover:border-sf-green-dark font-bold rounded-lg text-xl text-sf-green hover:text-sf-green-dark transition-all duration-200;
-            }
-            .btn-danger {
-                @apply py-4 px-8 bg-sf-darker hover:bg-sf-dark border-2 border-sf-red hover:border-sf-red-dark font-bold rounded-lg text-xl text-sf-red hover:text-sf-red-dark transition-all duration-200;
-            }
-            .text-glow {
-                @apply [text-shadow:0_0_10px_currentColor];
-            }
-            .panel {
-                @apply p-16 w-full max-w-3xl bg-sf-darker border-2 border-sf-green rounded-lg flex flex-col justify-center items-center gap-8;
-            }
-            .panel-md {
-                @apply p-8 w-full max-w-xl bg-sf-darker border-2 border-sf-green rounded-lg flex flex-col justify-center items-center gap-8;
-            }
-            .panel-sm {
-                @apply p-8 w-full max-w-xs bg-sf-darker border-2 rounded-lg flex flex-col justify-center items-center gap-8;
-            }
-            .portrait-box {
-                @apply size-32 bg-sf-dark border-4 rounded-lg hover:opacity-80 transition-all cursor-pointer;
-            }
-            .control-key {
-                @apply px-3 py-1 bg-sf-dark border border-sf-green rounded-lg;
-            }
-            .loading-placeholder {
-                @apply bg-gradient-to-r from-sf-dark via-sf-beige to-sf-dark bg-[length:200%_100%] animate-skeleton-loading;
-            }
-            .capcom-logo {
-                @apply animate-capcom-intro;
-                animation-fill-mode: forwards;
-                image-rendering: crisp-edges;
-                image-rendering: -webkit-crisp-edges;
-                image-rendering: pixelated;
-            }
-            .crt-curve {
-                border-radius: 5%;
-                transform: perspective(1000px) rotateY(0deg) rotateX(0deg);
-            }
-            .static-noise {
-                background-image: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 4px);
-            }
-            .gamepad-hover {
-                @apply drop-shadow-[0_0_8px_#ffd700] animate-gamepad-pulse;
-            }
-            .gamepad-connected {
-                cursor: none !important;
-            }
-            .gamepad-connected * {
-                cursor: none !important;
-            }
-        }
-    </style>
     <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        'mono': ['Courier New', 'Consolas', 'Menlo', 'Monaco', 'Liberation Mono', 'Lucida Console', 'monospace'],
-                    },
-                    colors: {
-                        /* background */
-                        'sf-dark': '#1a1a2e',
-                        'sf-darker': '#0f0f1e',
-                        /* base text */
-                        'sf-beige': '#f5f5dc',
-                        'sf-beige-dark': '#d2d2aa',
-                        /* main neons */
-                        'sf-green': '#00ff41',
-                        'sf-green-dark': '#00cc33',
-                        'sf-gold': '#ffd700',
-                        'sf-gold-dark': '#ccb300',
-                        /* misc */
-                        'sf-red': '#ff0040',
-                        'sf-red-dark': '#cc0033',
-                        'sf-blue': '#0080ff',
-                        'sf-blue-dark': '#0066cc',
-                    },
-                    dropShadow: {
-                        'sf-green': '0 0 20px #00ff90',
-                    },
-                    keyframes: {
-                        'character-flash': {
-                            '0%, 100%': { opacity: '1' },
-                            '50%': { opacity: '0.5' },
-                        },
-                        'loading-shimmer': {
-                            '0%': { backgroundPosition: '200% 0' },
-                            '100%': { backgroundPosition: '-200% 0' },
-                        },
-                        'shutter-out': {
-                            '0%': { transform: 'scaleY(1)', opacity: '1' },
-                            '100%': { transform: 'scaleY(0)', opacity: '0' },
-                        },
-                        'shutter-in': {
-                            '0%': { transform: 'scaleY(0)', opacity: '0' },
-                            '100%': { transform: 'scaleY(1)', opacity: '1' },
-                        },
-                        'skeleton-loading': {
-                            '0%': { backgroundPosition: '-200% 0' },
-                            '100%': { backgroundPosition: '200% 0' },
-                        },
-                        'capcom-intro': {
-                            '0%': { 
-                                opacity: '0',
-                                transform: 'scale(0.3) rotate(-180deg)',
-                                filter: 'brightness(2) blur(10px)'
-                            },
-                            '20%': { 
-                                opacity: '1',
-                                transform: 'scale(1.2) rotate(0deg)',
-                                filter: 'brightness(1.5) blur(0px) drop-shadow(0 0 50px #fff)'
-                            },
-                            '30%': { 
-                                transform: 'scale(0.9)',
-                                filter: 'brightness(1) drop-shadow(0 0 20px #fff)'
-                            },
-                            '40%': { 
-                                transform: 'scale(1)',
-                                filter: 'brightness(1) drop-shadow(0 0 30px #fff)'
-                            },
-                            '100%': { 
-                                opacity: '1',
-                                transform: 'scale(1)',
-                                filter: 'brightness(1) drop-shadow(0 0 15px rgba(255,255,255,0.6))'
-                            }
-                        },
-                        'static-flicker': {
-                            '0%, 100%': { opacity: '0.03' },
-                            '10%': { opacity: '0.04' },
-                            '20%': { opacity: '0.02' },
-                            '30%': { opacity: '0.05' },
-                            '40%': { opacity: '0.03' },
-                            '50%': { opacity: '0.02' },
-                            '60%': { opacity: '0.04' },
-                            '70%': { opacity: '0.03' },
-                            '80%': { opacity: '0.05' },
-                            '90%': { opacity: '0.02' }
-                        },
-                        'coin-insert': {
-                            '0%': { 
-                                transform: 'translateY(0) scale(1)',
-                                opacity: '1',
-                                filter: 'brightness(1)'
-                            },
-                            '20%': { 
-                                transform: 'translateY(-10px) scale(1.2)',
-                                filter: 'brightness(1.5)'
-                            },
-                            '40%': { 
-                                transform: 'translateY(-5px) scale(1.1)',
-                                filter: 'brightness(2) blur(2px)'
-                            },
-                            '60%': { 
-                                transform: 'translateY(5px) scale(0.9)',
-                                filter: 'brightness(1.5) blur(0px)'
-                            },
-                            '100%': { 
-                                transform: 'translateY(200px) scale(0)',
-                                opacity: '0',
-                                filter: 'brightness(0.5)'
-                            }
-                        },
-                        'coin-shine': {
-                            '0%, 100%': { 
-                                boxShadow: '0 0 20px rgba(255, 215, 0, 0.6), inset 0 0 20px rgba(255, 215, 0, 0.3)' 
-                            },
-                            '50%': { 
-                                boxShadow: '0 0 40px rgba(255, 215, 0, 1), inset 0 0 30px rgba(255, 215, 0, 0.6)' 
-                            }
-                        },
-                        'gamepad-pulse': {
-                            '0%, 100%': { 
-                                filter: 'drop-shadow(0 0 8px #ffd700) brightness(1)' 
-                            },
-                            '50%': { 
-                                filter: 'drop-shadow(0 0 20px #ffd700) brightness(1.2)' 
-                            }
-                        }
-                    },
-                    animation: {
-                        'character-flash': 'character-flash 0.2s 3',
-                        'loading-shimmer': 'loading-shimmer 1.5s ease-in-out infinite',
-                        'shutter-out': 'shutter-out 0.3s ease-in-out forwards',
-                        'shutter-in': 'shutter-in 0.3s ease-in-out forwards',
-                        'skeleton-loading': 'skeleton-loading 1.5s ease-in-out infinite',
-                        'capcom-intro': 'capcom-intro 6s ease-out forwards',
-                        'static-flicker': 'static-flicker 0.5s steps(10) infinite',
-                        'coin-insert': 'coin-insert 2s ease-in forwards',
-                        'coin-shine': 'coin-shine 2s ease-in-out infinite',
-                        'gamepad-pulse': 'gamepad-pulse 1.5s ease-in-out infinite'
-                    },
-                }
-            }
-        }
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              mono: [
+                "Courier New",
+                "Consolas",
+                "Menlo",
+                "Monaco",
+                "Liberation Mono",
+                "Lucida Console",
+                "monospace",
+              ],
+            },
+            colors: {
+              "sf-dark": "#1a1a2e",
+              "sf-darker": "#0f0f1e",
+              "sf-beige": "#f5f5dc",
+              "sf-beige-dark": "#d2d2aa",
+              "sf-green": "#00ff41",
+              "sf-green-dark": "#00cc33",
+              "sf-gold": "#ffd700",
+              "sf-gold-dark": "#ccb300",
+              "sf-red": "#ff0040",
+              "sf-red-dark": "#cc0033",
+              "sf-blue": "#0080ff",
+              "sf-blue-dark": "#0066cc",
+            },
+            dropShadow: {
+              "sf-green": "0 0 20px #00ff90",
+            },
+            keyframes: {
+              "character-flash": {
+                "0%, 100%": { opacity: "1" },
+                "50%": { opacity: "0.5" },
+              },
+              "skeleton-loading": {
+                "0%": { backgroundPosition: "-200% 0" },
+                "100%": { backgroundPosition: "200% 0" },
+              },
+              "capcom-intro": {
+                "0%": {
+                  opacity: "0",
+                  transform: "scale(0.3) rotate(-180deg)",
+                  filter: "brightness(2) blur(10px)",
+                },
+                "20%": {
+                  opacity: "1",
+                  transform: "scale(1.2) rotate(0deg)",
+                  filter:
+                    "brightness(1.5) blur(0px) drop-shadow(0 0 50px #fff)",
+                },
+                "30%": {
+                  transform: "scale(0.9)",
+                  filter: "brightness(1) drop-shadow(0 0 20px #fff)",
+                },
+                "40%": {
+                  transform: "scale(1)",
+                  filter: "brightness(1) drop-shadow(0 0 30px #fff)",
+                },
+                "100%": {
+                  opacity: "1",
+                  transform: "scale(1)",
+                  filter:
+                    "brightness(1) drop-shadow(0 0 15px rgba(255,255,255,0.6))",
+                },
+              },
+              "static-flicker": {
+                "0%, 100%": { opacity: "0.03" },
+                "10%": { opacity: "0.04" },
+                "20%": { opacity: "0.02" },
+                "30%": { opacity: "0.05" },
+                "40%": { opacity: "0.03" },
+                "50%": { opacity: "0.02" },
+                "60%": { opacity: "0.04" },
+                "70%": { opacity: "0.03" },
+                "80%": { opacity: "0.05" },
+                "90%": { opacity: "0.02" },
+              },
+              "coin-insert": {
+                "0%": {
+                  transform: "translateY(0) scale(1)",
+                  opacity: "1",
+                  filter: "brightness(1)",
+                },
+                "20%": {
+                  transform: "translateY(-10px) scale(1.2)",
+                  filter: "brightness(1.5)",
+                },
+                "40%": {
+                  transform: "translateY(-5px) scale(1.1)",
+                  filter: "brightness(2) blur(2px)",
+                },
+                "60%": {
+                  transform: "translateY(5px) scale(0.9)",
+                  filter: "brightness(1.5) blur(0px)",
+                },
+                "100%": {
+                  transform: "translateY(200px) scale(0)",
+                  opacity: "0",
+                  filter: "brightness(0.5)",
+                },
+              },
+              "coin-shine": {
+                "0%, 100%": {
+                  boxShadow:
+                    "0 0 20px rgba(255, 215, 0, 0.6), inset 0 0 20px rgba(255, 215, 0, 0.3)",
+                },
+                "50%": {
+                  boxShadow:
+                    "0 0 40px rgba(255, 215, 0, 1), inset 0 0 30px rgba(255, 215, 0, 0.6)",
+                },
+              },
+              "gamepad-pulse": {
+                "0%, 100%": {
+                  filter: "drop-shadow(0 0 8px #ffd700) brightness(1)",
+                },
+                "50%": {
+                  filter: "drop-shadow(0 0 20px #ffd700) brightness(1.2)",
+                },
+              },
+            },
+            animation: {
+              "character-flash": "character-flash 0.2s 3",
+              "skeleton-loading": "skeleton-loading 1.5s ease-in-out infinite",
+              "capcom-intro": "capcom-intro 6s ease-out forwards",
+              "static-flicker": "static-flicker 0.5s steps(10) infinite",
+              "coin-insert": "coin-insert 2s ease-in forwards",
+              "coin-shine": "coin-shine 2s ease-in-out infinite",
+              "gamepad-pulse": "gamepad-pulse 1.5s ease-in-out infinite",
+            },
+          },
+        },
+      };
     </script>
-</head>
+    <style type="text/tailwindcss">
+      @layer components {
+        .panel {
+          @apply p-8 w-full bg-sf-darker rounded-lg flex flex-col justify-start items-center gap-8;
+        }
+        .capcom-logo {
+          @apply animate-capcom-intro;
+          animation-fill-mode: forwards;
+          image-rendering: crisp-edges;
+          image-rendering: -webkit-crisp-edges;
+          image-rendering: pixelated;
+        }
+        .static-noise {
+          background-image: repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 2px,
+            rgba(255, 255, 255, 0.03) 2px,
+            rgba(255, 255, 255, 0.03) 4px
+          );
+        }
+        .gamepad-hover {
+          @apply drop-shadow-[0_0_8px_#ffd700] animate-gamepad-pulse;
+        }
+        .gamepad-connected {
+          cursor: none !important;
+        }
+        .gamepad-connected * {
+          cursor: none !important;
+        }
+        .btn-rect {
+          @apply py-4 px-8 bg-sf-darker border-2 font-bold text-xl rounded-lg shadow-lg hover:bg-sf-dark transition-all duration-200;
+        }
+        .btn-icon {
+          @apply p-3 border-2 rounded-full shadow-lg transition-all duration-200;
+        }
+        .icon-6 {
+          @apply size-6 filter invert;
+        }
+        .dropdown {
+          @apply py-3 pl-3 pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none hover:bg-sf-darker hover:border-sf-green-dark transition-all duration-200;
+        }
+        .game-ctrl {
+          @apply px-3 py-1 bg-sf-dark border border-sf-green rounded-lg;
+        }
+        .spinner {
+          @apply border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin;
+        }
+        .text-glow {
+          @apply [text-shadow:0_0_10px_currentColor];
+        }
+        .portrait-box {
+          @apply size-24 bg-sf-dark border-4 rounded-lg hover:opacity-80 transition-all duration-200 cursor-pointer;
+        }
+        .loading-placeholder {
+          @apply bg-gradient-to-r from-sf-dark via-sf-beige to-sf-dark bg-[length:200%_100%] animate-skeleton-loading;
+        }
+      }
+    </style>
+  </head>
 
-<body class="font-mono bg-sf-dark text-sf-beige min-h-screen text-center flex flex-col">
-    <header id="game-header"
-        class="hidden p-8 bg-sf-darker border-b-2 border-sf-green flex justify-between items-center gap-8">
-        <h1 class="text-left text-4xl font-bold tracking-wider text-sf-green text-glow">STREET
-            FIGHTER III</h1>
-        <div class="flex flex-col justify-center items-end gap-4 ">
-            <h2 class="text-2xl text-sf-green">made with</h2>
-            <a href="https://modal.com" target="_blank" rel="noopener"
-                id="modal-link"
-                class="hover:drop-shadow-sf-green transition-all duration-200">
-                <img src="/modal.svg" alt="Modal Logo" class="h-10 w-auto transition-all duration-200">
-            </a>
-        </div>
+  <body
+    class="font-mono bg-sf-dark text-sf-beige min-h-screen text-center flex flex-col"
+  >
+    <header
+      id="game-header"
+      class="hidden p-8 bg-sf-darker border-b-2 border-sf-green flex justify-between items-center gap-8"
+    >
+      <h1
+        class="text-left text-4xl font-bold tracking-wider text-sf-green text-glow"
+      >
+        STREET FIGHTER III
+      </h1>
+      <div class="flex flex-col justify-center items-end gap-4">
+        <h2 class="text-2xl text-sf-green">made with</h2>
+        <a
+          href="https://modal.com"
+          target="_blank"
+          rel="noopener"
+          id="modal-link"
+          class="hover:drop-shadow-sf-green transition-all duration-200"
+        >
+          <img
+            src="/modal.svg"
+            alt="Modal Logo"
+            class="h-10 w-auto transition-all duration-200"
+          />
+        </a>
+      </div>
     </header>
-    
-    <button id="player-toggle"
-        class="hidden fixed bottom-36 right-4 z-50 p-3 bg-sf-dark border-2 border-sf-green rounded-full hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl transition-all duration-200 shadow-lg"
-        title="Toggle Player vs LLM">
-        <img id="player-icon" src="/icons/human.png" alt="Player Toggle" class="size-6 filter invert">
+    <button
+      id="controls-help"
+      class="hidden fixed bottom-36 right-4 z-50 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
+      type="button"
+      aria-label="Show help"
+    >
+      <img
+        id="help-icon"
+        src="/icons/help.png"
+        alt=""
+        aria-hidden="true"
+        class="icon-6"
+      />
     </button>
-
-    <button id="mute-toggle"
-        class="hidden fixed bottom-20 right-4 z-50 p-3 bg-sf-dark border-2 border-sf-green rounded-full hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl transition-all duration-200 shadow-lg"
-        title="Toggle Sound">
-        <img id="mute-icon" src="/icons/unmute.svg" alt="Sound Toggle" class="size-6 filter invert">
+    <button
+      id="player-toggle"
+      class="hidden fixed bottom-20 right-4 z-50 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
+      type="button"
+      aria-label="Toggle Player vs LLM"
+      title="Toggle Player vs LLM"
+    >
+      <img
+        id="player-icon"
+        src="/icons/human.png"
+        alt=""
+        aria-hidden="true"
+        class="icon-6"
+      />
     </button>
-
-    <button id="gamepad-status"
-        class="hidden fixed bottom-4 right-4 z-50 p-3 bg-sf-darker border-2 border-sf-gold-dark rounded-full shadow-lg cursor-default"
-        title="Gamepad Status">
-        <img id="gamepad-icon" src="/icons/gamepad.png" alt="Gamepad Status" class="size-6 filter invert">
+    <button
+      id="mute-toggle"
+      class="hidden fixed bottom-4 right-4 z-50 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
+      type="button"
+      aria-label="Toggle Sound"
+      title="Toggle Sound"
+    >
+      <img
+        id="mute-icon"
+        src="/icons/unmute.svg"
+        alt=""
+        aria-hidden="true"
+        class="icon-6"
+      />
     </button>
-
-    <div id="gamepad-help"
-        class="hidden fixed bottom-4 left-4 z-50 p-4 flex flex-col gap-4 bg-sf-darker border-2 border-sf-green rounded-lg shadow-lg">
-        <h3 class="text-sf-green font-bold">Gamepad Controls</h3>
-        <div class="flex flex-col gap-2 text-sf-beige text-xs">
-            <div class="flex justify-between items-center gap-4">
-                <span class="control-key">D-Pad/Left Stick</span>
-                <span class="text-right">Navigate</span>
-            </div>
-            <div class="flex justify-between items-center gap-4">
-                <span class="control-key">LB/L1 • RB/R1</span>
-                <span class="text-right">Change Section</span>
-            </div>
-            <div class="flex justify-between items-center gap-4">
-                <span class="control-key">A/X</span>
-                <span class="text-right">Select</span>
-            </div>
-            <div class="flex justify-between items-center gap-4">
-                <span class="control-key">Left/Right</span>
-                <span class="text-right">Adjust Sliders</span>
-            </div>
-        </div>
+    <div
+      id="gamepad-status"
+      class="hidden fixed bottom-4 left-4 z-50 btn-icon bg-sf-darker border-sf-gold-dark"
+      aria-label="Gamepad status"
+      aria-disabled="true"
+      tabindex="-1"
+      title="Gamepad Status"
+    >
+      <img
+        id="gamepad-icon"
+        src="/icons/gamepad.png"
+        alt=""
+        aria-hidden="true"
+        class="icon-6"
+      />
     </div>
-
-    <main class="relative flex-1 flex justify-center items-center">
-        <div id="loading-screen" class="size-full flex flex-col items-center justify-center gap-8">
-            <div class="size-16 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
+    <main class="relative flex-1 flex flex-col justify-center items-center">
+      <div
+        id="loading-screen"
+        class="flex flex-col justify-center items-center gap-8"
+      >
+        <div class="spinner size-16"></div>
+        <h2
+          id="loading-status"
+          class="text-2xl text-sf-green text-glow animate-pulse"
+          aria-live="polite"
+          role="status"
+        >
+          Loading assets...
+        </h2>
+      </div>
+      <div
+        id="coin-screen"
+        class="hidden flex flex-col justify-center items-center"
+      >
+        <button
+          id="insert-coin-btn"
+          class="btn-rect border-sf-gold text-sf-gold text-glow hover:border-sf-gold-dark hover:text-sf-gold-dark animate-coin-shine"
+        >
+          INSERT COIN
+        </button>
+      </div>
+      <div id="splash-screen" class="hidden cursor-pointer">
+        <img
+          src="/capcom.svg"
+          alt="Capcom"
+          class="capcom-logo w-96 h-auto z-10"
+        />
+        <div class="fixed inset-0 animate-static-flicker static-noise"></div>
+        <p
+          id="splash-skip-text"
+          class="fixed bottom-8 inset-x-0 text-sf-beige-dark text-sm animate-pulse"
+        >
+          Click anywhere to skip
+        </p>
+      </div>
+      <div
+        id="help-overlay"
+        class="hidden fixed inset-0 z-50 size-full bg-sf-darker/30 backdrop-blur-sm flex flex-col p-8 gap-8 overflow-y-auto"
+      >
+        <button
+          id="help-overlay-close"
+          class="fixed bottom-4 right-4 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
+          type="button"
+          aria-label="Close help"
+        >
+          <img
+            src="/icons/close.png"
+            alt=""
+            aria-hidden="true"
+            class="icon-6"
+          />
+        </button>
+        <div class="flex flex-wrap justify-center items-start gap-8">
+          <div class="panel max-w-xl border-2 border-sf-green">
+            <div id="gamepad-nav-section" class="w-full flex flex-col gap-8">
+              <h2 class="text-sf-green text-lg text-glow">
+                Gamepad Navigation
+              </h2>
+              <div class="w-full flex flex-col gap-4 text-sm">
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl">D-Pad/Left Stick</span>
+                  <h3 class="text-sf-gold">Navigate</h3>
+                </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl">LB/L1 • RB/R1</span>
+                  <h3 class="text-sf-gold">Change Section</h3>
+                </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl">A/X</span>
+                  <h3 class="text-sf-gold">Select</h3>
+                </div>
+              </div>
             </div>
-            <h2 id="loading-status" class="text-2xl text-sf-green text-glow animate-pulse">
-                Loading
-                assets...</h2>
-        </div>
-        <div id="coin-screen" class="hidden size-full flex flex-col justify-center items-center">
-            <button id="insert-coin-btn" class="py-4 px-8 bg-sf-darker hover:bg-sf-dark border-2 border-sf-gold hover:border-sf-gold-dark font-bold rounded-lg text-2xl text-sf-gold hover:text-sf-gold-dark transition-all duration-200 animate-coin-shine cursor-pointer">
-                INSERT COIN
-            </button>
-        </div>
-        <div id="splash-screen" class="hidden size-full flex flex-col justify-center items-center cursor-pointer">
-            <div class="absolute inset-0 animate-static-flicker static-noise"></div>
-            <img src="/capcom.svg" alt="Capcom" class="capcom-logo w-96 h-auto z-10">
-            <p id="splash-skip-text" class="absolute bottom-8 text-sf-beige-dark text-sm animate-pulse">Click anywhere to skip</p>
-        </div>
-        <div id="settings-screen" class="hidden p-16 size-full flex flex-col justify-center items-center gap-8">
-            <div class="flex justify-center items-start gap-8">
-                <div class="panel flex-shrink-0">
-                    <h1 class="text-4xl text-sf-green text-glow mb-6 tracking-wider">CHARACTER
-                        SELECT</h1>
-                    <div class="flex justify-center items-center gap-8">
-                        <div id="p1-selection-box" class="flex flex-col justify-center items-center gap-4">
-                            <h2 class="text-sf-red text-2xl text-glow">YOU</h2>
-                            <div id="p1-selected-portrait" class="portrait-box border-sf-red">
-                                <img src="" alt="" class="hidden size-full object-cover rounded-lg">
-                            </div>
-                            <p id="p1-selected-name" class="text-sf-gold text-xl font-bold">-</p>
-                        </div>
-                        <div id="p2-selection-box" class="flex flex-col justify-center items-center gap-4">
-                            <h2 class="text-sf-blue text-2xl text-glow">LLM</h2>
-                            <div id="p2-selected-portrait" class="portrait-box border-transparent">
-                                <img src="" alt="" class="hidden size-full object-cover rounded-lg">
-                            </div>
-                            <p id="p2-selected-name" class="text-sf-gold text-xl font-bold">-</p>
-                        </div>
-                    </div>
-                    <div id="character-grid" class="relative grid grid-cols-5 gap-2 mb-12">
-                    </div>
+            <div class="w-full flex flex-col gap-8">
+              <h2 class="text-sf-green text-lg text-glow">Gameplay Controls</h2>
+              <div class="w-full flex flex-col gap-4 text-sm">
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl" id="movement-display"
+                    >WASD / Arrow Keys</span
+                  >
+                  <h3 class="text-sf-gold">Movement</h3>
                 </div>
-                <div id="outfit-selection" class="panel-sm flex-shrink-0 border-sf-green">
-                    <h3 class="text-2xl text-sf-gold text-glow">SELECT OUTFIT</h3>
-                    <p id="outfit-player-indicator" class="text-lg text-sf-beige">Select a character to see outfits</p>
-                    <div id="outfit-grid" class="relative flex flex-col justify-center gap-2">
-                    </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl"
+                    ><span id="lp-display">J</span> /
+                    <span id="mp-display">K</span> /
+                    <span id="hp-display">L</span></span
+                  >
+                  <h3 class="text-sf-gold">Punches</h3>
                 </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl"
+                    ><span id="lk-display">U</span> /
+                    <span id="mk-display">I</span> /
+                    <span id="hk-display">O</span></span
+                  >
+                  <h3 class="text-sf-gold">Kicks</h3>
+                </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl" id="lplk-display">J + U</span>
+                  <h3 class="text-sf-gold">LP + LK</h3>
+                </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl" id="mpmk-display">K + I</span>
+                  <h3 class="text-sf-gold">MP + MK</h3>
+                </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl" id="hphk-display">L + O</span>
+                  <h3 class="text-sf-gold">HP + HK</h3>
+                </div>
+              </div>
             </div>
-            <div class="panel-md">
-                <h2 class="text-sf-green text-2xl text-glow">Controls</h2>
-                <div class="w-full flex justify-between items-center gap-8">
-                    <h3 class="text-sf-gold text-lg">Movement:</h3>
-                    <span class="control-key" id="movement-display">WASD / Arrow Keys</span>
-                </div>
-                <div
-                    class="pt-8 w-full border-t border-sf-green flex flex-col md:flex-row justify-center items-center gap-8">
-                    <div class="w-full flex flex-col justify-center items-center gap-4">
-                        <h3 class="text-sf-gold text-lg">Punches</h3>
-                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
-                            <p>Light:</p>
-                            <span class="control-key" id="lp-display">J</span>
-                        </div>
-                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
-                            <p>Medium:</p>
-                            <span class="control-key" id="mp-display">K</span>
-                        </div>
-                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
-                            <p>Heavy:</p>
-                            <span class="control-key" id="hp-display">L</span>
-                        </div>
-                    </div>
-                    <div
-                        class="pt-8 md:pt-0 pl-0 md:pl-8 w-full border-t md:border-t-0 md:border-l border-sf-green flex flex-col justify-center items-center gap-4">
-                        <h3 class="text-sf-gold text-lg">Kicks</h3>
-                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
-                            <p>Light:</p>
-                            <span class="control-key" id="lk-display">U</span>
-                        </div>
-                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
-                            <p>Medium:</p>
-                            <span class="control-key" id="mk-display">I</span>
-                        </div>
-                        <div class="w-full flex justify-between md:justify-between items-center gap-2">
-                            <p>Heavy:</p>
-                            <span class="control-key" id="hk-display">O</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="pt-8 w-full border-t border-sf-green flex flex-col justify-center items-center gap-4">
-                    <h3 class="text-sf-gold text-lg">Special Combos</h3>
-                    <div class="w-full flex justify-between md:justify-center items-center gap-8">
-                        <p>LP + LK:</p>
-                        <span class="control-key" id="lplk-display">J + U</span>
-                    </div>
-                    <div class="w-full flex justify-between md:justify-center items-center gap-8">
-                        <p>MP + MK:</p>
-                        <span class="control-key" id="mpmk-display">K + I</span>
-                    </div>
-                    <div class="w-full flex justify-between md:justify-center items-center gap-8">
-                        <p>HP + HK:</p>
-                        <span class="control-key" id="hphk-display">L + O</span>
-                    </div>
-                </div>
+          </div>
+          <div class="panel max-w-xl border-2 border-sf-green">
+            <div
+              id="combos-section"
+              class="w-full flex flex-col justify-center items-center gap-8 text-sm"
+            >
+              <h2 class="text-sf-green text-lg text-glow">Combos</h2>
+              <div id="combos-loading" class="spinner size-8"></div>
+              <div
+                id="combos-list"
+                class="w-full flex flex-col gap-4 text-sm"
+              ></div>
             </div>
-            <div class="panel-md">
-                <h2 class="text-sf-green text-2xl text-glow">Your Settings</h2>
-                <div id="combos-section" class="flex flex-col justify-center items-center gap-8">
-                    <h3 class="text-sf-gold text-lg">Combos</h3>
-                    <div id="combos-loading"
-                        class="size-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
-                    </div>
-                    <div id="combos-list">
-                    </div>
-                </div>
-                <div class="w-full border-t border-sf-green"></div>
-                <div id="super-arts-section" class="flex flex-col justify-center items-center gap-8">
-                    <div class="flex justify-between md:justify-center items-center gap-8">
-                        <label class="text-sf-gold text-lg">Super Art</label>
-                        <div class="relative w-16">
-                            <select id="super-art-select-p1"
-                                class="py-3 pl-3 pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none hover:bg-sf-darker hover:border-sf-green-dark transition-all duration-200">
-                                <option value="1">1</option>
-                                <option value="2">2</option>
-                                <option value="3">3</option>
-                            </select>
-                            <span
-                                class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold">
-                                <svg class="size-4" fill="none" stroke="currentColor" stroke-width="2"
-                                    viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                                </svg>
-                            </span>
-                        </div>
-                    </div>
-                    <div id="super-arts-loading"
-                        class="size-8 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
-                    </div>
-                    <div id="super-arts-list">
-                    </div>
-                </div>
+            <div
+              id="super-arts-section"
+              class="w-full flex flex-col justify-center items-center gap-8 text-sm"
+            >
+              <h2 class="text-sf-green text-lg text-glow">Super Arts</h2>
+              <div id="super-arts-loading" class="spinner size-8"></div>
+              <div
+                id="super-arts-list"
+                class="w-full flex flex-col gap-4 text-sm"
+              ></div>
             </div>
-            <div class="panel-md">
-                <h2 class="text-sf-green text-2xl text-glow">LLM Settings</h2>
-                <div class="flex justify-between md:justify-center items-center gap-8">
-                    <label class="text-sf-gold text-lg">Super Art</label>
-                    <div class="relative w-16">
-                        <select id="super-art-select-p2"
-                            class="py-3 pl-3 pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none hover:bg-sf-darker hover:border-sf-green-dark transition-all duration-200">
-                            <option value="1">1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                        </select>
-                        <span
-                            class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold">
-                            <svg class="size-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                            </svg>
-                        </span>
-                    </div>
-                </div>
-            </div>
-            <button id="start-game-btn" class="btn-primary text-glow">
-                Connecting to server...
-            </button>
+          </div>
         </div>
-        <div id="game-screen" class="hidden size-full">
-            <div class="flex items-center justify-center">
-                <canvas id="game-canvas" width="768" height="448"
-                    class="bg-sf-darker border-2 border-sf-green rounded-lg hidden"></canvas>
-                <div id="canvas-loading-overlay" class="flex flex-col items-center justify-center gap-8">
-                    <div class="size-16 border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin">
-                    </div>
-                    <h2 id="canvas-loading-status" class="text-2xl text-sf-green text-glow animate-pulse">
-                        Loading game...
-                    </h2>
+      </div>
+      <div
+        id="settings-screen"
+        class="hidden p-8 size-full flex flex-col justify-center items-center gap-8"
+      >
+        <button
+          id="start-game-btn"
+          class="btn-rect border-sf-green text-sf-green text-glow hover:border-sf-green-dark hover:text-sf-green-dark"
+          type="button"
+        >
+          Connecting to server...
+        </button>
+        <div class="panel max-w-5xl border-2 border-sf-green">
+          <div class="flex justify-center items-center gap-8">
+            <div
+              id="p1-selection-box"
+              class="flex flex-col justify-center items-center gap-4"
+            >
+              <h2 class="text-sf-red text-xl text-glow">YOU</h2>
+              <div id="p1-selected-portrait" class="portrait-box border-sf-red">
+                <img
+                  src=""
+                  alt=""
+                  class="hidden size-full object-contain rounded-lg p-1"
+                />
+              </div>
+              <p id="p1-selected-name" class="text-sf-gold font-bold">-</p>
+            </div>
+            <div
+              id="p2-selection-box"
+              class="flex flex-col justify-center items-center gap-4"
+            >
+              <h2 class="text-sf-blue text-xl text-glow">LLM</h2>
+              <div
+                id="p2-selected-portrait"
+                class="portrait-box border-transparent"
+              >
+                <img
+                  src=""
+                  alt=""
+                  class="hidden size-full object-contain rounded-lg p-1"
+                />
+              </div>
+              <p id="p2-selected-name" class="text-sf-gold font-bold">-</p>
+            </div>
+          </div>
+          <div
+            id="character-grid"
+            class="relative grid grid-cols-10 gap-2"
+          ></div>
+        </div>
+        <button
+          id="toggle-options-btn"
+          class="btn-rect border-sf-gold text-sf-gold text-glow hover:border-sf-gold-dark hover:text-sf-gold-dark"
+          type="button"
+        >
+          SHOW OPTIONS
+        </button>
+        <div
+          id="options-panel"
+          class="hidden panel max-w-3xl border-2 border-sf-green"
+        >
+          <div class="w-full flex flex-col gap-8">
+            <div class="flex justify-center items-center gap-12">
+              <div class="flex items-center gap-4">
+                <label class="text-sf-gold text-lg">P1 Super Art</label>
+                <div class="relative w-16">
+                  <select id="super-art-select-p1" class="dropdown">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                  </select>
+                  <span
+                    class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
+                  >
+                    <svg
+                      class="size-4"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </span>
                 </div>
+              </div>
+              <div class="flex items-center gap-4">
+                <label class="text-sf-gold text-lg">P2 Super Art</label>
+                <div class="relative w-16">
+                  <select id="super-art-select-p2" class="dropdown">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                  </select>
+                  <span
+                    class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
+                  >
+                    <svg
+                      class="size-4"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </span>
+                </div>
+              </div>
             </div>
-        </div>
-        <div id="win-screen"
-            class="hidden panel-sm border-sf-green">
-            <h1 class="text-4xl font-bold text-sf-green text-glow">Game Over!</h1>
-            <p id="winner-text" class="text-2xl text-sf-gold mb-12">You win!</p>
-            <button id="play-again-btn" class="btn-primary text-glow">
-                PLAY AGAIN
-            </button>
-        </div>
-        <div id="error-screen"
-            class="hidden panel-sm border-sf-red">
-            <h1 class="text-4xl font-bold text-sf-red text-glow">ERROR</h1>
-            <div class="max-w-[16rem] p-4 bg-sf-dark rounded-lg">
-                <pre id="error-details" class="text-left overflow-x-auto"></pre>
+            <div id="outfit-selection" class="w-full flex flex-col gap-4">
+              <p id="outfit-player-indicator" class="text-lg text-sf-beige">
+                Select a character to see outfits
+              </p>
+              <div
+                id="outfit-grid"
+                class="relative grid grid-cols-6 gap-2"
+              ></div>
             </div>
-            <button id="error-back-btn" class="btn-danger text-glow">
-                BACK TO MENU
-            </button>
+          </div>
         </div>
+      </div>
+      <div id="game-screen" class="hidden size-full">
+        <div class="flex items-center justify-center">
+          <!-- 2x scaled from original 384x224 -->
+          <canvas
+            id="game-canvas"
+            width="768"
+            height="448"
+            class="bg-sf-darker border-2 border-sf-green rounded-lg hidden"
+          ></canvas>
+          <div
+            id="canvas-loading-overlay"
+            class="flex flex-col items-center justify-center gap-8"
+          >
+            <div class="spinner size-16"></div>
+            <h2
+              id="canvas-loading-status"
+              class="text-2xl text-sf-green text-glow animate-pulse"
+              aria-live="polite"
+              role="status"
+            >
+              Loading game...
+            </h2>
+          </div>
+        </div>
+      </div>
+      <div
+        id="win-screen"
+        class="hidden panel max-w-xs border-2 border-sf-green"
+      >
+        <h1 id="winner-text" class="text-2xl text-glow"></h1>
+        <button
+          id="play-again-btn"
+          class="btn-rect border-sf-green text-sf-green text-glow hover:border-sf-green-dark hover:text-sf-green-dark"
+          type="button"
+        >
+          PLAY AGAIN
+        </button>
+      </div>
+      <div
+        id="error-screen"
+        class="hidden panel max-w-xs border-2border-sf-red"
+      >
+        <div class="p-4 max-w-[16rem] bg-sf-dark rounded-lg">
+          <pre id="error-details" class="text-left overflow-x-auto"></pre>
+        </div>
+        <button
+          id="error-back-btn"
+          class="btn-rect border-sf-red text-sf-red text-glow hover:border-sf-red-dark hover:text-sf-red-dark"
+          type="button"
+        >
+          BACK TO MENU
+        </button>
+      </div>
     </main>
-    <script src="script.js"></script>
-</body>
-
+    <script type="module" src="script.js"></script>
+  </body>
 </html>
