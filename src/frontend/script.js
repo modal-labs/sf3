@@ -1,501 +1,10 @@
-const AudioManager = {
-  sounds: {},
-  enabled: true,
-  volume: 0.5,
-  currentEffects: [],
-  selectSound: null,
-  transitionSound: null,
-  winLoseSound: null,
-
-  init() {
-    this.enabled = localStorage.getItem("audioEnabled") !== "false";
-    this.setupMuteButton();
-  },
-
-  async preloadSounds(soundFiles, gameplayMusicMap) {
-    const promises = [];
-
-    Object.entries(soundFiles).forEach(([, filename]) => {
-      const asset = new Audio(`/sounds/${filename}.mp3`);
-      asset.volume = this.volume;
-      asset.preload = "auto";
-      this.sounds[filename] = asset;
-      promises.push(
-        new Promise((resolve) => {
-          asset.addEventListener("canplaythrough", resolve, { once: true });
-          asset.addEventListener("error", resolve, { once: true });
-        })
-      );
-    });
-
-    Object.entries(gameplayMusicMap).forEach(([key, filename]) => {
-      const asset = new Audio(`/sounds/gameplay/${filename}.mp3`);
-      asset.volume = this.volume;
-      asset.preload = "auto";
-      this.sounds[key] = asset;
-      promises.push(
-        new Promise((resolve) => {
-          asset.addEventListener("canplaythrough", resolve, { once: true });
-          asset.addEventListener("error", resolve, { once: true });
-        })
-      );
-    });
-
-    await Promise.all(promises);
-  },
-
-  play(soundName, options = {}) {
-    const {
-      volume = 1,
-      loop = false,
-      trackAs = "effect",
-      onEnd = null,
-    } = options;
-
-    const sound = this.sounds[soundName];
-    if (!sound) {
-      console.warn(`No sound found for: ${soundName}`);
-      return;
-    }
-
-    if (trackAs === "select") this.stopTrack("select");
-    else if (trackAs === "transition") this.stopTrack("transition");
-    else if (trackAs === "winLose") this.stopTrack("winLose");
-
-    sound.currentTime = 0;
-    sound.loop = loop;
-    sound.volume = this.enabled ? this.volume * volume : 0;
-
-    if (trackAs === "select") {
-      this.selectSound = sound;
-    } else if (trackAs === "transition") {
-      this.transitionSound = sound;
-    } else if (trackAs === "winLose") {
-      this.winLoseSound = sound;
-    } else {
-      sound._volumeMultiplier = volume;
-      this.currentEffects.push(sound);
-    }
-
-    const onEndHandler = () => {
-      if (trackAs === "effect") {
-        const index = this.currentEffects.indexOf(sound);
-        if (index > -1) this.currentEffects.splice(index, 1);
-        delete sound._volumeMultiplier;
-      } else if (trackAs === "winLose") {
-        this.winLoseSound = null;
-      }
-
-      if (onEnd) onEnd();
-      sound.removeEventListener("ended", onEndHandler);
-    };
-
-    if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
-      sound.addEventListener("ended", onEndHandler);
-    }
-
-    sound.play().catch(() => {
-      if (trackAs === "effect") {
-        const index = this.currentEffects.indexOf(sound);
-        if (index > -1) this.currentEffects.splice(index, 1);
-        delete sound._volumeMultiplier;
-      } else if (trackAs === "winLose") {
-        this.winLoseSound = null;
-      }
-      if (trackAs === "effect" || trackAs === "winLose" || onEnd) {
-        sound.removeEventListener("ended", onEndHandler);
-      }
-    });
-  },
-
-  playSound(soundName) {
-    this.play(soundName, { trackAs: "effect" });
-  },
-
-  stopTrack(trackType) {
-    const trackMap = {
-      select: "selectSound",
-      winLose: "winLoseSound",
-      transition: "transitionSound",
-    };
-
-    const soundProp = trackMap[trackType];
-    const sound = this[soundProp];
-
-    if (sound) {
-      sound.pause();
-      sound.currentTime = 0;
-      sound.loop = false;
-      this[soundProp] = null;
-    }
-  },
-
-  stopAll() {
-    this.stopTrack("select");
-    this.stopTrack("winLose");
-    this.stopTrack("transition");
-
-    this.currentEffects.forEach((sound) => {
-      sound.pause();
-      sound.currentTime = 0;
-    });
-    this.currentEffects = [];
-  },
-
-  toggleMute() {
-    this.enabled = !this.enabled;
-    localStorage.setItem("audioEnabled", this.enabled);
-
-    const muteIcon = document.getElementById("mute-icon");
-    if (muteIcon) {
-      muteIcon.src = this.enabled ? "/icons/unmute.svg" : "/icons/mute.svg";
-    }
-
-    if (this.selectSound) {
-      this.selectSound.volume = this.enabled ? this.volume * 0.2 : 0;
-    }
-
-    if (this.transitionSound) {
-      this.transitionSound.volume = this.enabled ? this.volume * 0.2 : 0;
-    }
-
-    if (this.winLoseSound) {
-      this.winLoseSound.volume = this.enabled ? this.volume * 0.2 : 0;
-    }
-
-    this.currentEffects.forEach((sound) => {
-      const multiplier = sound._volumeMultiplier || 1;
-      sound.volume = this.enabled ? this.volume * multiplier : 0;
-    });
-  },
-
-  setupMuteButton() {
-    const muteButton = document.getElementById("mute-toggle");
-    if (muteButton) {
-      muteButton.addEventListener("click", () => {
-        this.toggleMute();
-        AudioManager.playSound("click");
-      });
-
-      muteButton.addEventListener("mouseenter", () => {
-        AudioManager.playSound("hover");
-      });
-
-      const muteIcon = document.getElementById("mute-icon");
-      if (muteIcon) {
-        muteIcon.src = this.enabled ? "/icons/unmute.svg" : "/icons/mute.svg";
-      }
-    }
-  },
-};
-
-const GamepadManager = {
-  connected: false,
-  index: null,
-  animationFrame: null,
-  state: {
-    axes: { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } },
-    buttons: {},
-  },
-  deadzone: 0.2,
-  buttonMapping: {
-    0: "LP", // A/X button -> Light Punch
-    1: "MP", // B/Circle button -> Medium Punch
-    2: "LK", // X/Square button -> Light Kick
-    3: "MK", // Y/Triangle button -> Medium Kick
-    4: "HK", // Left Bumper -> Heavy Kick
-    5: "HP", // Right Bumper -> Heavy Punch
-    6: null, // Left Trigger
-    7: null, // Right Trigger
-    8: null, // Select/Back
-    9: null, // Start
-    10: null, // Left Stick Click
-    11: null, // Right Stick Click
-    12: "UP", // D-Pad Up
-    13: "DOWN", // D-Pad Down
-    14: "LEFT", // D-Pad Left
-    15: "RIGHT", // D-Pad Right
-  },
-
-  // ui nav state
-  uiActive: false,
-  uiState: {
-    currentScreen: null,
-    currentSection: 0,
-    currentElement: 0,
-    sections: [],
-    lastInput: { x: 0, y: 0, button: null },
-    inputCooldown: 100,
-    lastInputTime: 0,
-  },
-
-  // callbacks
-  onStatusChange: null,
-  onInput: null,
-  onUIAction: null,
-
-  init(callbacks = {}) {
-    this.onStatusChange = callbacks.onStatusChange || (() => {});
-    this.onInput = callbacks.onInput || (() => {});
-    this.onUIAction = callbacks.onUIAction || (() => {});
-
-    window.addEventListener("gamepadconnected", (e) => this.handleConnect(e));
-    window.addEventListener("gamepaddisconnected", (e) =>
-      this.handleDisconnect(e)
-    );
-  },
-
-  handleConnect(e) {
-    console.log(
-      `Gamepad connected at index ${e.gamepad.index}: ${e.gamepad.id}`
-    );
-    this.connected = true;
-    this.index = e.gamepad.index;
-
-    const gamepadStatus = document.getElementById("gamepad-status");
-    if (gamepadStatus) {
-      gamepadStatus.classList.remove("bg-sf-darker", "border-sf-gold-dark");
-      gamepadStatus.classList.add("bg-sf-dark", "border-sf-green");
-      gamepadStatus.title = `Gamepad Connected: ${e.gamepad.id}`;
-    }
-
-    const gamepadHelp = document.getElementById("gamepad-help");
-    if (gamepadHelp) {
-      gamepadHelp.classList.remove("hidden");
-    }
-
-    const splashText = document.getElementById("splash-skip-text");
-    if (splashText) {
-      splashText.textContent = "Press A/X to skip";
-    }
-
-    document.body.classList.add("gamepad-connected");
-
-    AudioManager.playSound("gamepad-connect");
-    this.onStatusChange(true);
-    this.startPolling();
-  },
-
-  handleDisconnect(e) {
-    if (e.gamepad.index !== this.index) return;
-
-    console.log(
-      `Gamepad disconnected from index ${e.gamepad.index}: ${e.gamepad.id}`
-    );
-    this.connected = false;
-    this.index = null;
-
-    const gamepadStatus = document.getElementById("gamepad-status");
-    if (gamepadStatus) {
-      gamepadStatus.classList.remove("bg-sf-dark", "border-sf-green");
-      gamepadStatus.classList.add("bg-sf-darker", "border-sf-gold-dark");
-      gamepadStatus.title = "No Gamepad Connected";
-    }
-
-    const gamepadHelp = document.getElementById("gamepad-help");
-    if (gamepadHelp) {
-      gamepadHelp.classList.add("hidden");
-    }
-
-    const splashText = document.getElementById("splash-skip-text");
-    if (splashText) {
-      splashText.textContent = "Click anywhere to skip";
-    }
-
-    document.querySelectorAll(".gamepad-hover").forEach((el) => {
-      el.classList.remove("gamepad-hover");
-    });
-
-    document.body.classList.remove("gamepad-connected");
-
-    AudioManager.playSound("gamepad-disconnect");
-    this.onStatusChange(false);
-    this.stopPolling();
-  },
-
-  startPolling() {
-    if (!this.connected) return;
-
-    const gamepads = navigator.getGamepads();
-    const gamepad = gamepads[this.index];
-
-    if (!gamepad) {
-      this.animationFrame = requestAnimationFrame(() => this.startPolling());
-      return;
-    }
-
-    const currentState = this.readState(gamepad);
-
-    if (this.uiActive) {
-      this.processUIInput(currentState);
-    } else {
-      this.onInput(currentState);
-    }
-
-    this.animationFrame = requestAnimationFrame(() => this.startPolling());
-  },
-
-  stopPolling() {
-    if (this.animationFrame) {
-      cancelAnimationFrame(this.animationFrame);
-      this.animationFrame = null;
-    }
-  },
-
-  readState(gamepad) {
-    const state = {
-      axes: {
-        left: {
-          x: this.applyDeadzone(gamepad.axes[0]),
-          y: this.applyDeadzone(gamepad.axes[1]),
-        },
-        right: {
-          x: this.applyDeadzone(gamepad.axes[2]),
-          y: this.applyDeadzone(gamepad.axes[3]),
-        },
-      },
-      buttons: {},
-    };
-
-    gamepad.buttons.forEach((button, index) => {
-      state.buttons[index] = button.pressed;
-    });
-
-    return state;
-  },
-
-  applyDeadzone(value) {
-    if (Math.abs(value) < this.deadzone) {
-      return 0;
-    }
-    return value;
-  },
-
-  processUIInput(currentState) {
-    const currentTime = Date.now();
-
-    if (currentTime - this.uiState.lastInputTime < this.uiState.inputCooldown) {
-      return;
-    }
-
-    const directions = {
-      left: currentState.axes.left.x < -0.5 || currentState.buttons[14],
-      right: currentState.axes.left.x > 0.5 || currentState.buttons[15],
-      up: currentState.axes.left.y < -0.5 || currentState.buttons[12],
-      down: currentState.axes.left.y > 0.5 || currentState.buttons[13],
-    };
-
-    const buttons = {
-      a: currentState.buttons[0],
-      b: currentState.buttons[1],
-      lb: currentState.buttons[4],
-      rb: currentState.buttons[5],
-    };
-
-    let inputX = 0,
-      inputY = 0;
-    if (directions.left) inputX = -1;
-    else if (directions.right) inputX = 1;
-    if (directions.up) inputY = -1;
-    else if (directions.down) inputY = 1;
-
-    const hasInput =
-      inputX !== 0 ||
-      inputY !== 0 ||
-      buttons.a ||
-      buttons.b ||
-      buttons.lb ||
-      buttons.rb;
-    const inputChanged =
-      inputX !== this.uiState.lastInput.x ||
-      inputY !== this.uiState.lastInput.y ||
-      buttons.a !== this.uiState.lastInput.a ||
-      buttons.b !== this.uiState.lastInput.b ||
-      buttons.lb !== this.uiState.lastInput.lb ||
-      buttons.rb !== this.uiState.lastInput.rb;
-
-    if (inputChanged && hasInput) {
-      this.onUIAction(inputX, inputY, buttons);
-      this.uiState.lastInputTime = currentTime;
-    }
-
-    this.uiState.lastInput = { x: inputX, y: inputY, ...buttons };
-  },
-
-  setUIActive(active) {
-    this.uiActive = active;
-  },
-
-  getMapping() {
-    return this.buttonMapping;
-  },
-
-  isConnected() {
-    return this.connected;
-  },
-};
-
-const WebSocketManager = {
-  socket: null,
-  onMessage: null,
-
-  init(callbacks = {}) {
-    this.onMessage = callbacks.onMessage || (() => {});
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
-    this.socket = new WebSocket(wsUrl);
-    const startButton = document.getElementById("start-game-btn");
-
-    this.socket.onopen = () => console.log("Connected to server");
-
-    this.socket.onclose = () => {
-      console.log("Disconnected from server");
-      if (startButton && !startButton.textContent.includes("START GAME")) {
-        startButton.textContent = "Connection Lost";
-        startButton.disabled = true;
-        startButton.classList.add("opacity-50");
-      }
-    };
-
-    this.socket.onerror = (event) => {
-      console.error("WebSocket connection error", event);
-      if (startButton && !startButton.textContent.includes("START GAME")) {
-        startButton.textContent = "Connection Error";
-        startButton.disabled = true;
-        startButton.classList.add("opacity-50");
-      }
-    };
-
-    this.socket.onmessage = (event) => this.onMessage(event);
-
-    startButton.disabled = true;
-    startButton.classList.add("opacity-50");
-  },
-
-  send(type, data) {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      try {
-        this.socket.send(
-          JSON.stringify({
-            type: type,
-            data: data,
-          })
-        );
-      } catch (e) {
-        console.error("websocket send fail", e);
-      }
-    }
-  },
-
-  close() {
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
-  },
-};
+import { byId, $, $$, setText } from "./utils.js";
+import { SOUND_KEYS, GRID } from "./constants.js";
+import { MovesEngine, MovesDisplay } from "./comboDetector.js";
+import { AudioManager, playHover, playClick } from "./audioManager.js";
+import { GamepadManager } from "./gamepadManager.js";
+import { WebSocketManager } from "./webSocketManager.js";
+import { UIFactory } from "./uiFactory.js";
 
 class StreetFighterGame {
   // init
@@ -505,8 +14,7 @@ class StreetFighterGame {
     this.initializeConstants();
     this.preloadAllAssets().then(() => {
       this.assetsLoaded = true;
-      document.getElementById("loading-status").textContent =
-        "Connecting to server...";
+      setText("loading-status", "Connecting to server...");
 
       AudioManager.init();
       this.initializeUI();
@@ -519,20 +27,13 @@ class StreetFighterGame {
   }
 
   initializeState() {
-    // per session
     this.assetsLoaded = false;
     this.capcomTimeout = null;
 
-    // game state
     this.gameState = {
-      // settings
       humanVsLlm: true,
-
-      // player state
       player1: { character: null, outfit: 1, superArt: 1 },
       player2: { character: null, outfit: 1, superArt: 1 },
-
-      // game status
       loaded: false,
       serverReady: false,
       firstFrameReceived: false,
@@ -541,14 +42,12 @@ class StreetFighterGame {
       readyToHideTransition: false,
     };
 
-    // keys
     this.keyState = {};
     this.inputHistory = [];
     this.movesByLength = {};
     this.combos = {};
     this.specialMoves = {};
 
-    // gamepad UI state
     this.gamepadUIState = {
       currentScreen: null,
       currentSection: 0,
@@ -556,18 +55,16 @@ class StreetFighterGame {
       sections: [],
     };
 
-    // character select
     this.currentCharacter = null;
     this.playerDirection = "right";
     this.characterGrid = {
       activePlayer: "p1",
-      p1: { selected: false, character: null, outfit: 1 },
-      p2: { selected: false, character: null, outfit: 1 },
+      p1: { selected: false, character: "Ken", outfit: 1 },
+      p2: { selected: false, character: "Ryu", outfit: 1 },
     };
   }
 
   initializeConstants() {
-    // sf3-specific
     this.characters = [
       "Alex",
       "Chun-Li",
@@ -631,24 +128,21 @@ class StreetFighterGame {
     this.actions.COMBO = 19;
 
     this.numOutfitsPerCharacter = 6;
-    this.maxInputHistory = 20; // roughly max length of move sequence
+    this.maxInputHistory = 20;
 
-    // ux (ms)
     this.animationDuration = 600;
     this.comboTimeout = 500;
     this.transitionMinDisplayTime = 3000;
     this.coinSoundDuration = 1000;
     this.capcomSoundDuration = 6000;
 
-    this.volume = 0.5; // 0-1
-    // relative to this.volume
+    this.volume = 0.5;
     this.selectVolume = 0.2;
     this.startSoundVolume = 0.2;
     this.gameplayMusicVolume = 0.2;
     this.transitionSoundVolume = 0.2;
     this.winLoseSoundVolume = 0.2;
 
-    // ui
     this.staticImages = {
       CAPCOM: "/capcom.svg",
       MODAL: "/modal.svg",
@@ -672,14 +166,13 @@ class StreetFighterGame {
       "error-back-btn",
       "p1-selected-portrait",
       "p2-selected-portrait",
+      "super-art-select",
+      "toggle-options-btn",
+      "help-overlay-close",
+      "controls-help",
     ];
-    this.hoverElements = [
-      "super-art-select-p1",
-      "super-art-select-p2",
-      "modal-link",
-    ];
+    this.hoverElements = ["modal-link"];
 
-    // audio  (suffix = .mp3 added later)
     this.soundFiles = {
       HOVER: "hover",
       CLICK: "click",
@@ -759,6 +252,8 @@ class StreetFighterGame {
         this.updateControlsDisplay();
         this.updateCombosDisplay(this.currentCharacter);
         this.updateSuperArtsDisplay(this.currentCharacter);
+        this.updateHelpIconVisibility();
+        this.updateGamepadNavVisibility();
       },
       onInput: (state) => {
         this.processGamepadInput(state);
@@ -777,22 +272,23 @@ class StreetFighterGame {
     });
   }
 
-  // init ui
-
   initializeUI() {
-    // in the order that user sees them
     this.initializeCoinScreen();
     this.showScreen(this.screens.COIN);
     this.initializeSplashScreen();
     this.setupPlayerToggle();
+    this.selectCharacter("p1", "Ken");
+    this.selectCharacter("p2", "Ryu");
     this.initializeCharacterGrid();
     this.initializeOutfitGrid(null);
+    this.initializeHelpOverlay();
     this.loadExtraMovesDisplay();
     this.updateControlsDisplay();
+    this.updateHelpIconVisibility();
   }
 
   initializeCoinScreen() {
-    const coinBtn = document.getElementById("insert-coin-btn");
+    const coinBtn = byId("insert-coin-btn");
     if (coinBtn) {
       coinBtn.addEventListener("click", () => {
         coinBtn.disabled = true;
@@ -800,7 +296,7 @@ class StreetFighterGame {
         coinBtn.classList.remove("animate-coin-shine");
         coinBtn.classList.add("animate-coin-insert");
 
-        AudioManager.playSound(this.soundFiles.COIN);
+        AudioManager.playSound(SOUND_KEYS.COIN);
 
         setTimeout(() => {
           this.transitionToSplash();
@@ -808,13 +304,13 @@ class StreetFighterGame {
       });
 
       coinBtn.addEventListener("mouseenter", () => {
-        AudioManager.playSound(this.soundFiles.HOVER);
+        playHover();
       });
     }
   }
 
   initializeSplashScreen() {
-    const splashScreen = document.getElementById("splash-screen");
+    const splashScreen = byId("splash-screen");
     if (!splashScreen) return;
 
     splashScreen.addEventListener("click", (e) => {
@@ -825,19 +321,68 @@ class StreetFighterGame {
         this.capcomTimeout = null;
       }
 
-      if (AudioManager.sounds[this.soundFiles.CAPCOM]) {
-        AudioManager.sounds[this.soundFiles.CAPCOM].pause();
-        AudioManager.sounds[this.soundFiles.CAPCOM].currentTime = 0;
+      if (AudioManager.sounds[SOUND_KEYS.CAPCOM]) {
+        AudioManager.sounds[SOUND_KEYS.CAPCOM].pause();
+        AudioManager.sounds[SOUND_KEYS.CAPCOM].currentTime = 0;
       }
 
       this.showScreen(this.screens.SETTINGS);
     });
   }
 
+  initializeHelpOverlay() {
+    const helpButton = byId("controls-help");
+    const overlay = byId("help-overlay");
+    const closeBtn = byId("help-overlay-close");
+    if (helpButton && overlay && closeBtn) {
+      const openOverlay = () => {
+        overlay.classList.remove("hidden");
+
+        this.updateControlsDisplay();
+        this.updateGamepadNavVisibility();
+
+        const currentScreen = this.getCurrentScreen();
+        const hideExtraMoves =
+          currentScreen === this.screens.COIN ||
+          currentScreen === this.screens.SPLASH;
+
+        const combosSection = byId("combos-section");
+        const superArtsSection = byId("super-arts-section");
+
+        if (
+          combosSection &&
+          combosSection.parentElement &&
+          combosSection.parentElement.parentElement
+        )
+          combosSection.parentElement.parentElement.classList.toggle(
+            "hidden",
+            hideExtraMoves
+          );
+        if (superArtsSection && superArtsSection.parentElement)
+          superArtsSection.parentElement.classList.toggle(
+            "hidden",
+            hideExtraMoves
+          );
+
+        playClick();
+        GamepadManager.setUIActive(true);
+        this.updateGamepadSections(true);
+      };
+      const closeOverlay = () => {
+        overlay.classList.add("hidden");
+        playClick();
+        GamepadManager.setUIActive(true);
+        this.updateGamepadSections(true);
+      };
+      helpButton.addEventListener("click", openOverlay);
+      closeBtn.addEventListener("click", closeOverlay);
+    }
+  }
+
   transitionToSplash() {
-    if (!document.getElementById("coin-screen").classList.contains("hidden")) {
+    if (!byId("coin-screen").classList.contains("hidden")) {
       this.showScreen(this.screens.SPLASH);
-      AudioManager.playSound(this.soundFiles.CAPCOM);
+      AudioManager.playSound(SOUND_KEYS.CAPCOM);
 
       this.capcomTimeout = setTimeout(() => {
         this.capcomTimeout = null;
@@ -847,20 +392,20 @@ class StreetFighterGame {
   }
 
   setupPlayerToggle() {
-    const playerToggle = document.getElementById("player-toggle");
+    const playerToggle = byId("player-toggle");
     if (playerToggle) {
       playerToggle.addEventListener("click", () => {
         this.gameState.humanVsLlm = !this.gameState.humanVsLlm;
 
-        const playerIcon = document.getElementById("player-icon");
+        const playerIcon = byId("player-icon");
         if (this.gameState.humanVsLlm) {
           playerIcon.src = this.staticImages.HUMAN;
         } else {
           playerIcon.src = this.staticImages.LLM;
         }
 
-        const p1Label = document.querySelector("#p1-selection-box h2");
-        const p2Label = document.querySelector("#p2-selection-box h2");
+        const p1Label = $("#p1-selection-box h2");
+        const p2Label = $("#p2-selection-box h2");
 
         if (p1Label) {
           p1Label.textContent = this.gameState.humanVsLlm ? "YOU" : "LLM 1";
@@ -869,41 +414,118 @@ class StreetFighterGame {
           p2Label.textContent = this.gameState.humanVsLlm ? "LLM" : "LLM 2";
         }
 
-        AudioManager.playSound(this.soundFiles.CLICK);
+        this.updateHelpIconVisibility();
+
+        const section = this.getCurrentSection();
+        let selectedElement = null;
+        if (
+          section &&
+          section.elements &&
+          section.elements[this.gamepadUIState.currentElement]
+        ) {
+          selectedElement =
+            section.elements[this.gamepadUIState.currentElement];
+        }
+
+        this.updateGamepadSections(true);
+
+        if (selectedElement) {
+          const newSection = this.getCurrentSection();
+          if (newSection && newSection.elements) {
+            const newIndex = newSection.elements.indexOf(selectedElement);
+            if (newIndex >= 0) {
+              this.gamepadUIState.currentElement = newIndex;
+              this.updateGamepadHover();
+            }
+          }
+        }
+
+        playClick();
       });
 
       playerToggle.addEventListener("mouseenter", () => {
-        AudioManager.playSound(this.soundFiles.HOVER);
+        playHover();
       });
     }
   }
 
   initializeCharacterGrid() {
-    const gridContainer = document.getElementById("character-grid");
+    const gridContainer = byId("character-grid");
     gridContainer.innerHTML = "";
 
+    this.characterGrid.onPortraitHover = (character, imageSrc) => {
+      const player = this.characterGrid.activePlayer;
+      const previewBox = byId(`${player}-selected-portrait`);
+      const previewImg = previewBox?.querySelector("img");
+
+      if (previewImg && this.characterGrid[player].character !== character) {
+        previewImg.src = imageSrc;
+        previewImg.classList.remove("hidden", "opacity-100");
+        previewImg.classList.add("opacity-80", "object-contain");
+        const nameEl = byId(`${player}-selected-name`);
+        if (nameEl) nameEl.textContent = character;
+      }
+    };
+
+    this.characterGrid.onPortraitLeave = (character) => {
+      this.updateCharacterBorders();
+      const player = this.characterGrid.activePlayer;
+      const selectedChar = this.characterGrid[player].character;
+
+      if (selectedChar !== character) {
+        const previewBox = byId(`${player}-selected-portrait`);
+        const previewImg = previewBox?.querySelector("img");
+        const nameEl = byId(`${player}-selected-name`);
+
+        if (selectedChar) {
+          if (previewImg) {
+            previewImg.src = `/portraits/${selectedChar.toLowerCase()}.png`;
+            previewImg.classList.remove("hidden", "opacity-80");
+            previewImg.classList.add("opacity-100", "object-contain");
+          }
+          if (nameEl) nameEl.textContent = selectedChar;
+        } else {
+          if (previewImg) {
+            previewImg.classList.add("hidden");
+            previewImg.classList.remove("opacity-80");
+          }
+          if (nameEl) nameEl.textContent = "-";
+        }
+      }
+    };
+
     this.characters.forEach((character, index) => {
-      const portrait = this.createPortrait(character, index);
+      const portrait = UIFactory.createPortrait(
+        character,
+        index,
+        this,
+        (player, char) => this.selectCharacter(player, char)
+      );
       gridContainer.appendChild(portrait);
     });
 
     this.updatePlayerBoxes();
     this.updateCharacterBorders();
 
-    const p2SuperArt = document.getElementById("super-art-select-p2");
-    if (p2SuperArt) {
-      p2SuperArt.addEventListener("change", () =>
-        AudioManager.playSound(this.soundFiles.CLICK)
-      );
+    const optionsToggle = byId("toggle-options-btn");
+    const optionsPanel = byId("options-panel");
+    if (optionsToggle && optionsPanel) {
+      optionsToggle.addEventListener("click", () => {
+        const isHidden = optionsPanel.classList.contains("hidden");
+        optionsPanel.classList.toggle("hidden", !isHidden);
+        optionsToggle.textContent = isHidden ? "HIDE OPTIONS" : "SHOW OPTIONS";
+        playClick();
+        this.updateGamepadSections(true);
+      });
     }
   }
 
   async loadExtraMovesDisplay() {
     const elements = {
-      combosLoading: document.getElementById("combos-loading"),
-      superArtsLoading: document.getElementById("super-arts-loading"),
-      combosList: document.getElementById("combos-list"),
-      superArtsList: document.getElementById("super-arts-list"),
+      combosLoading: byId("combos-loading"),
+      superArtsLoading: byId("super-arts-loading"),
+      combosList: byId("combos-list"),
+      superArtsList: byId("super-arts-list"),
     };
 
     try {
@@ -912,19 +534,40 @@ class StreetFighterGame {
       this.combos = data.combos;
       this.specialMoves = data.special_moves;
 
-      this.preprocessMoves();
+      this.movesByLength = MovesEngine.preprocessMoves(
+        this.currentCharacter,
+        this.specialMoves,
+        this.combos,
+        this.playerDirection,
+        this.gameState.player1.superArt
+      );
       this.updateCombosDisplay(this.currentCharacter);
       this.updateSuperArtsDisplay(this.currentCharacter);
 
-      const superArtSelect = document.getElementById("super-art-select-p1");
-      this.gameState.player1.superArt = parseInt(superArtSelect.value);
-
-      superArtSelect.addEventListener("change", () => {
-        this.gameState.player1.superArt = parseInt(superArtSelect.value);
-        this.updateSuperArtsDisplay(this.currentCharacter);
-        this.preprocessMoves();
-        AudioManager.playSound(this.soundFiles.CLICK);
-      });
+      const superArtP1 = byId("super-art-select-p1");
+      const superArtP2 = byId("super-art-select-p2");
+      if (superArtP1) {
+        this.gameState.player1.superArt = parseInt(superArtP1.value);
+        superArtP1.addEventListener("change", () => {
+          this.gameState.player1.superArt = parseInt(superArtP1.value);
+          this.updateSuperArtsDisplay(this.currentCharacter);
+          this.movesByLength = MovesEngine.preprocessMoves(
+            this.currentCharacter,
+            this.specialMoves,
+            this.combos,
+            this.playerDirection,
+            this.gameState.player1.superArt
+          );
+          playClick();
+        });
+      }
+      if (superArtP2) {
+        this.gameState.player2.superArt = parseInt(superArtP2.value);
+        superArtP2.addEventListener("change", () => {
+          this.gameState.player2.superArt = parseInt(superArtP2.value);
+          playClick();
+        });
+      }
 
       elements.combosLoading.classList.add("hidden");
       elements.superArtsLoading.classList.add("hidden");
@@ -939,29 +582,25 @@ class StreetFighterGame {
     }
   }
 
-  // init event listeners
-
   initializeEventListeners() {
     [...this.buttons, ...this.hoverElements].forEach((elemId) => {
-      const elem = document.getElementById(elemId);
+      const elem = byId(elemId);
       if (elem) {
-        elem.addEventListener("mouseenter", () =>
-          AudioManager.playSound(this.soundFiles.HOVER)
-        );
+        elem.addEventListener("mouseenter", () => playHover());
       }
     });
 
-    document.getElementById("start-game-btn").addEventListener("click", () => {
-      AudioManager.playSound(this.soundFiles.CLICK);
+    byId("start-game-btn").addEventListener("click", () => {
+      playClick();
       this.startGame();
     });
-    document.getElementById("play-again-btn").addEventListener("click", () => {
-      AudioManager.playSound(this.soundFiles.CLICK);
+    byId("play-again-btn").addEventListener("click", () => {
+      playClick();
       this.resetSelections();
       this.showScreen(this.screens.SETTINGS);
     });
-    document.getElementById("error-back-btn").addEventListener("click", () => {
-      AudioManager.playSound(this.soundFiles.CLICK);
+    byId("error-back-btn").addEventListener("click", () => {
+      playClick();
       this.showScreen(this.screens.SETTINGS);
     });
 
@@ -970,28 +609,7 @@ class StreetFighterGame {
 
       this.keyState[e.code] = isDown;
       const action = this.getActionFromKeys();
-
-      WebSocketManager.send("player_action", {
-        action,
-      });
-
-      if (action !== this.actions.NO_MOVE) {
-        this.inputHistory.push({ action, time: Date.now() });
-
-        if (this.inputHistory.length > this.maxInputHistory) {
-          this.inputHistory.shift();
-        }
-
-        const detectedMove = this.detectExtra();
-        if (detectedMove) {
-          WebSocketManager.send("player_action", {
-            action: detectedMove.type === "super_art" ? 18 : 19,
-            [detectedMove.type === "super_art" ? "super_art" : "combo"]:
-              detectedMove.name,
-          });
-        }
-      }
-
+      this.handleActionFromInput(action);
       e.preventDefault();
     };
 
@@ -999,23 +617,21 @@ class StreetFighterGame {
     document.addEventListener("keyup", (e) => handleKeyEvent(e, false));
 
     ["p1", "p2"].forEach((player) => {
-      document
-        .getElementById(`${player}-selected-portrait`)
-        .addEventListener("click", () => {
-          this.switchActivePlayer(player);
-          AudioManager.playSound(this.soundFiles.CLICK);
-        });
+      byId(`${player}-selected-portrait`).addEventListener("click", () => {
+        this.switchActivePlayer(player);
+        playClick();
+      });
     });
   }
 
-  // gamepad support
+  // input handlers
 
   handleGamepadUIAction(inputX, inputY, buttons) {
     this.updateGamepadSections();
 
     const currentScreen = this.getCurrentScreen();
     if (currentScreen === this.screens.SPLASH && buttons.a) {
-      const splashScreen = document.getElementById("splash-screen");
+      const splashScreen = byId("splash-screen");
       if (splashScreen) {
         splashScreen.click();
       }
@@ -1024,12 +640,14 @@ class StreetFighterGame {
 
     if (!this.gamepadUIState.sections.length) return;
 
-    if (buttons.lb) {
-      this.changeGamepadSection(-1);
-      return;
-    } else if (buttons.rb) {
-      this.changeGamepadSection(1);
-      return;
+    if (currentScreen === this.screens.SETTINGS) {
+      if (buttons.lb) {
+        this.changeGamepadSection(-1);
+        return;
+      } else if (buttons.rb) {
+        this.changeGamepadSection(1);
+        return;
+      }
     }
 
     if (buttons.a) {
@@ -1040,6 +658,28 @@ class StreetFighterGame {
     if (inputX !== 0 || inputY !== 0) {
       this.handleGamepadNavigation(inputX, inputY);
     }
+  }
+
+  getCurrentSection() {
+    return this.gamepadUIState.sections[this.gamepadUIState.currentSection];
+  }
+
+  announceHover() {
+    this.updateGamepadHover();
+    playHover();
+  }
+
+  moveCursor(index) {
+    this.gamepadUIState.currentElement = index;
+    this.announceHover();
+  }
+
+  stepCursor(delta) {
+    const section = this.getCurrentSection();
+    if (!section || !section.elements || !section.elements.length) return;
+    const len = section.elements.length;
+    const next = (this.gamepadUIState.currentElement + delta + len) % len;
+    this.moveCursor(next);
   }
 
   updateGamepadSections(forceUpdate = false) {
@@ -1064,44 +704,111 @@ class StreetFighterGame {
     switch (currentScreen) {
       case this.screens.COIN:
         this.gamepadUIState.sections = [
-          { elements: this.getVisibleHeaderElements() },
-          { elements: ["#insert-coin-btn"] },
+          { elements: this.getSimpleScreenElements(["#insert-coin-btn"]) },
         ];
         break;
       case this.screens.SPLASH:
         this.gamepadUIState.sections = [];
         break;
       case this.screens.SETTINGS:
+        const topNavElements = [];
+
+        topNavElements.push("#start-game-btn");
+
+        const controlsHelp = byId("controls-help");
+        if (controlsHelp && !controlsHelp.classList.contains("hidden")) {
+          topNavElements.push("#controls-help");
+        }
+
+        const playerToggle = byId("player-toggle");
+        if (playerToggle && !playerToggle.classList.contains("hidden")) {
+          topNavElements.push("#player-toggle");
+        }
+
+        topNavElements.push("#mute-toggle");
+
+        const mainElements = [];
+
+        mainElements.push("#p1-selected-portrait");
+        mainElements.push("#p2-selected-portrait");
+
+        const characterGridElements = this.getCharacterGridElements();
+        mainElements.push(...characterGridElements);
+
+        mainElements.push("#toggle-options-btn");
+
+        const optionsPanel = byId("options-panel");
+        if (optionsPanel && !optionsPanel.classList.contains("hidden")) {
+          mainElements.push("#super-art-select-p1");
+          mainElements.push("#super-art-select-p2");
+
+          const outfitElements = this.getOutfitElements();
+          mainElements.push(...outfitElements);
+        }
+
         this.gamepadUIState.sections = [
-          { elements: ["#modal-link", "#player-toggle", "#mute-toggle"] },
-          { elements: ["#p1-selected-portrait", "#p2-selected-portrait"] },
-          { elements: this.getCharacterGridElements(), grid: true, cols: 5 },
-          { elements: this.getOutfitElements(), grid: true, cols: 1 },
-          { elements: ["#super-art-select-p1"], controls: true },
-          { elements: ["#super-art-select-p2"], controls: true },
-          { elements: ["#start-game-btn"] },
+          { elements: topNavElements, name: "top-nav" },
+          {
+            elements: mainElements,
+            name: "main-area",
+            special: "settings-main",
+          },
         ];
         break;
       case this.screens.WIN:
-        this.gamepadUIState.sections = [
-          { elements: this.getVisibleHeaderElements() },
-          { elements: ["#play-again-btn"] },
-        ];
+        if (!this.gameState.humanVsLlm) {
+          this.gamepadUIState.sections = [
+            {
+              elements: ["#play-again-btn", "#mute-toggle"],
+              name: "win-controls",
+            },
+          ];
+        } else {
+          this.gamepadUIState.sections = [
+            { elements: this.getSimpleScreenElements(["#play-again-btn"]) },
+          ];
+        }
         break;
       case this.screens.ERROR:
-        this.gamepadUIState.sections = [
-          { elements: this.getVisibleHeaderElements() },
-          { elements: ["#error-back-btn"] },
-        ];
+        if (!this.gameState.humanVsLlm) {
+          this.gamepadUIState.sections = [
+            {
+              elements: ["#error-back-btn", "#mute-toggle"],
+              name: "error-controls",
+            },
+          ];
+        } else {
+          this.gamepadUIState.sections = [
+            { elements: this.getSimpleScreenElements(["#error-back-btn"]) },
+          ];
+        }
         break;
       case this.screens.LOADING:
-        this.gamepadUIState.sections = [
-          { elements: this.getVisibleHeaderElements() },
-        ];
+        if (!this.gameState.humanVsLlm) {
+          this.gamepadUIState.sections = [
+            { elements: ["#mute-toggle"], name: "loading-controls" },
+          ];
+        } else {
+          this.gamepadUIState.sections = [
+            { elements: this.getSimpleScreenElements([]) },
+          ];
+        }
         break;
       case this.screens.GAME:
-        this.gamepadUIState.sections = [];
+        if (!this.gameState.humanVsLlm) {
+          this.gamepadUIState.sections = [
+            { elements: ["#mute-toggle"], name: "game-controls" },
+          ];
+        } else {
+          this.gamepadUIState.sections = [];
+        }
         break;
+    }
+
+    const helpOverlay = byId("help-overlay");
+    if (helpOverlay && !helpOverlay.classList.contains("hidden")) {
+      this.gamepadUIState.currentScreen = "HELP";
+      this.gamepadUIState.sections = [{ elements: ["#help-overlay-close"] }];
     }
 
     this.gamepadUIState.sections = this.gamepadUIState.sections.filter(
@@ -1110,25 +817,36 @@ class StreetFighterGame {
 
     switch (currentScreen) {
       case this.screens.COIN:
-        this.gamepadUIState.currentSection =
-          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        this.gamepadUIState.currentSection = 0;
+        this.gamepadUIState.currentElement = this.findElementIndex(
+          "#insert-coin-btn",
+          0
+        );
         break;
       case this.screens.SPLASH:
-        this.gamepadUIState.currentSection =
-          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        this.gamepadUIState.currentSection = 0;
         break;
       case this.screens.SETTINGS:
-        if (this.gamepadUIState.sections.length > 1) {
-          this.gamepadUIState.currentSection = 1;
+        this.gamepadUIState.currentSection = 0;
+        const topNavSection = this.gamepadUIState.sections[0];
+        if (topNavSection && topNavSection.elements) {
+          const startGameIdx =
+            topNavSection.elements.indexOf("#start-game-btn");
+          this.gamepadUIState.currentElement =
+            startGameIdx >= 0 ? startGameIdx : 0;
         }
         break;
       case this.screens.WIN:
-        this.gamepadUIState.currentSection =
-          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        this.gamepadUIState.currentSection = 0;
+        this.gamepadUIState.currentElement = 0;
         break;
       case this.screens.ERROR:
-        this.gamepadUIState.currentSection =
-          this.gamepadUIState.sections.length > 1 ? 1 : 0;
+        this.gamepadUIState.currentSection = 0;
+        this.gamepadUIState.currentElement = 0;
+        break;
+      case this.screens.LOADING:
+        this.gamepadUIState.currentSection = 0;
+        this.gamepadUIState.currentElement = 0;
         break;
     }
 
@@ -1150,29 +868,38 @@ class StreetFighterGame {
   }
 
   getCharacterGridElements() {
-    const portraits = document.querySelectorAll("#character-grid > div");
+    const portraits = $$("#character-grid > div");
     return Array.from(portraits).map(
       (el) => `#${el.id || this.generateElementId(el)}`
     );
   }
 
   getOutfitElements() {
-    const outfits = document.querySelectorAll("#outfit-grid > div");
+    const outfitPanel = byId("outfit-selection");
+    const optionsPanel = byId("options-panel");
+    if (
+      !outfitPanel ||
+      (optionsPanel && optionsPanel.classList.contains("hidden"))
+    ) {
+      return [];
+    }
+    const outfits = $$("#outfit-grid > div");
     return Array.from(outfits).map(
       (el) => `#${el.id || this.generateElementId(el)}`
     );
   }
 
-  getVisibleHeaderElements() {
+  getSimpleScreenElements(mainButtons = []) {
     const elements = [];
 
-    const header = document.getElementById("game-header");
-    if (header && !header.classList.contains("hidden")) {
-      elements.push("#modal-link");
+    elements.push(...mainButtons);
+
+    const controlsHelp = byId("controls-help");
+    if (controlsHelp && !controlsHelp.classList.contains("hidden")) {
+      elements.push("#controls-help");
     }
 
-    const playerToggle = document.getElementById("player-toggle");
-
+    const playerToggle = byId("player-toggle");
     if (playerToggle && !playerToggle.classList.contains("hidden")) {
       elements.push("#player-toggle");
     }
@@ -1188,34 +915,197 @@ class StreetFighterGame {
     return id;
   }
 
+  findElementIndex(selector, sectionIndex) {
+    if (this.gamepadUIState.sections[sectionIndex]) {
+      const elements = this.gamepadUIState.sections[sectionIndex].elements;
+      const index = elements.indexOf(selector);
+      return index >= 0 ? index : 0;
+    }
+    return 0;
+  }
+
   changeGamepadSection(direction) {
     const numSections = this.gamepadUIState.sections.length;
     if (numSections === 0) return;
 
-    this.gamepadUIState.currentSection =
-      (this.gamepadUIState.currentSection + direction + numSections) %
-      numSections;
-    this.gamepadUIState.currentElement = 0;
+    const currentScreen = this.getCurrentScreen();
+    if (currentScreen === this.screens.SETTINGS && numSections > 1) {
+      this.gamepadUIState.currentSection =
+        (this.gamepadUIState.currentSection + direction + numSections) %
+        numSections;
+
+      if (this.gamepadUIState.currentSection === 0) {
+        const startGameIdx =
+          this.gamepadUIState.sections[0].elements.indexOf("#start-game-btn");
+        this.gamepadUIState.currentElement =
+          startGameIdx >= 0 ? startGameIdx : 0;
+      } else {
+        this.gamepadUIState.currentElement = 0;
+      }
+    }
 
     this.updateGamepadHover();
-    AudioManager.playSound(this.soundFiles.HOVER);
+    AudioManager.playSound(SOUND_KEYS.HOVER);
   }
 
   handleGamepadNavigation(inputX, inputY) {
-    const section =
-      this.gamepadUIState.sections[this.gamepadUIState.currentSection];
+    const section = this.getCurrentSection();
     if (!section || !section.elements.length) return;
 
-    if (section.grid) {
+    const currentScreen = this.getCurrentScreen();
+
+    if (currentScreen !== this.screens.SETTINGS) {
+      if (inputX !== 0) this.stepCursor(inputX);
+      return;
+    }
+
+    if (section.name === "top-nav") {
+      if (inputX !== 0) this.stepCursor(inputX);
+    } else if (section.special === "settings-main") {
+      this.navigateSettingsMain(inputX, inputY, section);
+    } else if (section.grid) {
       this.navigateGrid(inputX, inputY, section);
     } else if (section.controls) {
       this.navigateControls(inputX, inputY, section);
     } else {
       this.navigateList(inputX, inputY, section);
     }
+  }
 
-    this.updateGamepadHover();
-    AudioManager.playSound(this.soundFiles.HOVER);
+  navigateSettingsMain(inputX, inputY, section) {
+    const onPlayerBox = this.gamepadUIState.currentElement < 2;
+    const characterStartIdx = GRID.START;
+    const characterEndIdx = GRID.START + GRID.COUNT;
+    const onCharacterGrid =
+      this.gamepadUIState.currentElement >= characterStartIdx &&
+      this.gamepadUIState.currentElement < characterEndIdx;
+
+    const superArtP1Idx = section.elements.indexOf("#super-art-select-p1");
+    const superArtP2Idx = section.elements.indexOf("#super-art-select-p2");
+    const onSuperArtSelect =
+      superArtP1Idx >= 0 &&
+      (this.gamepadUIState.currentElement === superArtP1Idx ||
+        this.gamepadUIState.currentElement === superArtP2Idx);
+
+    const outfitStartIdx = superArtP2Idx >= 0 ? superArtP2Idx + 1 : -1;
+    const onOutfits =
+      outfitStartIdx >= 0 &&
+      this.gamepadUIState.currentElement >= outfitStartIdx &&
+      section.elements[this.gamepadUIState.currentElement] &&
+      section.elements[this.gamepadUIState.currentElement].includes("outfit-");
+
+    if (onPlayerBox) {
+      if (inputX !== 0) {
+        this.moveCursor(inputX > 0 ? 1 : 0);
+      }
+      if (inputY > 0) {
+        this.moveCursor(characterStartIdx);
+      }
+      if (inputY < 0) {
+        this.moveCursor(section.elements.length - 1);
+      }
+    } else if (onCharacterGrid) {
+      const gridIndex = this.gamepadUIState.currentElement - GRID.START;
+      const cols = GRID.COLS;
+      const currentRow = Math.floor(gridIndex / cols);
+      const currentCol = gridIndex % cols;
+
+      let newRow = currentRow;
+      let newCol = currentCol;
+
+      if (inputY < 0) {
+        if (currentRow === 0) {
+          this.moveCursor(currentCol < 5 ? 0 : 1);
+          return;
+        } else {
+          newRow = currentRow - 1;
+        }
+      } else if (inputY > 0) {
+        if (currentRow === 1 || gridIndex >= GRID.COLS) {
+          this.moveCursor(characterEndIdx);
+          return;
+        } else {
+          newRow = currentRow + 1;
+        }
+      }
+
+      if (inputX < 0) {
+        newCol = Math.max(0, currentCol - 1);
+      } else if (inputX > 0) {
+        const maxCol = currentRow === 1 ? 8 : cols - 1;
+        newCol = Math.min(maxCol, currentCol + 1);
+      }
+
+      const newGridIndex = newRow * cols + newCol;
+      if (newGridIndex < 19) {
+        this.moveCursor(characterStartIdx + newGridIndex);
+      }
+    } else if (onSuperArtSelect) {
+      if (inputX !== 0) {
+        this.moveCursor(inputX > 0 ? superArtP2Idx : superArtP1Idx);
+      }
+      if (inputY > 0) {
+        this.moveCursor(superArtP2Idx + 1);
+      }
+      if (inputY < 0) {
+        this.moveCursor(characterEndIdx);
+      }
+    } else if (onOutfits) {
+      if (inputX !== 0) {
+        const outfitEndIdx = section.elements.findIndex(
+          (el, idx) => idx > outfitStartIdx && !el.includes("outfit-")
+        );
+        const lastOutfitIdx =
+          outfitEndIdx > 0 ? outfitEndIdx - 1 : section.elements.length - 1;
+        const numOutfits = lastOutfitIdx - outfitStartIdx + 1;
+
+        const outfitIndex = this.gamepadUIState.currentElement - outfitStartIdx;
+        const newOutfitIndex = (outfitIndex + inputX + numOutfits) % numOutfits;
+        this.moveCursor(outfitStartIdx + newOutfitIndex);
+      }
+      if (inputY < 0) {
+        this.moveCursor(superArtP1Idx);
+      }
+      if (inputY > 0) {
+        this.moveCursor(0);
+      }
+    } else {
+      if (inputX !== 0) {
+        this.stepCursor(inputX);
+      } else if (
+        inputY < 0 &&
+        this.gamepadUIState.currentElement === characterEndIdx
+      ) {
+        this.moveCursor(characterEndIdx - 1);
+      } else if (inputY !== 0) {
+        if (inputY > 0) {
+          if (
+            this.gamepadUIState.currentElement === characterEndIdx &&
+            superArtP1Idx >= 0
+          ) {
+            this.moveCursor(superArtP1Idx);
+          } else if (
+            this.gamepadUIState.currentElement ===
+            section.elements.length - 1
+          ) {
+            this.moveCursor(0);
+          } else {
+            this.moveCursor(this.gamepadUIState.currentElement + 1);
+          }
+        } else {
+          if (this.gamepadUIState.currentElement === characterEndIdx) {
+            this.moveCursor(characterEndIdx - 1);
+          } else {
+            const direction = -1;
+            const numElements = section.elements.length;
+            this.moveCursor(
+              (this.gamepadUIState.currentElement + direction + numElements) %
+                numElements
+            );
+          }
+        }
+      }
+    }
   }
 
   navigateGrid(inputX, inputY, section) {
@@ -1240,9 +1130,7 @@ class StreetFighterGame {
   }
 
   navigateControls(inputX, inputY, section) {
-    const currentEl = document.querySelector(
-      section.elements[this.gamepadUIState.currentElement]
-    );
+    const currentEl = $(section.elements[this.gamepadUIState.currentElement]);
 
     if (
       currentEl &&
@@ -1308,17 +1196,47 @@ class StreetFighterGame {
 
     const elementSelector =
       section.elements[this.gamepadUIState.currentElement];
-    const element = document.querySelector(elementSelector);
+    const element = $(elementSelector);
 
     if (element) {
-      element.click();
-      AudioManager.playSound(this.soundFiles.CLICK);
+      if (element.tagName === "SELECT") {
+        const currentIndex = element.selectedIndex;
+        const nextIndex = (currentIndex + 1) % element.options.length;
+        element.selectedIndex = nextIndex;
+        element.dispatchEvent(new Event("change"));
+        AudioManager.playSound(SOUND_KEYS.CLICK);
+      } else {
+        element.click();
+        AudioManager.playSound(SOUND_KEYS.CLICK);
+      }
     }
   }
 
   updateGamepadHover() {
-    document.querySelectorAll(".gamepad-hover").forEach((el) => {
+    $$(".gamepad-hover").forEach((el) => {
       el.classList.remove("gamepad-hover");
+    });
+
+    ["p1", "p2"].forEach((player) => {
+      const selectedChar = this.characterGrid[player].character;
+      const previewBox = byId(`${player}-selected-portrait`);
+      const previewImg = previewBox?.querySelector("img");
+      const nameEl = byId(`${player}-selected-name`);
+
+      if (selectedChar) {
+        if (previewImg) {
+          previewImg.src = `/portraits/${selectedChar.toLowerCase()}.png`;
+          previewImg.classList.remove("hidden", "opacity-80");
+          previewImg.classList.add("opacity-100", "object-contain");
+        }
+        if (nameEl) nameEl.textContent = selectedChar;
+      } else {
+        if (previewImg) {
+          previewImg.classList.add("hidden");
+          previewImg.classList.remove("opacity-80", "opacity-100");
+        }
+        if (nameEl) nameEl.textContent = "-";
+      }
     });
 
     if (!GamepadManager.isConnected()) {
@@ -1328,19 +1246,35 @@ class StreetFighterGame {
     const section =
       this.gamepadUIState.sections[this.gamepadUIState.currentSection];
     if (section && section.elements[this.gamepadUIState.currentElement]) {
-      const element = document.querySelector(
-        section.elements[this.gamepadUIState.currentElement]
-      );
+      const element = $(section.elements[this.gamepadUIState.currentElement]);
       if (element) {
         element.classList.add("gamepad-hover");
         element.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+        if (element.dataset.character && section.type === "grid") {
+          const player = this.characterGrid.activePlayer;
+          const previewBox = byId(`${player}-selected-portrait`);
+          const previewImg = previewBox?.querySelector("img");
+          const character = element.dataset.character;
+
+          if (
+            previewImg &&
+            this.characterGrid[player].character !== character
+          ) {
+            previewImg.src = `/portraits/${character.toLowerCase()}.png`;
+            previewImg.classList.remove("hidden", "opacity-100");
+            previewImg.classList.add("opacity-80", "object-contain");
+            const nameEl = byId(`${player}-selected-name`);
+            if (nameEl) nameEl.textContent = character;
+          }
+        }
       }
     }
   }
 
   getCurrentScreen() {
     for (const [, screenId] of Object.entries(this.screens)) {
-      const el = document.getElementById(`${screenId}-screen`);
+      const el = byId(`${screenId}-screen`);
       if (el && !el.classList.contains("hidden")) {
         return screenId;
       }
@@ -1403,57 +1337,25 @@ class StreetFighterGame {
       action = this.actions.DOWN;
     }
 
-    WebSocketManager.send("player_action", { action });
-
-    if (action !== this.actions.NO_MOVE) {
-      this.inputHistory.push({ action, time: Date.now() });
-
-      if (this.inputHistory.length > this.maxInputHistory) {
-        this.inputHistory.shift();
-      }
-
-      const detectedMove = this.detectExtra();
-      if (detectedMove) {
-        WebSocketManager.send("player_action", {
-          action: detectedMove.type === "super_art" ? 18 : 19,
-          [detectedMove.type === "super_art" ? "super_art" : "combo"]:
-            detectedMove.name,
-        });
-      }
-    }
+    this.handleActionFromInput(action);
   }
-
-  // start game
 
   startGame() {
     const { p1, p2 } = this.characterGrid;
 
-    if (!p1.selected || !p2.selected) {
-      if (this.gameState.humanVsLlm) {
-        alert(
-          "Both you and the LLM must have characters selected before starting!"
-        );
-      } else {
-        alert(
-          "Both LLM 1 and LLM 2 must have characters selected before starting!"
-        );
-      }
-      return;
-    }
-
     Object.assign(this.gameState.player1, {
       character: p1.character,
       outfit: p1.outfit,
-      superArt: parseInt(document.getElementById("super-art-select-p1").value),
+      superArt: parseInt(byId("super-art-select-p1").value),
     });
 
     Object.assign(this.gameState.player2, {
       character: p2.character,
       outfit: p2.outfit,
-      superArt: parseInt(document.getElementById("super-art-select-p2").value),
+      superArt: parseInt(byId("super-art-select-p2").value),
     });
 
-    AudioManager.play(this.soundFiles.START, {
+    AudioManager.play(SOUND_KEYS.START, {
       volume: this.startSoundVolume,
       trackAs: "effect",
     });
@@ -1461,8 +1363,7 @@ class StreetFighterGame {
     setTimeout(() => {
       this.resetGameState();
       this.showScreen(this.screens.LOADING);
-      document.getElementById("loading-status").textContent =
-        "Starting game...";
+      setText("loading-status", "Starting game...");
       WebSocketManager.send("start_game", {
         humanVsLlm: this.gameState.humanVsLlm,
         player1: this.gameState.player1,
@@ -1471,6 +1372,33 @@ class StreetFighterGame {
       });
     }, 10); //  delay to allow sound to play first
   }
+
+  handleActionFromInput(action) {
+    WebSocketManager.send("player_action", { action });
+
+    if (action === this.actions.NO_MOVE) return;
+
+    this.inputHistory.push({ action, time: Date.now() });
+
+    if (this.inputHistory.length > this.maxInputHistory) {
+      this.inputHistory.shift();
+    }
+
+    const { match, history } = MovesEngine.detectExtra(
+      this.inputHistory,
+      this.comboTimeout,
+      this.movesByLength
+    );
+    this.inputHistory = history;
+    if (match) {
+      WebSocketManager.send("player_action", {
+        action: match.type === "super_art" ? 18 : 19,
+        [match.type === "super_art" ? "super_art" : "combo"]: match.name,
+      });
+    }
+  }
+
+  // ws
 
   resetGameState() {
     this.gameState.loaded = false;
@@ -1482,19 +1410,17 @@ class StreetFighterGame {
     this.keyState = {};
     this.inputHistory = [];
 
-    const status = document.getElementById("canvas-loading-status");
+    const status = byId("canvas-loading-status");
     status.textContent = "Loading game...";
 
-    const overlay = document.getElementById("canvas-loading-overlay");
+    const overlay = byId("canvas-loading-overlay");
     overlay.classList.remove("hidden");
 
-    const canvas = document.getElementById("game-canvas");
+    const canvas = byId("game-canvas");
     canvas.classList.add("hidden");
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
-
-  // init ws
 
   async handleWebSocketMessage(event) {
     if (event.data instanceof Blob) {
@@ -1511,12 +1437,12 @@ class StreetFighterGame {
   }
 
   handleFrameData(blob) {
-    const overlay = document.getElementById("canvas-loading-overlay");
+    const overlay = byId("canvas-loading-overlay");
 
     if (!this.gameState.firstFrameReceived) {
       this.gameState.firstFrameReceived = true;
       overlay.classList.add("hidden");
-      const canvas = document.getElementById("game-canvas");
+      const canvas = byId("game-canvas");
       canvas.classList.remove("hidden");
     }
 
@@ -1539,7 +1465,7 @@ class StreetFighterGame {
       }
     }
 
-    const canvas = document.getElementById("game-canvas");
+    const canvas = byId("game-canvas");
     const ctx = canvas.getContext("2d");
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -1554,7 +1480,7 @@ class StreetFighterGame {
 
   handleGameState(data) {
     console.log("Game state:", data.status);
-    const startButton = document.getElementById("start-game-btn");
+    const startButton = byId("start-game-btn");
 
     if (!this.gameState.serverReady) {
       this.gameState.serverReady = true;
@@ -1566,8 +1492,7 @@ class StreetFighterGame {
 
     switch (data.status) {
       case "initializing":
-        document.getElementById("loading-status").textContent =
-          "Starting game...";
+        setText("loading-status", "Starting game...");
         break;
       case "running":
         this.gameState.loaded = true;
@@ -1588,14 +1513,21 @@ class StreetFighterGame {
         const winner = data.winner || "Unknown";
         let displayWinner = winner;
 
-        document.getElementById(
-          "winner-text"
-        ).textContent = `Winner: ${displayWinner}`;
+        const winnerEl = byId("winner-text");
+        winnerEl.textContent = `Winner: ${displayWinner}`;
+        winnerEl.classList.toggle(
+          "text-sf-red",
+          winner === "YOU" || winner === "LLM 1" || winner === "P1"
+        );
+        winnerEl.classList.toggle(
+          "text-sf-blue",
+          winner === "LLM" || winner === "LLM 2" || winner === "P2"
+        );
 
         const winSound =
           !this.gameState.humanVsLlm || winner === "YOU"
-            ? this.soundFiles.WIN
-            : this.soundFiles.LOSE;
+            ? SOUND_KEYS.WIN
+            : SOUND_KEYS.LOSE;
 
         AudioManager.play(winSound, {
           volume: this.winLoseSoundVolume,
@@ -1606,7 +1538,7 @@ class StreetFighterGame {
                 .getElementById("win-screen")
                 .classList.contains("hidden")
             ) {
-              AudioManager.play(this.soundFiles.CONTINUE, {
+              AudioManager.play(SOUND_KEYS.CONTINUE, {
                 volume: this.selectVolume,
                 loop: true,
                 trackAs: "select",
@@ -1631,12 +1563,12 @@ class StreetFighterGame {
     this.gameState.readyToHideTransition = false;
 
     AudioManager.stopTrack("select");
-    AudioManager.play(this.soundFiles.TRANSITION, {
+    AudioManager.play(SOUND_KEYS.TRANSITION, {
       volume: this.transitionSoundVolume,
       trackAs: "transition",
     });
 
-    const status = document.getElementById("canvas-loading-status");
+    const status = byId("canvas-loading-status");
 
     let message = "";
     if (data.transition_type === "round") {
@@ -1646,13 +1578,13 @@ class StreetFighterGame {
     }
     status.textContent = message;
 
-    const overlay = document.getElementById("canvas-loading-overlay");
+    const overlay = byId("canvas-loading-overlay");
     overlay.classList.remove("hidden");
 
-    const canvas = document.getElementById("game-canvas");
+    const canvas = byId("game-canvas");
     canvas.classList.add("hidden");
 
-    const header = document.getElementById("game-header");
+    const header = byId("game-header");
     if (header) {
       header.classList.remove("hidden");
     }
@@ -1673,7 +1605,7 @@ class StreetFighterGame {
 
     if (
       this.gameState.loaded &&
-      !document.getElementById("game-screen").classList.contains("hidden")
+      !byId("game-screen").classList.contains("hidden")
     ) {
       AudioManager.play(this.gameState.player1.character, {
         volume: this.gameplayMusicVolume,
@@ -1681,80 +1613,17 @@ class StreetFighterGame {
         trackAs: "select",
       });
 
-      const header = document.getElementById("game-header");
+      const header = byId("game-header");
       if (header) {
         header.classList.add("hidden");
       }
     }
 
-    const canvas = document.getElementById("game-canvas");
+    const canvas = byId("game-canvas");
     canvas.classList.remove("hidden");
 
-    const overlay = document.getElementById("canvas-loading-overlay");
+    const overlay = byId("canvas-loading-overlay");
     overlay.classList.add("hidden");
-  }
-
-  // helper fns
-  // input handling
-
-  preprocessMoves() {
-    this.movesByLength = {};
-
-    if (!this.currentCharacter || !this.specialMoves || !this.combos) return;
-
-    const characterMoves = this.specialMoves[this.currentCharacter];
-    const characterCombos = this.combos[this.currentCharacter];
-    const selectedSuperArt = this.gameState.player1.superArt;
-
-    if (characterMoves) {
-      this.addMovesToLength(characterMoves, selectedSuperArt, "super_art");
-    }
-
-    if (characterCombos) {
-      for (const [comboName, comboData] of Object.entries(characterCombos)) {
-        const seq = comboData[this.playerDirection];
-        this.addMoveToLength(seq, "combo", comboName);
-      }
-    }
-
-    this.sortMovesByPriority();
-  }
-
-  addMovesToLength(moves, selectedSuperArt, moveType) {
-    for (const [moveKey, moveData] of Object.entries(moves)) {
-      if (this.isSuperArtMove(moveKey, selectedSuperArt)) {
-        const seq = moveData[this.playerDirection];
-        this.addMoveToLength(seq, moveType, moveKey);
-      }
-    }
-  }
-
-  isSuperArtMove(moveKey, selectedSuperArt) {
-    return (
-      moveKey.startsWith(`${selectedSuperArt} `) ||
-      (moveKey.startsWith("Max") &&
-        (moveKey.startsWith(`Max-${selectedSuperArt} `) ||
-          moveKey.startsWith("Max ")))
-    );
-  }
-
-  addMoveToLength(sequence, type, name) {
-    if (!this.movesByLength[sequence.length]) {
-      this.movesByLength[sequence.length] = [];
-    }
-    this.movesByLength[sequence.length].push({ type, name, sequence });
-  }
-
-  sortMovesByPriority() {
-    for (const length in this.movesByLength) {
-      this.movesByLength[length].sort((a, b) =>
-        a.type === "super_art" && b.type === "combo"
-          ? -1
-          : a.type === "combo" && b.type === "super_art"
-          ? 1
-          : 0
-      );
-    }
   }
 
   getActionFromKeys() {
@@ -1798,55 +1667,11 @@ class StreetFighterGame {
     return this.actions.NO_MOVE;
   }
 
-  detectExtra() {
-    const currentTime = Date.now();
-
-    this.inputHistory = this.inputHistory.filter(
-      (input) => currentTime - input.time <= this.comboTimeout
-    );
-
-    if (this.inputHistory.length < 2) return null;
-
-    for (let len = this.inputHistory.length; len >= 2; len--) {
-      const match = this.findMoveMatch(len);
-      if (match) {
-        this.inputHistory = [];
-        return match;
-      }
-    }
-
-    return null;
-  }
-
-  findMoveMatch(sequenceLength) {
-    const moves = this.movesByLength[sequenceLength];
-    if (!moves) return null;
-
-    const startIndex = this.inputHistory.length - sequenceLength;
-
-    for (const move of moves) {
-      if (this.isSequenceMatch(move.sequence, startIndex)) {
-        return { type: move.type, name: move.name };
-      }
-    }
-
-    return null;
-  }
-
-  isSequenceMatch(sequence, startIndex) {
-    for (let i = 0; i < sequence.length; i++) {
-      if (this.inputHistory[startIndex + i].action !== sequence[i]) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  // ui
+  // misc
 
   showScreen(screenId) {
     Object.values(this.screens).forEach((screen) => {
-      const el = document.getElementById(`${screen}-screen`);
+      const el = byId(`${screen}-screen`);
       if (el) {
         el.classList.toggle("hidden", screen !== screenId);
       }
@@ -1855,7 +1680,7 @@ class StreetFighterGame {
     const isLoading = screenId === this.screens.LOADING;
     const hideAll = isLoading && !this.assetsLoaded;
 
-    const header = document.getElementById("game-header");
+    const header = byId("game-header");
     if (header) {
       const hideHeader =
         screenId === this.screens.SPLASH ||
@@ -1864,38 +1689,50 @@ class StreetFighterGame {
       header.classList.toggle("hidden", hideHeader);
     }
 
-    const playerToggle = document.getElementById("player-toggle");
+    const isGameplay = screenId === this.screens.GAME;
+
+    const isMinimalScreen =
+      screenId === this.screens.WIN ||
+      screenId === this.screens.ERROR ||
+      (screenId === this.screens.LOADING && this.assetsLoaded);
+
+    const playerToggle = byId("player-toggle");
     if (playerToggle) {
       const showPlayerToggle = screenId === this.screens.SETTINGS;
-      playerToggle.classList.toggle("hidden", !showPlayerToggle);
+      playerToggle.classList.toggle("hidden", !showPlayerToggle || isGameplay);
     }
 
-    const muteButton = document.getElementById("mute-toggle");
+    const muteButton = byId("mute-toggle");
     if (muteButton) {
-      muteButton.classList.toggle("hidden", hideAll);
+      const hideMute =
+        hideAll ||
+        (isGameplay && this.gameState.humanVsLlm) ||
+        (isMinimalScreen && this.gameState.humanVsLlm);
+      muteButton.classList.toggle("hidden", hideMute);
     }
 
-    const gamepadStatus = document.getElementById("gamepad-status");
+    const gamepadStatus = byId("gamepad-status");
     if (gamepadStatus) {
       gamepadStatus.classList.toggle("hidden", hideAll);
     }
 
-    const gamepadHelp = document.getElementById("gamepad-help");
-    if (gamepadHelp) {
-      const hideGamepadHelp =
-        !GamepadManager.isConnected() ||
-        screenId === this.screens.LOADING ||
-        screenId === this.screens.GAME;
-      gamepadHelp.classList.toggle("hidden", hideGamepadHelp);
-    }
+    this.updateHelpIconVisibility(screenId);
 
     if (screenId === this.screens.SETTINGS) {
-      AudioManager.play(this.soundFiles.SELECT, {
+      AudioManager.play(SOUND_KEYS.SELECT, {
         volume: this.selectVolume,
         loop: true,
         trackAs: "select",
       });
       AudioManager.stopTrack("winLose");
+
+      if (this.combos && this.specialMoves) {
+        const defaultCharacter = this.characterGrid.p1.character || "Ken";
+        this.currentCharacter = defaultCharacter;
+        this.updateCombosDisplay(defaultCharacter);
+        this.updateSuperArtsDisplay(defaultCharacter);
+        this.initializeOutfitGrid(defaultCharacter);
+      }
     } else {
       AudioManager.stopTrack("select");
       if (screenId !== this.screens.WIN) {
@@ -1904,7 +1741,7 @@ class StreetFighterGame {
     }
 
     if (screenId === this.screens.COIN) {
-      const coinBtn = document.getElementById("insert-coin-btn");
+      const coinBtn = byId("insert-coin-btn");
       if (coinBtn) {
         coinBtn.disabled = false;
         coinBtn.classList.remove("animate-coin-insert");
@@ -1919,39 +1756,33 @@ class StreetFighterGame {
   }
 
   showError(message) {
-    document.getElementById("error-details").textContent =
-      new Date().toLocaleString() + "\n" + message;
+    setText("error-details", new Date().toLocaleString() + "\n" + message);
     this.showScreen(this.screens.ERROR);
   }
 
-  // character move display
-
   updateControlsDisplay() {
+    const onPad = GamepadManager.isConnected();
     const controls = {
-      "movement-display": GamepadManager.isConnected()
-        ? "Left Stick / D-Pad"
-        : "WASD / Arrow Keys",
-      "lp-display": GamepadManager.isConnected() ? "A/X" : "J",
-      "mp-display": GamepadManager.isConnected() ? "B/◯" : "K",
-      "hp-display": GamepadManager.isConnected() ? "RB/R1" : "L",
-      "lk-display": GamepadManager.isConnected() ? "X/□" : "U",
-      "mk-display": GamepadManager.isConnected() ? "Y/△" : "I",
-      "hk-display": GamepadManager.isConnected() ? "LB/L1" : "O",
-      "lplk-display": GamepadManager.isConnected() ? "A/X + X/□" : "J + U",
-      "mpmk-display": GamepadManager.isConnected() ? "B/◯ + Y/△" : "K + I",
-      "hphk-display": GamepadManager.isConnected() ? "RB/R1 + LB/L1" : "L + O",
+      "movement-display": onPad ? "Left Stick / D-Pad" : "WASD / Arrow Keys",
+      "lp-display": onPad ? "A/X" : "J",
+      "mp-display": onPad ? "B/◯" : "K",
+      "hp-display": onPad ? "RB/R1" : "L",
+      "lk-display": onPad ? "X/□" : "U",
+      "mk-display": onPad ? "Y/△" : "I",
+      "hk-display": onPad ? "LB/L1" : "O",
+      "lplk-display": onPad ? "A/X + X/□" : "J + U",
+      "mpmk-display": onPad ? "B/◯ + Y/△" : "K + I",
+      "hphk-display": onPad ? "RB/R1 + LB/L1" : "L + O",
     };
 
     Object.entries(controls).forEach(([id, text]) => {
-      const element = document.getElementById(id);
-      if (element) {
-        element.textContent = text;
-      }
+      const element = byId(id);
+      if (element) element.textContent = text;
     });
   }
 
   updateCombosDisplay(character) {
-    const combosList = document.getElementById("combos-list");
+    const combosList = byId("combos-list");
 
     if (!character || !this.combos || !this.combos[character]) {
       combosList.innerHTML =
@@ -1966,14 +1797,21 @@ class StreetFighterGame {
       sequence: data[this.playerDirection],
     }));
 
-    combosList.innerHTML = this.generateMovesHTML(moves);
+    combosList.innerHTML = MovesDisplay.generateMovesHTML(
+      moves,
+      this.idxToMove,
+      GamepadManager.isConnected()
+    );
   }
 
   updateSuperArtsDisplay(character) {
-    const superArtsList = document.getElementById("super-arts-list");
-    const selectedSuperArt = document.getElementById(
-      "super-art-select-p1"
-    ).value;
+    const superArtsList = byId("super-arts-list");
+    const selectedEl = byId(
+      this.characterGrid.activePlayer === "p1"
+        ? "super-art-select-p1"
+        : "super-art-select-p2"
+    );
+    const selectedSuperArt = selectedEl ? selectedEl.value : "1";
 
     if (!character || !this.specialMoves || !this.specialMoves[character]) {
       superArtsList.innerHTML =
@@ -1987,7 +1825,7 @@ class StreetFighterGame {
     for (const [moveKey, moveData] of Object.entries(characterMoves)) {
       if (moveKey.startsWith(`${selectedSuperArt} `)) {
         moves.push({
-          name: this.getSpecialMoveDisplayName(moveKey),
+          name: MovesDisplay.getSpecialMoveDisplayName(moveKey),
           sequence: moveData[this.playerDirection],
         });
         break;
@@ -2001,60 +1839,19 @@ class StreetFighterGame {
           moveKey.startsWith("Max ")
         ) {
           moves.push({
-            name: this.getSpecialMoveDisplayName(moveKey),
+            name: MovesDisplay.getSpecialMoveDisplayName(moveKey),
             sequence: moveData[this.playerDirection],
           });
         }
       }
     }
 
-    superArtsList.innerHTML = this.generateMovesHTML(moves);
+    superArtsList.innerHTML = MovesDisplay.generateMovesHTML(
+      moves,
+      this.idxToMove,
+      GamepadManager.isConnected()
+    );
   }
-
-  generateMovesHTML(moves) {
-    const moveElements = moves
-      .map(
-        (move) => `
-            <p>${move.name}:</p>
-            <div class="flex items-center gap-2 flex-wrap justify-center mb-4">
-                ${this.getExtraElements(move.sequence)}
-            </div>
-        `
-      )
-      .join("");
-
-    return `<div class="text-center flex flex-col justify-center items-center gap-4">${moveElements}</div>`;
-  }
-
-  getExtraElements(sequence) {
-    return sequence
-      .map((action, index) => {
-        const move = this.idxToMove[action];
-        const symbol = GamepadManager.isConnected()
-          ? move.gamepadDisplay
-          : move.display;
-        const isLast = index === sequence.length - 1;
-        return `
-                <span class="control-key">${symbol}</span>
-                ${!isLast ? "<span>+</span>" : ""}
-            `;
-      })
-      .join("");
-  }
-
-  getSpecialMoveDisplayName(fullKey) {
-    if (fullKey.match(/^\d+ /)) {
-      // format: "1 Messatsu Gou Hadou" -> "Messatsu Gou Hadou"
-      return fullKey.substring(2);
-    } else if (fullKey.startsWith("Max-")) {
-      // format: "Max-1 Messatsu Gou Hadou" -> "Max Messatsu Gou Hadou"
-      const parts = fullKey.split(" ");
-      return "Max " + parts.slice(1).join(" ");
-    }
-    return fullKey;
-  }
-
-  // character/outfit display
 
   switchActivePlayer(player) {
     this.characterGrid.activePlayer = player;
@@ -2065,8 +1862,8 @@ class StreetFighterGame {
     if (selectedCharacter) {
       this.initializeOutfitGrid(selectedCharacter);
     } else {
-      const gridContainer = document.getElementById("outfit-grid");
-      const indicator = document.getElementById("outfit-player-indicator");
+      const gridContainer = byId("outfit-grid");
+      const indicator = byId("outfit-player-indicator");
 
       gridContainer.innerHTML = "";
       indicator.textContent = "Select a character to see outfits";
@@ -2075,8 +1872,8 @@ class StreetFighterGame {
   }
 
   updatePlayerBoxes() {
-    const p1Portrait = document.getElementById("p1-selected-portrait");
-    const p2Portrait = document.getElementById("p2-selected-portrait");
+    const p1Portrait = byId("p1-selected-portrait");
+    const p2Portrait = byId("p2-selected-portrait");
     const activeColor = this.getPlayerColor(this.characterGrid.activePlayer);
 
     p1Portrait.className = `portrait-box border-${
@@ -2088,7 +1885,7 @@ class StreetFighterGame {
   }
 
   updateCharacterBorders() {
-    const portraits = document.querySelectorAll("#character-grid > div");
+    const portraits = $$("#character-grid > div");
 
     portraits.forEach((el) => {
       el.classList.remove("border-sf-red", "border-sf-blue");
@@ -2111,7 +1908,7 @@ class StreetFighterGame {
   selectCharacter(player, character) {
     if (!character) return;
 
-    const portraits = document.querySelectorAll("#character-grid > div");
+    const portraits = $$("#character-grid > div");
     const selectedPortrait = Array.from(portraits).find(
       (p) => p.dataset.character === character
     );
@@ -2130,7 +1927,13 @@ class StreetFighterGame {
         this.currentCharacter = character;
         this.updateCombosDisplay(character);
         this.updateSuperArtsDisplay(character);
-        this.preprocessMoves();
+        this.movesByLength = MovesEngine.preprocessMoves(
+          this.currentCharacter,
+          this.specialMoves,
+          this.combos,
+          this.playerDirection,
+          this.gameState.player1.superArt
+        );
       }
 
       this.updatePlayerPortrait(player, character);
@@ -2141,11 +1944,9 @@ class StreetFighterGame {
   }
 
   updatePlayerPortrait(player, character) {
-    const portraitImg = document.querySelector(
-      `#${player}-selected-portrait img`
-    );
-    const nameEl = document.getElementById(`${player}-selected-name`);
-    const portraitBox = document.getElementById(`${player}-selected-portrait`);
+    const portraitImg = $(`#${player}-selected-portrait img`);
+    const nameEl = byId(`${player}-selected-name`);
+    const portraitBox = byId(`${player}-selected-portrait`);
 
     const existingPlaceholder = portraitBox.querySelector(
       ".portrait-placeholder"
@@ -2159,7 +1960,8 @@ class StreetFighterGame {
 
     portraitImg.classList.add("opacity-0");
     portraitImg.src = `/portraits/${character.toLowerCase()}.png`;
-    portraitImg.classList.remove("hidden");
+    portraitImg.classList.remove("hidden", "opacity-80");
+    portraitImg.classList.add("object-contain", "opacity-100");
     nameEl.textContent = character;
 
     const loadHandler = () => {
@@ -2189,7 +1991,7 @@ class StreetFighterGame {
   selectOutfit(player, outfitIndex) {
     const outfitNum = outfitIndex + 1; // 1-based for display
 
-    const outfits = document.querySelectorAll("#outfit-grid > div");
+    const outfits = $$("#outfit-grid > div");
     const selectedOutfit = outfits[outfitIndex];
     if (!selectedOutfit) return;
 
@@ -2203,7 +2005,7 @@ class StreetFighterGame {
   }
 
   updateOutfitBorders() {
-    const outfits = document.querySelectorAll("#outfit-grid > div");
+    const outfits = $$("#outfit-grid > div");
     const activePlayer = this.characterGrid.activePlayer;
     const selectedOutfit = this.characterGrid[activePlayer].outfit;
     const borderColor = `border-${this.getPlayerColor(activePlayer)}`;
@@ -2220,8 +2022,8 @@ class StreetFighterGame {
   }
 
   initializeOutfitGrid(character) {
-    const gridContainer = document.getElementById("outfit-grid");
-    const indicator = document.getElementById("outfit-player-indicator");
+    const gridContainer = byId("outfit-grid");
+    const indicator = byId("outfit-player-indicator");
 
     if (!character) {
       gridContainer.innerHTML = "";
@@ -2244,7 +2046,12 @@ class StreetFighterGame {
     gridContainer.innerHTML = "";
 
     for (let i = 0; i < this.numOutfitsPerCharacter; i++) {
-      const outfit = this.createOutfitBox(character, i);
+      const outfit = UIFactory.createOutfitBox(
+        character,
+        i,
+        this,
+        (player, index) => this.selectOutfit(player, index)
+      );
       gridContainer.appendChild(outfit);
     }
 
@@ -2258,32 +2065,36 @@ class StreetFighterGame {
   resetSelections() {
     this.characterGrid = {
       activePlayer: "p1",
-      p1: { selected: false, character: null, outfit: 1 },
-      p2: { selected: false, character: null, outfit: 1 },
+      p1: { selected: false, character: "Ken", outfit: 1 },
+      p2: { selected: false, character: "Ryu", outfit: 1 },
     };
 
     this.currentCharacter = null;
 
-    const p1Img = document.querySelector("#p1-selected-portrait img");
-    const p2Img = document.querySelector("#p2-selected-portrait img");
+    const p1Img = $("#p1-selected-portrait img");
+    const p2Img = $("#p2-selected-portrait img");
 
     p1Img.src = "";
     p1Img.classList.add("hidden");
     p2Img.src = "";
     p2Img.classList.add("hidden");
 
-    document.getElementById("p1-selected-name").textContent = "-";
-    document.getElementById("p2-selected-name").textContent = "-";
+    setText("p1-selected-name", "-");
+    setText("p2-selected-name", "-");
 
     this.gameState.player1 = { character: null, outfit: 1, superArt: 1 };
     this.gameState.player2 = { character: null, outfit: 1, superArt: 1 };
 
-    document.getElementById("super-art-select-p1").value = "1";
-    document.getElementById("super-art-select-p2").value = "1";
+    const sa1 = byId("super-art-select-p1");
+    if (sa1) sa1.value = "1";
+    const sa2 = byId("super-art-select-p2");
+    if (sa2) sa2.value = "1";
 
-    document.getElementById("combos-list").innerHTML = "";
-    document.getElementById("super-arts-list").innerHTML = "";
+    byId("combos-list").innerHTML = "";
+    byId("super-arts-list").innerHTML = "";
 
+    this.selectCharacter("p1", "Ken");
+    this.selectCharacter("p2", "Ryu");
     this.updatePlayerBoxes();
     this.updateCharacterBorders();
 
@@ -2291,145 +2102,43 @@ class StreetFighterGame {
     this.updateGamepadSections(true);
   }
 
-  // ui element creation
+  updateHelpIconVisibility(screenId = null) {
+    const controlsHelp = byId("controls-help");
+    if (!controlsHelp) return;
 
-  createSelectable(type, params) {
-    const { character, index, imageSrc, imageAlt, labelText, onClick } = params;
+    const currentScreen = screenId || this.getCurrentScreen();
 
-    const isPortrait = type === "portrait";
-    const element = this.createImageBox({
-      className: isPortrait
-        ? "relative w-full aspect-square bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200"
-        : "relative size-24 bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200 mx-auto",
-      imageSrc,
-      imageAlt,
-      imageClassName: isPortrait
-        ? "relative size-full object-contain rounded-lg"
-        : "relative size-full object-contain bg-sf-dark rounded-lg",
-    });
-
-    if (isPortrait) {
-      element.dataset.character = character;
-      element.dataset.index = index;
-    } else {
-      element.dataset.outfit = index;
+    if (!this.gameState.humanVsLlm) {
+      controlsHelp.classList.add("hidden");
+      return;
     }
 
-    const label = document.createElement("div");
-    label.className =
-      "absolute bottom-0 left-0 right-0 p-1 text-center font-bold text-sf-green bg-sf-darker/80 backdrop-blur-sm rounded-b-lg";
-    label.textContent = labelText;
-    element.appendChild(label);
+    const isLoading = currentScreen === this.screens.LOADING;
+    const hideAll = isLoading && !this.assetsLoaded;
 
-    element.addEventListener("mouseenter", () => {
-      if (
-        !element.classList.contains("border-sf-red") &&
-        !element.classList.contains("border-sf-blue")
-      ) {
-        element.classList.remove("border-transparent");
-        const currentBorderColor = `border-${this.getPlayerColor(
-          this.characterGrid.activePlayer
-        )}`;
-        element.classList.add(currentBorderColor);
-        AudioManager.playSound(this.soundFiles.HOVER);
-      }
-    });
+    const isEarlyScreen =
+      currentScreen === this.screens.COIN ||
+      currentScreen === this.screens.SPLASH;
 
-    element.addEventListener("mouseleave", () => {
-      const isSelected = isPortrait
-        ? this.characterGrid[this.characterGrid.activePlayer].character ===
-          character
-        : this.characterGrid[this.characterGrid.activePlayer].outfit ===
-          index + 1;
+    const isGameplay = currentScreen === this.screens.GAME;
 
-      if (!isSelected) {
-        element.classList.remove("border-sf-red", "border-sf-blue");
-        element.classList.add("border-transparent");
-      }
+    const isMinimalScreen =
+      currentScreen === this.screens.WIN ||
+      currentScreen === this.screens.ERROR ||
+      (currentScreen === this.screens.LOADING && this.assetsLoaded);
 
-      if (isPortrait) this.updateCharacterBorders();
-    });
-
-    element.addEventListener("click", () => {
-      onClick();
-      AudioManager.playSound(this.soundFiles.CLICK);
-    });
-
-    return element;
-  }
-
-  createOutfitBox(character, index) {
-    const outfit = this.createSelectable("outfit", {
-      character,
-      index,
-      imageSrc: `/outfits/${character}/${index}.png`,
-      imageAlt: `Outfit ${index + 1}`,
-      labelText: `${index + 1}`,
-      onClick: () => this.selectOutfit(this.characterGrid.activePlayer, index),
-    });
-
-    if (!outfit.id) {
-      outfit.id = `outfit-${character.toLowerCase()}-${index}`;
-    }
-
-    return outfit;
-  }
-
-  createPortrait(character, index) {
-    const portrait = this.createSelectable("portrait", {
-      character,
-      index,
-      imageSrc: `/portraits/${character.toLowerCase()}.png`,
-      imageAlt: character,
-      labelText: character,
-      onClick: () =>
-        this.selectCharacter(this.characterGrid.activePlayer, character),
-    });
-
-    if (!portrait.id) {
-      portrait.id = `character-portrait-${character.toLowerCase()}`;
-    }
-
-    return portrait;
-  }
-
-  createImageBox({ className, imageSrc, imageAlt, imageClassName }) {
-    const box = document.createElement("div");
-    box.className = className;
-
-    const placeholder = document.createElement("div");
-    placeholder.className = "absolute inset-0 loading-placeholder rounded-lg";
-    box.appendChild(placeholder);
-
-    const img = document.createElement("img");
-    img.src = imageSrc;
-    img.alt = imageAlt;
-    img.className =
-      imageClassName + " opacity-0 transition-opacity duration-300";
-
-    img.addEventListener(
-      "load",
-      () => {
-        img.classList.remove("opacity-0");
-        img.classList.add("opacity-100");
-        placeholder.remove();
-      },
-      { once: true }
+    controlsHelp.classList.toggle(
+      "hidden",
+      hideAll || isEarlyScreen || isGameplay || isMinimalScreen
     );
+  }
 
-    img.addEventListener(
-      "error",
-      () => {
-        img.classList.remove("opacity-0");
-        img.classList.add("opacity-100");
-        placeholder.innerHTML =
-          '<div class="flex items-center justify-center h-full text-sf-red">?</div>';
-      },
-      { once: true }
-    );
-
-    box.appendChild(img);
-    return box;
+  updateGamepadNavVisibility() {
+    const gamepadNavSection = byId("gamepad-nav-section");
+    if (gamepadNavSection) {
+      const showGamepadNav = GamepadManager.isConnected();
+      gamepadNavSection.classList.toggle("hidden", !showGamepadNav);
+    }
   }
 
   cleanup() {
