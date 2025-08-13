@@ -107,7 +107,7 @@ image = (
     )
 )
 
-max_inputs = 1000
+max_inputs = 1
 
 
 @app.cls(
@@ -244,6 +244,14 @@ class Web:
                 self.player1_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
 
+                self.prev_player1_state = None
+                self.prev_player2_state = None
+                self.prev_game_info = None
+
+                self.player1_recent_move_names = []
+                self.player2_recent_move_names = []
+                self.recent_move_limit = 20
+
                 # communication
 
                 self.outbound_message_queue = asyncio.Queue()
@@ -330,6 +338,8 @@ class Web:
                 self.info = None
                 self.player1_next_moves = []
                 self.player2_next_moves = []
+                self.player1_recent_move_names = []
+                self.player2_recent_move_names = []
                 self.player1_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
                 self.in_transition = False
@@ -406,18 +416,21 @@ class Web:
                     while not session.stop_event.is_set():
                         await asyncio.sleep(0.001)
 
-                        if not session.game_running or session.observation is None:
+                        if (
+                            not session.game_running
+                            or session.observation is None
+                            or session.in_transition
+                        ):
                             continue
 
                         if (
-                            "stage" not in session.observation
-                            or session.observation["stage"] is None
+                            "timer" not in session.observation
+                            or session.observation["timer"] is None
                         ):  # in case env was just reset
                             continue
 
                         # store values to avoid race condition
                         # TODO: remove since condition above should be enough
-                        stage = session.observation["stage"][0]
                         timer = session.observation["timer"][0]
                         frame = session.observation["frame"]
 
@@ -442,7 +455,6 @@ class Web:
                         )
 
                         game_info = GameInfo(
-                            stage=stage,
                             timer=timer,
                             boxes=boxes,
                             class_ids=class_ids,
@@ -473,9 +485,17 @@ class Web:
                         )
 
                         if not session.game_settings.get("humanVsLlm", True):
-                            messages_p1 = create_messages(game_info, player2, player1)
+                            messages_p1 = create_messages(
+                                game_info,
+                                player2,
+                                player1,
+                                session.prev_game_info,
+                                session.prev_player2_state,
+                                session.prev_player1_state,
+                                session.player1_recent_move_names,
+                            )
 
-                            moves_p1 = await self.llm.chat.remote.aio(
+                            moves_p1, move_name_p1 = await self.llm.chat.remote.aio(
                                 messages_p1,
                                 p1_character,
                                 p1_settings["superArt"],
@@ -483,10 +503,24 @@ class Web:
                                 obs_p1["side"],
                             )
                             session.player1_next_moves.extend(moves_p1)
+                            session.player1_recent_move_names.append(move_name_p1)
+                            if (
+                                len(session.player1_recent_move_names)
+                                > session.recent_move_limit
+                            ):
+                                session.player1_recent_move_names.pop(0)
 
-                        messages = create_messages(game_info, player1, player2)
+                        messages = create_messages(
+                            game_info,
+                            player1,
+                            player2,
+                            session.prev_game_info,
+                            session.prev_player1_state,
+                            session.prev_player2_state,
+                            session.player2_recent_move_names,
+                        )
 
-                        moves = await self.llm.chat.remote.aio(
+                        moves, move_name = await self.llm.chat.remote.aio(
                             messages,
                             p2_character,
                             p2_settings["superArt"],
@@ -494,6 +528,16 @@ class Web:
                             obs_p2["side"],
                         )
                         session.player2_next_moves.extend(moves)
+                        session.player2_recent_move_names.append(move_name)
+                        if (
+                            len(session.player2_recent_move_names)
+                            > session.recent_move_limit
+                        ):
+                            session.player2_recent_move_names.pop(0)
+
+                        session.prev_player1_state = player1
+                        session.prev_player2_state = player2
+                        session.prev_game_info = game_info
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in robot background")
@@ -527,7 +571,7 @@ class Web:
                             disable_joystick=disable_joystick,
                             render_mode="rgb_array",
                             splash_screen=False,
-                            grpc_timeout=1 * minutes,
+                            grpc_timeout=15,
                             action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
                             characters=[
                                 p1_settings["character"],
@@ -545,7 +589,7 @@ class Web:
                         try:
                             session.env = await asyncio.wait_for(
                                 asyncio.to_thread(arena.make, "sfiii3n", settings),
-                                timeout=1 * minutes,
+                                timeout=15,
                             )
                         except Exception as e:
                             print(f"Error creating DIAMBRA environment: {e}")

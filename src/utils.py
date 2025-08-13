@@ -8,6 +8,7 @@ from textwrap import dedent
 local_assets_dir = Path(__file__).parent.parent / "assets"
 region = "us-east-1"
 minutes = 60
+gb = 1024
 
 # seed
 
@@ -26,11 +27,11 @@ HEALTH_MAX = 160
 # characters
 
 CHARACTER_MAPPING = {
+    0: "Gouki",
     1: "Alex",
     2: "Chun-Li",
     3: "Dudley",
     4: "Elena",
-    0: "Gouki",
     5: "Hugo",
     6: "Ibuki",
     7: "Ken",
@@ -98,6 +99,11 @@ def mirror_moves(moves):
 def create_move_dict(moves_list):
     return {"left": moves_list, "right": mirror_moves(moves_list)}
 
+
+CLOSE_IN_MOVES = {
+    "Move Closer": create_move_dict([MOVES["Left"]] * 16),
+    "Jump Closer": create_move_dict([MOVES["Left+Up"]] * 12),
+}
 
 COMBOS = {
     "Alex": {
@@ -1685,19 +1691,19 @@ SPECIAL_MOVES = {
     },
 }
 
+# instructions
+
+
 BASE_META_INSTRUCTIONS = {
-    "Move Closer": create_move_dict([MOVES["Left"]] * 4),
-    "Move Away": create_move_dict([MOVES["Right"]] * 4),
-    "Jump Closer": create_move_dict([MOVES["Left+Up"]] * 4),
-    "Jump Away": create_move_dict([MOVES["Right+Up"]] * 4),
+    "Move Away": create_move_dict([MOVES["Right"]] * 16),
+    "Jump Away": create_move_dict([MOVES["Right+Up"]] * 12),
+    **CLOSE_IN_MOVES,
     **{
         move_name: create_move_dict([move_nb])
         for move_name, move_nb in MOVES.items()
         if "Punch" in move_name or "Kick" in move_name
     },
 }
-
-# instructions
 
 
 def get_available_instructions_for_character(
@@ -1744,44 +1750,36 @@ class PlayerState:
 
 @dataclass
 class GameInfo:
-    stage: int
     timer: int
     boxes: list
     class_ids: list
 
 
-def create_messages(
-    game_info: GameInfo,
-    player1: PlayerState,
-    player2: PlayerState,
-):
-    # game info
-    game_info_prompt = f"Stage: {game_info.stage}, Timer: {game_info.timer}, Your character: {player2.character}, Opponent character: {player1.character}"
-    game_info_prompt += f", Best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds"
+def assign_boxes(
+    p1_char: str,
+    p1_side: int,
+    p2_char: str,
+    boxes: list[list[int]],
+    class_ids: list[int],
+) -> tuple[list[int] | None, list[int] | None]:
+    p1_box = None
+    p2_box = None
 
-    # position
-    position_prompt = f"Arena width: {X_SIZE}, height: {Y_SIZE}. "
+    p1_char_id = CHARACTER_TO_ID[p1_char]
+    p2_char_id = CHARACTER_TO_ID[p2_char]
 
-    player1_box = None
-    player2_box = None
-
-    player1_char_id = CHARACTER_TO_ID[player1.character]
-    player2_char_id = CHARACTER_TO_ID[player2.character]
-
-    if player1_char_id != player2_char_id:  # characters are different
-        for i, class_id in enumerate(game_info.class_ids):
+    if p1_char_id != p2_char_id:  # characters are different
+        for i, class_id in enumerate(class_ids):
             if class_id == -1:
                 continue
-            if class_id == player1_char_id and i < len(game_info.boxes):
-                player1_box = game_info.boxes[i]
-            elif class_id == player2_char_id and i < len(game_info.boxes):
-                player2_box = game_info.boxes[i]
+            if class_id == p1_char_id and i < len(boxes):
+                p1_box = boxes[i]
+            elif class_id == p2_char_id and i < len(boxes):
+                p2_box = boxes[i]
     else:  # characters are the same
         valid_boxes = [
             (i, box)
-            for i, (class_id, box) in enumerate(
-                zip(game_info.class_ids, game_info.boxes)
-            )
+            for i, (class_id, box) in enumerate(zip(class_ids, boxes))
             if class_id != -1
         ]
         if len(valid_boxes) == 2:  # two characters detected
@@ -1789,80 +1787,157 @@ def create_messages(
             x_center_0 = (box0[0] + box0[2]) / 2
             x_center_1 = (box1[0] + box1[2]) / 2
 
-            if player1.side == 0:
+            if p1_side == 0:
                 if x_center_0 < x_center_1:
-                    player1_box = box0
-                    player2_box = box1
+                    p1_box = box0
+                    p2_box = box1
                 else:
-                    player1_box = box1
-                    player2_box = box0
+                    p1_box = box1
+                    p2_box = box0
             else:
                 if x_center_0 > x_center_1:
-                    player1_box = box0
-                    player2_box = box1
+                    p1_box = box0
+                    p2_box = box1
                 else:
-                    player1_box = box1
-                    player2_box = box0
+                    p1_box = box1
+                    p2_box = box0
         elif len(valid_boxes) == 1:  # only one character detected
             _, box = valid_boxes[0]
             x_center = (box[0] + box[2]) / 2
             x_mid = X_SIZE / 2
 
-            if player1.side == 0:
+            if p1_side == 0:
                 if x_center < x_mid:
-                    player1_box = box
+                    p1_box = box
                 else:
-                    player2_box = box
+                    p2_box = box
             else:
                 if x_center > x_mid:
-                    player1_box = box
+                    p1_box = box
                 else:
-                    player2_box = box
+                    p2_box = box
 
-    if player2_box is not None:
-        player2_x_center = (player2_box[0] + player2_box[2]) / 2
-        player2_y_center = (player2_box[1] + player2_box[3]) / 2
-        position_prompt += (
-            f"You are at position ({int(player2_x_center)}, {int(player2_y_center)}). "
+    return p1_box, p2_box
+
+
+def create_messages(
+    game_info: GameInfo,
+    player1: PlayerState,
+    player2: PlayerState,
+    prev_game_info: GameInfo | None = None,
+    prev_player1: PlayerState | None = None,
+    prev_player2: PlayerState | None = None,
+    recent_moves: list[str] | None = None,
+) -> list[dict[str, str]]:
+    past_info_available = (
+        prev_game_info is not None
+        and prev_player1 is not None
+        and prev_player2 is not None
+        and recent_moves is not None
+    )
+
+    # game info
+    game_info_prompt = f"Timer: {game_info.timer}, your character: {player2.character}, opponent character: {player1.character}, best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds"
+
+    # position
+    p1_box, p2_box = assign_boxes(
+        player1.character,
+        player1.side,
+        player2.character,
+        game_info.boxes,
+        game_info.class_ids,
+    )
+    distance = None
+    position_prompt = ""
+    if p1_box is not None and p2_box is not None:
+        p2_x_center = (p2_box[0] + p2_box[2]) / 2
+        p1_x_center = (p1_box[0] + p1_box[2]) / 2
+        dx = abs(p1_x_center - p2_x_center)
+        distance = dx / float(X_SIZE)
+    if distance is not None:
+        if distance > 0.1:
+            position_prompt = "You are far away from your opponent. Move closer."
+        else:
+            position_prompt = "You are close to your opponent. Attack!"
+    if past_info_available:
+        prev_p1_box, prev_p2_box = assign_boxes(
+            prev_player1.character,
+            prev_player1.side,
+            prev_player2.character,
+            prev_game_info.boxes,
+            prev_game_info.class_ids,
         )
-    else:
-        position_prompt += "Your position is unknown. "
+        p2_prev_x = (prev_p2_box[0] + prev_p2_box[2]) / 2
+        p2_curr_x = (p2_box[0] + p2_box[2]) / 2
+        p2_movement = p2_curr_x - p2_prev_x
 
-    if player1_box is not None:
-        player1_x_center = (player1_box[0] + player1_box[2]) / 2
-        player1_y_center = (player1_box[1] + player1_box[3]) / 2
-        position_prompt += f"Your opponent is at position ({int(player1_x_center)}, {int(player1_y_center)})."
-    else:
-        position_prompt += "Your opponent's position is unknown."
+        p1_prev_x = (prev_p1_box[0] + prev_p1_box[2]) / 2
+        p1_curr_x = (p1_box[0] + p1_box[2]) / 2
+        p1_movement = p1_curr_x - p1_prev_x
+
+        if p2_movement * p1_movement < 0:  # opposite directions
+            if abs(p2_curr_x - p1_curr_x) < abs(p2_prev_x - p1_prev_x):
+                position_prompt += " You are closing distance. Keep going or attack!"
+            else:
+                position_prompt += " Distance is increasing. Move closer."
 
     # stun
-    stun_prompt = f"Stun bar max: {STUN_BAR_MAX}. Your stun bar is at {player2.stun_bar}. Your opponent's stun bar is at {player1.stun_bar}."
+    stun_prompt = f"Your stun bar is at {player2.stun_bar / STUN_BAR_MAX * 100}% . Your opponent's stun bar is at {player1.stun_bar / STUN_BAR_MAX * 100}%."
     if player2.stunned:
-        stun_prompt += " You are stunned. You cannot move or attack."
+        stun_prompt += " You are stunned."
     if player1.stunned:
-        stun_prompt += " Your opponent is stunned. You can attack them."
+        stun_prompt += " Your opponent is stunned."
+    if past_info_available:
+        p2_stun_change = player2.stun_bar - prev_player2.stun_bar
+        p1_stun_change = player1.stun_bar - prev_player1.stun_bar
+        if p2_stun_change > 0:
+            stun_prompt += (
+                f" Your stun bar increased by {p2_stun_change / STUN_BAR_MAX * 100}%."
+            )
+        if p1_stun_change > 0:
+            stun_prompt += f" You inflicted {p1_stun_change / STUN_BAR_MAX * 100}% stun on your opponent."
 
     # health
-    health_prompt = f"Health max: {HEALTH_MAX}. Your health is at {player2.health}. Your opponent's health is at {player1.health}."
+    health_prompt = f"Your health is at {player2.health / HEALTH_MAX * 100}%. Your opponent's health is at {player1.health / HEALTH_MAX * 100}%."
+    if past_info_available:
+        p2_damage_taken = prev_player2.health - player2.health
+        p1_damage_taken = prev_player1.health - player1.health
+        if p2_damage_taken > 0:
+            health_prompt += (
+                f" You've taken {p2_damage_taken / HEALTH_MAX * 100}% damage."
+            )
+        if p1_damage_taken > 0:
+            health_prompt += f" You inflicted {p1_damage_taken / HEALTH_MAX * 100}% damage on your opponent."
 
-    # power
-    power_prompt = f"Super bar max: {SUPER_BAR_MAX}. Your super bar is at {player2.super_bar}. Your opponent's super bar is at {player1.super_bar}."
+    # super bar
+    power_prompt = f"Your super bar is at {player2.super_bar / SUPER_BAR_MAX * 100}%. Your opponent's super bar is at {player1.super_bar / SUPER_BAR_MAX * 100}%."
+    if past_info_available:
+        p2_super_change = player2.super_bar - prev_player2.super_bar
+        p1_super_change = player1.super_bar - prev_player1.super_bar
+        if p2_super_change > 0:
+            power_prompt += f" Your super bar increased by {p2_super_change / SUPER_BAR_MAX * 100}%."
+        if p1_super_change > 0:
+            power_prompt += f" Opponent's super bar increased by {p1_super_change / SUPER_BAR_MAX * 100}%."
 
     # moves
-    moves_prompt = "You can use the following moves:\n"
-    moves_prompt += chr(10).join(
-        "- " + move
-        for move in get_available_instructions_for_character(
-            player2.character, player2.super_art, player2.super_count
-        )
+    available_moves = get_available_instructions_for_character(
+        player2.character, player2.super_art, player2.super_count
     )
+    if past_info_available:
+        # encourage close-in moves to avoid spamming + distancing
+        filtered_recent_moves = list(set(recent_moves) - set(CLOSE_IN_MOVES.keys()))
+        available_moves = [m for m in available_moves if m not in filtered_recent_moves]
+        if not available_moves:
+            available_moves = list(CLOSE_IN_MOVES.keys())
+    moves_prompt = "You may only use the following moves:\n"
+    moves_prompt += chr(10).join("- " + move for move in available_moves)
 
     return [  # OpenAI chat format
         {
             "role": "system",
             "content": dedent(
                 f"""
-                You are the best Street Fighter III 3rd strike player in the world.
+                You are the most aggressive Street Fighter III 3rd strike player in the world.
 
                 {game_info_prompt}
                 {position_prompt}
@@ -1879,7 +1954,7 @@ def create_messages(
     ]
 
 
-def calculate_super_count(super_bar: int) -> int:
+def est_super_ct(super_bar: int) -> int:
     if super_bar == SUPER_BAR_MAX:
         return 3
     elif super_bar >= (SUPER_BAR_MAX // 3) * 2:
@@ -1890,7 +1965,9 @@ def calculate_super_count(super_bar: int) -> int:
         return 0
 
 
-def create_random_messages():  # for warmup, testing
+def create_random_messages() -> tuple[
+    list[dict[str, str]], str, int, int, int
+]:  # for warmup, testing
     import random
 
     n_detected_characters = random.randint(1, 2)
@@ -1909,11 +1986,10 @@ def create_random_messages():  # for warmup, testing
     player1_super_bar = random.randint(0, SUPER_BAR_MAX)
     player2_super_bar = random.randint(0, SUPER_BAR_MAX)
 
-    player1_super_count = calculate_super_count(player1_super_bar)
-    player2_super_count = calculate_super_count(player2_super_bar)
+    player1_super_count = est_super_ct(player1_super_bar)
+    player2_super_count = est_super_ct(player2_super_bar)
 
     game_info = GameInfo(
-        stage=random.randint(1, 3),
         timer=random.randint(0, 100),
         boxes=[
             [
@@ -1961,6 +2037,9 @@ def create_random_messages():  # for warmup, testing
         player2_super_count,
         side,
     )
+
+
+# llm post-processing
 
 
 def parse_move(character: str, move_name: str, side: int) -> list[int] | None:

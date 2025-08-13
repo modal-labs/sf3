@@ -5,6 +5,7 @@ import modal
 
 from .utils import (
     create_random_messages,
+    gb,
     get_available_instructions_for_character,
     local_assets_dir,
     # region,
@@ -39,12 +40,10 @@ vllm_image = (
     )
 )
 
-MODEL_NAME = "Qwen/Qwen3-8B"
+model_name = "Qwen/Qwen3-8B"
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
-
 vllm_cache_vol = modal.Volume.from_name("sf3-vllm-cache", create_if_missing=True)
-
 cache_path = Path("/cache")
 cache_volume = modal.Volume.from_name(f"{app.name}-train-cache", create_if_missing=True)
 
@@ -56,7 +55,7 @@ def get_latest_checkpoint_file_path():
 
     candidates = [d for d in cache_path.iterdir() if d.is_dir()]
     if not candidates:
-        return MODEL_NAME
+        return model_name
 
     candidates.sort(key=lambda d: d.name, reverse=True)
     latest_dir = candidates[0]
@@ -66,7 +65,7 @@ def get_latest_checkpoint_file_path():
         d for d in latest_dir.iterdir() if d.is_dir() and ckpt_pattern.match(d.name)
     ]
     if not ckpt_dirs:
-        return MODEL_NAME
+        return model_name
 
     ckpt_dirs.sort(key=lambda d: int(ckpt_pattern.match(d.name).group(1)), reverse=True)
     latest_ckpt = ckpt_dirs[0]
@@ -74,7 +73,10 @@ def get_latest_checkpoint_file_path():
     return str(latest_ckpt)
 
 
-MAX_INPUTS = max_num_seqs = 8
+max_inputs = max_num_seqs = 8
+gpu = "b200"
+cpu = 16
+memory = 32 * gb
 
 
 @app.cls(
@@ -84,14 +86,16 @@ MAX_INPUTS = max_num_seqs = 8
         "/root/.cache/vllm": vllm_cache_vol,
         cache_path: cache_volume,
     },
-    gpu="b200",
+    gpu=gpu,
+    cpu=cpu,
+    memory=memory,
     # region=region,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * minutes,
     timeout=24 * 60 * minutes,
 )
-@modal.concurrent(max_inputs=MAX_INPUTS)
+@modal.concurrent(max_inputs=max_inputs)
 class LLMServer:
     ckpt_path: str = modal.parameter(default="")
 
@@ -146,8 +150,7 @@ class LLMServer:
         super_art: int,
         super_count: int,
         side: int,
-        return_move_name: bool = False,  # for training
-    ) -> list[int]:
+    ) -> tuple[list[int], str]:
         from vllm.sampling_params import GuidedDecodingParams
 
         self.sampling_params.guided_decoding = GuidedDecodingParams(
@@ -163,19 +166,11 @@ class LLMServer:
         )
         move_name = outputs[0].outputs[0].text
 
-        try:
-            move_sequence = parse_move(character, move_name, side)
-            if move_sequence is not None:
-                if return_move_name:
-                    return list(move_sequence), move_name
-                else:
-                    return list(move_sequence)
-            else:
-                raise ValueError(f"Invalid move: {move_name}")
-
-        except Exception as e:
-            print(f"Error: {e}")
-            return [0], ""
+        move_sequence = parse_move(character, move_name, side)
+        if move_sequence is not None:
+            return list(move_sequence), move_name
+        print(f"Invalid move: {move_name}")
+        return [0], "No-Move"
 
 
 @app.local_entrypoint()
@@ -189,7 +184,7 @@ async def local(
     for sample_idx in range(n_samples):
         messages, character, super_art, super_count, side = create_random_messages()
         start_time = time.perf_counter()
-        moves = await llm.chat.remote.aio(
+        _, moves = await llm.chat.remote.aio(
             messages, character, super_art, super_count, side
         )
         elapsed = (time.perf_counter() - start_time) * 1000
