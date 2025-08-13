@@ -1,6 +1,6 @@
 import { byId, $, $$, setText } from "./utils.js";
 import { SOUND_KEYS, GRID } from "./constants.js";
-import { MovesEngine, MovesDisplay } from "./comboDetector.js";
+import { MovesEngine, MovesDisplay } from "./movesEngine.js";
 import { AudioManager, playHover, playClick } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { WebSocketManager } from "./webSocketManager.js";
@@ -59,8 +59,8 @@ class StreetFighterGame {
     this.playerDirection = "right";
     this.characterGrid = {
       activePlayer: "p1",
-      p1: { selected: false, character: "Ken", outfit: 1 },
-      p2: { selected: false, character: "Ryu", outfit: 1 },
+      p1: { selected: false, character: "Ryu", outfit: 1 },
+      p2: { selected: false, character: "Ken", outfit: 1 },
     };
   }
 
@@ -277,9 +277,9 @@ class StreetFighterGame {
     this.showScreen(this.screens.COIN);
     this.initializeSplashScreen();
     this.setupPlayerToggle();
+    this.initializeCharacterGrid();
     this.selectCharacter("p1", "Ken");
     this.selectCharacter("p2", "Ryu");
-    this.initializeCharacterGrid();
     this.initializeOutfitGrid(null);
     this.initializeHelpOverlay();
     this.loadExtraMovesDisplay();
@@ -955,12 +955,12 @@ class StreetFighterGame {
     const currentScreen = this.getCurrentScreen();
 
     if (currentScreen !== this.screens.SETTINGS) {
-      if (inputX !== 0) this.stepCursor(inputX);
+      if (inputY !== 0) this.stepCursor(inputY);
       return;
     }
 
     if (section.name === "top-nav") {
-      if (inputX !== 0) this.stepCursor(inputX);
+      if (inputY !== 0) this.stepCursor(inputY);
     } else if (section.special === "settings-main") {
       this.navigateSettingsMain(inputX, inputY, section);
     } else if (section.grid) {
@@ -1030,10 +1030,11 @@ class StreetFighterGame {
       }
 
       if (inputX < 0) {
-        newCol = Math.max(0, currentCol - 1);
+        const maxCol = currentRow === 1 ? 8 : cols - 1;
+        newCol = currentCol === 0 ? maxCol : currentCol - 1;
       } else if (inputX > 0) {
         const maxCol = currentRow === 1 ? 8 : cols - 1;
-        newCol = Math.min(maxCol, currentCol + 1);
+        newCol = currentCol === maxCol ? 0 : currentCol + 1;
       }
 
       const newGridIndex = newRow * cols + newCol;
@@ -1213,9 +1214,20 @@ class StreetFighterGame {
   }
 
   updateGamepadHover() {
+    const previousHovered = $(".gamepad-hover");
+    const wasCharacter = previousHovered?.dataset?.character;
+
     $$(".gamepad-hover").forEach((el) => {
       el.classList.remove("gamepad-hover");
     });
+
+    if (
+      wasCharacter &&
+      this.characterGrid &&
+      this.characterGrid.onPortraitLeave
+    ) {
+      this.characterGrid.onPortraitLeave(wasCharacter);
+    }
 
     ["p1", "p2"].forEach((player) => {
       const selectedChar = this.characterGrid[player].character;
@@ -1251,21 +1263,12 @@ class StreetFighterGame {
         element.classList.add("gamepad-hover");
         element.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
-        if (element.dataset.character && section.type === "grid") {
-          const player = this.characterGrid.activePlayer;
-          const previewBox = byId(`${player}-selected-portrait`);
-          const previewImg = previewBox?.querySelector("img");
-          const character = element.dataset.character;
-
-          if (
-            previewImg &&
-            this.characterGrid[player].character !== character
-          ) {
-            previewImg.src = `/portraits/${character.toLowerCase()}.png`;
-            previewImg.classList.remove("hidden", "opacity-100");
-            previewImg.classList.add("opacity-80", "object-contain");
-            const nameEl = byId(`${player}-selected-name`);
-            if (nameEl) nameEl.textContent = character;
+        if (element.dataset.character) {
+          // Trigger the same hover logic as mouse hover
+          if (this.characterGrid && this.characterGrid.onPortraitHover) {
+            const character = element.dataset.character;
+            const imageSrc = `/portraits/${character.toLowerCase()}.png`;
+            this.characterGrid.onPortraitHover(character, imageSrc);
           }
         }
       }
@@ -1516,11 +1519,11 @@ class StreetFighterGame {
         const winnerEl = byId("winner-text");
         winnerEl.textContent = `Winner: ${displayWinner}`;
         winnerEl.classList.toggle(
-          "text-sf-red",
+          "text-sf-blue",
           winner === "YOU" || winner === "LLM 1" || winner === "P1"
         );
         winnerEl.classList.toggle(
-          "text-sf-blue",
+          "text-sf-red",
           winner === "LLM" || winner === "LLM 2" || winner === "P2"
         );
 
@@ -2059,14 +2062,14 @@ class StreetFighterGame {
   }
 
   getPlayerColor(player) {
-    return player === "p1" ? "sf-red" : "sf-blue";
+    return player === "p1" ? "sf-blue" : "sf-red";
   }
 
   resetSelections() {
     this.characterGrid = {
       activePlayer: "p1",
-      p1: { selected: false, character: "Ken", outfit: 1 },
-      p2: { selected: false, character: "Ryu", outfit: 1 },
+      p1: { selected: false, character: "Ryu", outfit: 1 },
+      p2: { selected: false, character: "Ken", outfit: 1 },
     };
 
     this.currentCharacter = null;

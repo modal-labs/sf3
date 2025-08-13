@@ -1,6 +1,6 @@
-import { byId, $$ } from './utils.js';
-import { AudioManager } from './audioManager.js';
-import { SOUND_KEYS } from './constants.js';
+import { byId, $$ } from "./utils.js";
+import { AudioManager } from "./audioManager.js";
+import { SOUND_KEYS } from "./constants.js";
 
 export const GamepadManager = {
   connected: false,
@@ -10,7 +10,7 @@ export const GamepadManager = {
     axes: { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } },
     buttons: {},
   },
-  deadzone: 0.2,
+  deadzone: 0.3,
   buttonMapping: {
     0: "LP",
     1: "MP",
@@ -37,11 +37,11 @@ export const GamepadManager = {
     currentElement: 0,
     sections: [],
     lastInput: { x: 0, y: 0, button: null },
-    inputCooldown: 150,
+    inputCooldown: 200,
     lastInputTime: 0,
     holdStartTime: 0,
-    holdThreshold: 600,
-    fastRepeatRate: 75,
+    holdThreshold: 500,
+    fastRepeatRate: 60,
   },
 
   onStatusChange: null,
@@ -179,10 +179,10 @@ export const GamepadManager = {
     const currentTime = Date.now();
 
     const directions = {
-      left: currentState.axes.left.x < -0.5 || currentState.buttons[14],
-      right: currentState.axes.left.x > 0.5 || currentState.buttons[15],
-      up: currentState.axes.left.y < -0.5 || currentState.buttons[12],
-      down: currentState.axes.left.y > 0.5 || currentState.buttons[13],
+      left: currentState.axes.left.x < -0.7 || currentState.buttons[14],
+      right: currentState.axes.left.x > 0.7 || currentState.buttons[15],
+      up: currentState.axes.left.y < -0.7 || currentState.buttons[12],
+      down: currentState.axes.left.y > 0.7 || currentState.buttons[13],
     };
 
     const buttons = {

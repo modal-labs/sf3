@@ -7,6 +7,7 @@ from ..utils import (
     CHARACTER_MAPPING,
     X_SIZE,
     Y_SIZE,
+    gb,
     minutes,
     seed,
 )
@@ -319,15 +320,18 @@ def prepare_dataset():
 
 model_size = "yolov10n.pt"
 
-TRAIN_GPU_COUNT = 4
-TRAIN_CPU_COUNT = TRAIN_GPU_COUNT * 8
+n_gpu = 8
+gpu = f"h200:{n_gpu}"
+cpu = n_gpu * 8
+memory = n_gpu * 8 * gb
 
 
 @app.function(
     image=train_image,
     volumes=volumes,
-    gpu=f"b200:{TRAIN_GPU_COUNT}",
-    cpu=TRAIN_CPU_COUNT,
+    gpu=gpu,
+    cpu=cpu,
+    memory=memory,
     timeout=24 * 60 * minutes,
 )
 def train_model():
@@ -342,14 +346,12 @@ def train_model():
         # dataset config
         data=str(dataset_dir / "data.yaml"),
         # optimization config
-        device=list(range(TRAIN_GPU_COUNT)),  # use the GPU(s)
-        batch=512 * TRAIN_GPU_COUNT,
+        device=list(range(n_gpu)),  # use the GPU(s)
+        batch=512 * n_gpu,
         seed=seed,
         epochs=50,
         # data processing config
-        workers=max(
-            TRAIN_CPU_COUNT // TRAIN_GPU_COUNT, 1
-        ),  # split CPUs evenly across GPUs
+        workers=max(cpu // n_gpu, 1),  # split CPUs evenly across GPUs
         cache="disk",  # cache preprocessed images deterministically
         # model saving config
         project=str(runs_dir),

@@ -160,23 +160,27 @@ export const AudioManager = {
         muteButton.classList.remove(
           "border-sf-gold",
           "bg-sf-darker",
-          "hover:bg-sf-dark"
+          "hover:bg-sf-dark",
+          "hover:border-sf-gold-dark"
         );
         muteButton.classList.add(
           "border-sf-green",
           "bg-sf-dark",
-          "hover:bg-sf-darker"
+          "hover:bg-sf-darker",
+          "hover:border-sf-green-dark"
         );
       } else {
         muteButton.classList.remove(
           "border-sf-green",
           "bg-sf-dark",
-          "hover:bg-sf-darker"
+          "hover:bg-sf-darker",
+          "hover:border-sf-green-dark"
         );
         muteButton.classList.add(
           "border-sf-gold",
           "bg-sf-darker",
-          "hover:bg-sf-dark"
+          "hover:bg-sf-dark",
+          "hover:border-sf-gold-dark"
         );
       }
     }

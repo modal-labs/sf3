@@ -6,6 +6,7 @@ from .utils import (
     CHARACTER_MAPPING,
     X_SIZE,
     Y_SIZE,
+    gb,
     minutes,
     seed,
     # region,
@@ -16,7 +17,6 @@ from .utils import (
 app = modal.App("sf3-yolo")
 
 py_version = "3.12"
-
 onnx_image = (
     modal.Image.debian_slim(python_version=py_version)  # matching ld path
     # update locale as required by onnx
@@ -48,7 +48,6 @@ onnx_image = (
 volume = modal.Volume.from_name(f"{app.name}-train-cache", create_if_missing=True)
 volume_path = Path("/root/yolo")
 volumes = {volume_path: volume}
-
 runs_dir = volume_path / "runs"
 
 
@@ -64,20 +63,25 @@ def find_best_model(suffix: str):
     return runs_dir / best_pts[0]
 
 
-MAX_INPUTS = 512
+max_inputs = 512
+gpu = "b200"
+cpu = 4
+memory = 4 * gb
 
 
 @app.cls(
     image=onnx_image,
     volumes=volumes,
-    gpu="b200",
+    gpu=gpu,
+    cpu=cpu,
+    memory=memory,
     # region=region,
     scaledown_window=60 * minutes,
     timeout=24 * 60 * minutes,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
 )
-@modal.concurrent(max_inputs=MAX_INPUTS)
+@modal.concurrent(max_inputs=max_inputs)
 class YOLOServer:
     @modal.enter()
     def enter(self):

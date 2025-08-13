@@ -33,40 +33,74 @@ export const UIFactory = {
 
     element.addEventListener("mouseenter", () => {
       const getPlayerColor = (player) =>
-        player === "p1" ? "sf-red" : "sf-blue";
+        player === "p1" ? "sf-blue" : "sf-red";
 
-      if (
-        !element.classList.contains("border-sf-red") &&
-        !element.classList.contains("border-sf-blue")
-      ) {
+      const isSelectedByP1 =
+        isPortrait && gameState.characterGrid.p1.character === character;
+      const isSelectedByP2 =
+        isPortrait && gameState.characterGrid.p2.character === character;
+
+      if (isPortrait && !isSelectedByP1 && !isSelectedByP2) {
         element.classList.remove("border-transparent");
         const currentBorderColor = `border-${getPlayerColor(
           gameState.characterGrid.activePlayer
         )}`;
         element.classList.add(currentBorderColor);
-        AudioManager.playSound(SOUND_KEYS.HOVER);
-
-        if (isPortrait && gameState.onPortraitHover) {
-          gameState.onPortraitHover(character, imageSrc);
+      } else if (!isPortrait) {
+        if (
+          !element.classList.contains("border-sf-red") &&
+          !element.classList.contains("border-sf-blue")
+        ) {
+          element.classList.remove("border-transparent");
+          const currentBorderColor = `border-${getPlayerColor(
+            gameState.characterGrid.activePlayer
+          )}`;
+          element.classList.add(currentBorderColor);
         }
+      }
+
+      AudioManager.playSound(SOUND_KEYS.HOVER);
+
+      if (
+        isPortrait &&
+        gameState.characterGrid &&
+        gameState.characterGrid.onPortraitHover
+      ) {
+        gameState.characterGrid.onPortraitHover(character, imageSrc);
       }
     });
 
     element.addEventListener("mouseleave", () => {
-      const isSelected = isPortrait
-        ? gameState.characterGrid[gameState.characterGrid.activePlayer]
-            .character === character
-        : gameState.characterGrid[gameState.characterGrid.activePlayer]
-            .outfit ===
-          index + 1;
+      const isSelectedByP1 = isPortrait
+        ? gameState.characterGrid.p1.character === character
+        : gameState.characterGrid.p1.outfit === index + 1;
 
-      if (!isSelected) {
+      const isSelectedByP2 = isPortrait
+        ? gameState.characterGrid.p2.character === character
+        : gameState.characterGrid.p2.outfit === index + 1;
+
+      if (!isSelectedByP1 && !isSelectedByP2) {
         element.classList.remove("border-sf-red", "border-sf-blue");
         element.classList.add("border-transparent");
+      } else if (isPortrait) {
+        element.classList.remove(
+          "border-sf-red",
+          "border-sf-blue",
+          "border-transparent"
+        );
+        if (isSelectedByP1) {
+          element.classList.add("border-sf-blue");
+        } else if (isSelectedByP2) {
+          element.classList.add("border-sf-red");
+        }
       }
 
-      if (isPortrait && gameState.onPortraitLeave) {
-        gameState.onPortraitLeave(character);
+      if (
+        isPortrait &&
+        gameState.characterGrid &&
+        gameState.characterGrid.onPortraitLeave
+      ) {
+        gameState.characterGrid.onPortraitLeave(character);
       }
     });
 
