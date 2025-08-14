@@ -15,7 +15,6 @@ from ..utils import (
 # Modal setup
 
 app = modal.App("sf3-yolo-train")
-
 py_version = "3.12"
 
 train_image = (
@@ -27,14 +26,13 @@ train_image = (
         ]
     )
     .uv_pip_install(
-        "ultralytics==8.3.167",
-        "opencv-python==4.11.0.86",
         "beautifulsoup4~=4.13.4",
+        "opencv-python==4.11.0.86",
+        "ultralytics==8.3.167",
         extra_index_url="https://download.pytorch.org/whl/cu128",
         extra_options="--index-strategy unsafe-best-match",
     )
 )
-
 onnx_image = (
     modal.Image.debian_slim(python_version=py_version)  # matching ld path
     # update locale as required by onnx
@@ -54,21 +52,20 @@ onnx_image = (
     .apt_install("python3-opencv", "ffmpeg")
     # install Python dependencies
     .uv_pip_install(
-        "ultralytics==8.3.167",
         "onnx==1.17.0",
-        "onnxslim==0.1.59",
         "onnxruntime-gpu==1.21.0",
+        "onnxslim==0.1.59",
         "opencv-python==4.11.0.86",
         "tensorrt==10.9.0.34",
+        "ultralytics==8.3.167",
     )
 )
 
-volume = modal.Volume.from_name(f"{app.name}-cache", create_if_missing=True)
-volume_path = Path("/root/yolo")
-volumes = {volume_path: volume}
+cache_volume = modal.Volume.from_name("sf3-yolo-train-cache", create_if_missing=True)
+cache_path = Path("/root/yolo")
 
-dataset_dir = volume_path / "dataset"
-runs_dir = volume_path / "runs"
+dataset_dir = cache_path / "dataset"
+runs_dir = cache_path / "runs"
 
 
 # dataset
@@ -88,7 +85,9 @@ class CharacterSprite:
     bboxes: list[tuple[int, int, int, int]]  # x1, y1, x2, y2
 
 
-@app.function(image=train_image, volumes=volumes, timeout=60 * minutes)
+@app.function(
+    image=train_image, volumes={cache_path: cache_volume}, timeout=60 * minutes
+)
 def prepare_dataset():
     import random
     from io import BytesIO
@@ -117,7 +116,7 @@ def prepare_dataset():
 
     # scrape images
 
-    original_image_dir = volume_path / "original_images"
+    original_image_dir = cache_path / "original_images"
     original_image_dir.mkdir(parents=True, exist_ok=True)
 
     character_sprites = []
@@ -316,10 +315,9 @@ def prepare_dataset():
     )
 
 
-# model
+# training
 
 model_size = "yolov10n.pt"
-
 n_gpu = 8
 gpu = f"h200:{n_gpu}"
 cpu = n_gpu * 8
@@ -328,7 +326,7 @@ memory = n_gpu * 8 * gb
 
 @app.function(
     image=train_image,
-    volumes=volumes,
+    volumes={cache_path: cache_volume},
     gpu=gpu,
     cpu=cpu,
     memory=memory,
@@ -339,7 +337,7 @@ def train_model():
 
     from ultralytics import YOLO
 
-    volume.reload()
+    cache_volume.reload()
 
     model = YOLO(model_size)
     model.train(
@@ -379,6 +377,9 @@ def train_model():
     )
 
 
+# export
+
+
 def find_best_model(suffix: str):
     import glob
     import os
@@ -391,11 +392,16 @@ def find_best_model(suffix: str):
     return runs_dir / best_pts[0]
 
 
-@app.function(image=onnx_image, volumes=volumes, gpu="l40s", timeout=10 * minutes)
+@app.function(
+    image=onnx_image,
+    volumes={cache_path: cache_volume},
+    gpu="l40s",
+    timeout=10 * minutes,
+)
 def export_onnx():
     from ultralytics import YOLO
 
-    volume.reload()
+    cache_volume.reload()
     model_file = find_best_model("pt")
     if model_file is None:
         raise ValueError("No best model found")
