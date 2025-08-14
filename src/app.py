@@ -13,15 +13,16 @@ from .utils import (
     GameInfo,
     PlayerState,
     create_messages,
-    local_assets_dir,
+    gb,
     minutes,
     region,
 )
 from .yolo import YOLOServer
 from .yolo import app as yolo_app
 
-# diambra engine
+# Modal setup
 
+# diambra engine
 engine_app = modal.App.lookup("sf3-engine", create_if_missing=True)
 
 engine_image = (
@@ -45,15 +46,10 @@ engine_image = (
 )
 
 # web app
-
 app = modal.App(name="sf3").include(llm_app).include(yolo_app)
 
+local_assets_dir = Path(__file__).parent.parent / "assets"
 local_engine_dir = local_assets_dir / "engine"
-local_icons_dir = local_assets_dir / "icons"
-local_logos_dir = local_assets_dir / "logos"
-local_outfits_dir = local_assets_dir / "outfits"
-local_portraits_dir = local_assets_dir / "portraits"
-local_sounds_dir = local_assets_dir / "sounds"
 
 remote_frontend_dir = "/root/frontend"
 remote_icons_dir = "/root/icons"
@@ -68,11 +64,11 @@ image = (
         "ffmpeg",
     )
     .uv_pip_install(
-        "diambra-arena==2.2.7",
         "diambra==0.0.20",
+        "diambra-arena==2.2.7",
         "fastapi[standard]==0.116.1",
-        "websockets==15.0.1",
         "numpy==2.3.1",
+        "websockets==15.0.1",
     )
     # engine
     .add_local_file(
@@ -86,35 +82,41 @@ image = (
     # frontend
     .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)
     .add_local_dir(
-        local_icons_dir,
+        local_assets_dir / "icons",
         remote_icons_dir,
     )
     .add_local_dir(
-        local_logos_dir,
+        local_assets_dir / "logos",
         remote_logos_dir,
     )
     .add_local_dir(
-        local_outfits_dir,
+        local_assets_dir / "outfits",
         remote_outfits_dir,
     )
     .add_local_dir(
-        local_portraits_dir,
+        local_assets_dir / "portraits",
         remote_portraits_dir,
     )
     .add_local_dir(
-        local_sounds_dir,
+        local_assets_dir / "sounds",
         remote_sounds_dir,
     )
 )
 
+# inference
+
 max_inputs = 1
+cpu = 2
+memory = 2 * gb
 
 
 @app.cls(
     image=image,
+    cpu=cpu,
+    memory=memory,
+    region=region,
     scaledown_window=60 * minutes,
     timeout=24 * 60 * minutes,
-    region=region,
 )
 @modal.concurrent(max_inputs=max_inputs)
 class Web:

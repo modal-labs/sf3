@@ -36,33 +36,21 @@ onnx_image = (
     .apt_install("python3-opencv", "ffmpeg")
     # install Python dependencies
     .uv_pip_install(
-        "ultralytics==8.3.167",
         "onnx==1.17.0",
-        "onnxslim==0.1.59",
         "onnxruntime-gpu==1.21.0",
+        "onnxslim==0.1.59",
         "opencv-python==4.11.0.86",
         "tensorrt==10.9.0.34",
+        "ultralytics==8.3.167",
     )
 )
 
-volume = modal.Volume.from_name(f"{app.name}-train-cache", create_if_missing=True)
-volume_path = Path("/root/yolo")
-volumes = {volume_path: volume}
-runs_dir = volume_path / "runs"
+cache_volume = modal.Volume.from_name("sf3-yolo-train-cache", create_if_missing=True)
+cache_path = Path("/root/yolo")
 
+# inference
 
-def find_best_model(suffix: str):
-    import glob
-    import os
-
-    pattern = str(runs_dir / "*" / "weights" / f"best.{suffix}")
-    best_pts = glob.glob(pattern)
-    if not best_pts:
-        return None
-    best_pts.sort(key=os.path.getmtime, reverse=True)
-    return runs_dir / best_pts[0]
-
-
+model_name = cache_path / "runs" / "2025-07-18" / "weights" / "best.onnx"
 max_inputs = 512
 gpu = "b200"
 cpu = 4
@@ -71,7 +59,7 @@ memory = 4 * gb
 
 @app.cls(
     image=onnx_image,
-    volumes=volumes,
+    volumes={cache_path: cache_volume},
     gpu=gpu,
     cpu=cpu,
     memory=memory,
@@ -92,21 +80,17 @@ class YOLOServer:
         onnxruntime.set_seed(seed)
         onnxruntime.preload_dlls()
 
-        volume.reload()
-        model_file = find_best_model("onnx")
-        if model_file is None:
-            raise ValueError("No best model found")
-
-        print(f"Loading model from {model_file}")
+        cache_volume.reload()
+        print(f"Loading model from {model_name}")
 
         self.session = onnxruntime.InferenceSession(
-            model_file,
+            model_name,
             providers=[
                 (
                     "TensorrtExecutionProvider",
                     {
                         "trt_engine_cache_enable": True,
-                        "trt_engine_cache_path": volume_path / "onnx.cache",
+                        "trt_engine_cache_path": cache_path / "onnx.cache",
                     },
                 ),
                 "CUDAExecutionProvider",

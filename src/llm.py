@@ -7,7 +7,6 @@ from .utils import (
     create_random_messages,
     gb,
     get_available_instructions_for_character,
-    local_assets_dir,
     # region,
     minutes,
     parse_move,
@@ -18,13 +17,12 @@ from .utils import (
 app = modal.App("sf3-llm")
 
 remote_chat_template_path = "/root/qwen3_nonthinking.jinja"
-
 vllm_image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install(
-        "vllm==0.9.2",
         "flashinfer-python==0.2.6.post1",
         "huggingface_hub[hf_transfer]==0.33.4",
+        "vllm==0.9.2",
         extra_index_url="https://download.pytorch.org/whl/cu128",
         extra_options="--index-strategy unsafe-best-match",
     )
@@ -35,44 +33,19 @@ vllm_image = (
         }
     )
     .add_local_file(
-        local_assets_dir / "llm" / "qwen3_nonthinking.jinja",
+        Path(__file__).parent.parent / "assets" / "llm" / "qwen3_nonthinking.jinja",
         remote_chat_template_path,
     )
 )
 
-model_name = "Qwen/Qwen3-8B"
-
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
 vllm_cache_vol = modal.Volume.from_name("sf3-vllm-cache", create_if_missing=True)
 cache_path = Path("/cache")
-cache_volume = modal.Volume.from_name(f"{app.name}-train-cache", create_if_missing=True)
+cache_volume = modal.Volume.from_name("sf3-llm-train-cache", create_if_missing=True)
 
 # inference
 
-
-def get_latest_checkpoint_file_path():
-    import re
-
-    candidates = [d for d in cache_path.iterdir() if d.is_dir()]
-    if not candidates:
-        return model_name
-
-    candidates.sort(key=lambda d: d.name, reverse=True)
-    latest_dir = candidates[0]
-
-    ckpt_pattern = re.compile(r"checkpoint-(\d+)")
-    ckpt_dirs = [
-        d for d in latest_dir.iterdir() if d.is_dir() and ckpt_pattern.match(d.name)
-    ]
-    if not ckpt_dirs:
-        return model_name
-
-    ckpt_dirs.sort(key=lambda d: int(ckpt_pattern.match(d.name).group(1)), reverse=True)
-    latest_ckpt = ckpt_dirs[0]
-
-    return str(latest_ckpt)
-
-
+model_name = "Qwen/Qwen3-8B"  # pretrained hf model or cache_path/<run_name>/checkpoint-<max_steps>
 max_inputs = max_num_seqs = 8
 gpu = "b200"
 cpu = 16
@@ -105,7 +78,7 @@ class LLMServer:
 
         cache_volume.reload()
 
-        load_path = self.ckpt_path or get_latest_checkpoint_file_path()
+        load_path = self.ckpt_path or model_name
         print(f"Loading model from {load_path}")
 
         self.llm = LLM(
@@ -168,7 +141,7 @@ class LLMServer:
 
         move_sequence = parse_move(character, move_name, side)
         if move_sequence is not None:
-            return list(move_sequence), move_name
+            return move_sequence, move_name
         print(f"Invalid move: {move_name}")
         return [0], "No-Move"
 

@@ -1,25 +1,21 @@
 import random
 from dataclasses import dataclass
-from pathlib import Path
 from textwrap import dedent
 
-# Modal constants
+# constants
 
-local_assets_dir = Path(__file__).parent.parent / "assets"
+# seed
+seed = 42
+random.seed(seed)
+
+# modal
 region = "us-east-1"
 minutes = 60
 gb = 1024
 
-# seed
-
-seed = 42
-random.seed(seed)
-
-# arena/game constants (only here because not immediately obvious)
-
+# sf3
 X_SIZE = 384
 Y_SIZE = 224
-
 STUN_BAR_MAX = 72
 SUPER_BAR_MAX = 128
 HEALTH_MAX = 160
@@ -101,8 +97,8 @@ def create_move_dict(moves_list):
 
 
 CLOSE_IN_MOVES = {
-    "Move Closer": create_move_dict([MOVES["Left"]] * 16),
-    "Jump Closer": create_move_dict([MOVES["Left+Up"]] * 12),
+    "Move Closer": create_move_dict([MOVES["Left"]] * 8),
+    "Jump Closer": create_move_dict([MOVES["Left+Up"]] * 4),
 }
 
 COMBOS = {
@@ -1695,8 +1691,8 @@ SPECIAL_MOVES = {
 
 
 BASE_META_INSTRUCTIONS = {
-    "Move Away": create_move_dict([MOVES["Right"]] * 16),
-    "Jump Away": create_move_dict([MOVES["Right+Up"]] * 12),
+    "Move Away": create_move_dict([MOVES["Right"]] * 8),
+    "Jump Away": create_move_dict([MOVES["Right+Up"]] * 4),
     **CLOSE_IN_MOVES,
     **{
         move_name: create_move_dict([move_nb])

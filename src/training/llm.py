@@ -14,20 +14,22 @@ from ..utils import (
     GameInfo,
     PlayerState,
     create_messages,
+    gb,
     get_available_instructions_for_character,
-    local_assets_dir,
     minutes,
     parse_move,
     seed,
+    # region,
 )
 from ..yolo import YOLOServer
 from ..yolo import app as yolo_app
 
 # Modal setup
+
 app = modal.App("sf3-llm-train").include(llm_app).include(yolo_app)
 
+# diambra engine
 engine_app = modal.App.lookup("sf3-engine-train", create_if_missing=True)
-
 engine_image = (
     modal.experimental.raw_registry_image("docker.io/diambra/engine:v2.2.4")
     .env(
@@ -48,19 +50,22 @@ engine_image = (
     )
 )
 
-local_engine_dir = local_assets_dir / "engine"
-
+# training
+local_engine_dir = Path(__file__).parent.parent.parent / "assets" / "engine"
+remote_train_script_path = "/root/trl_train.py"
 train_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg")
     .uv_pip_install(
+        "accelerate==1.10.0",
+        "datasets==3.6.0",
+        "diambra==0.0.20",
+        "diambra-arena==2.2.7",
+        "flashinfer-python==0.2.6.post1",
+        "huggingface_hub[hf_transfer]==0.34.4",
+        "openai==1.99.9",
         "torch==2.7.1",
         "trl==0.21.0",
-        "accelerate==1.8.1",
-        "datasets==3.6.0",
-        "flashinfer-python==0.2.6.post1",
-        "diambra-arena==2.2.7",
-        "diambra==0.0.20",
         "wandb==0.21.0",
         extra_index_url="https://download.pytorch.org/whl/cu128",
         extra_options="--index-strategy unsafe-best-match",
@@ -79,22 +84,19 @@ train_image = (
         local_engine_dir / "credentials",
         "/root/credentials",
     )
+    # training
+    .add_local_file(
+        Path(__file__).parent / "trl_train.py",
+        remote_train_script_path,
+    )
 )
-
-cache_path = Path("/cache")
-cache_volume = modal.Volume.from_name(f"{app.name}-cache", create_if_missing=True)
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
 vllm_cache_vol = modal.Volume.from_name("sf3-vllm-cache", create_if_missing=True)
+cache_path = Path("/cache")
+cache_volume = modal.Volume.from_name("sf3-llm-train-cache", create_if_missing=True)
 
-MODEL_NAME = "Qwen/Qwen3-8B"
-
-
-# data
-
-character = "Chun-Li"
-outfit = 1
-super_art = 1
+# helper fns
 
 
 async def create_llm(ckpt_path: str = ""):
@@ -122,22 +124,26 @@ async def create_yolo():
 
 
 async def create_sandbox():
-    print("Creating sandbox...")
-    engine_port = 50051
-    sandbox = modal.Sandbox.create(
-        "/bin/diambraEngineServer",
-        app=engine_app,
-        image=engine_image,
-        timeout=60 * minutes,
-        unencrypted_ports=[engine_port],
-        verbose=True,
-    )
-    tunnels = sandbox.tunnels()
-    tunnel = tunnels[engine_port]
-    host, port = tunnel.tcp_socket
-    os.environ["DIAMBRA_ENVS"] = f"{host}:{port}"
-    print(f"Created sandbox {sandbox.object_id} at {host}:{port}")
-    return sandbox
+    try:
+        print("Creating sandbox...")
+        engine_port = 50051
+        sandbox = modal.Sandbox.create(
+            "/bin/diambraEngineServer",
+            app=engine_app,
+            image=engine_image,
+            timeout=2 * 60 * minutes,
+            unencrypted_ports=[engine_port],
+            verbose=True,
+        )
+        tunnels = sandbox.tunnels()
+        tunnel = tunnels[engine_port]
+        host, port = tunnel.tcp_socket
+        os.environ["DIAMBRA_ENVS"] = f"{host}:{port}"
+        print(f"Created sandbox {sandbox.object_id} at {host}:{port}")
+        return sandbox
+    except Exception as e:
+        print(f"Couldn't create sandbox: {e}", file=sys.stderr)
+        return None
 
 
 def create_environment(
@@ -154,7 +160,7 @@ def create_environment(
         role=(Roles.P1, Roles.P2),
         render_mode="rgb_array",
         splash_screen=False,
-        grpc_timeout=1 * minutes,
+        grpc_timeout=15,
         action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
         characters=characters,
         outfits=outfits,
@@ -169,37 +175,68 @@ def create_environment(
     return env
 
 
+# dataset
+
+# reduce variance
+character = "Ken"
+outfit = 1
+super_art = 1
+
+# increase move var
+recent_move_limit = 20
+max_steps_without_reward = 64
+opponent_pool_size_per_round = 3
+
+# n-step returns
+n_move_returns = 16
+gamma = 0.99
+
+# misc
+n_videos_per_round = 1
+
+
 @app.function(
     image=train_image,
     volumes={cache_path: cache_volume},
-    timeout=60 * minutes,
+    # region=region,
+    timeout=2 * 60 * minutes,
 )
-async def run_rl_episode(
+async def run_episode_data(
     idx: int,
     split: str,
     run_name: str,
-    n_move_returns: int,
-    frozen_random_prob: float,
     save_video: bool,
-    max_steps_without_reward: int,
+    round_idx: int,
     current_ckpt_path: str = "",
-    prior_ckpt_path: str = "",
+    opponent_ckpt_paths: list[str] | None = None,
 ):
     import asyncio
     import random
 
     from tqdm import tqdm
 
-    ## init
+    ## init bg processes
 
     characters = [character, character]
     outfits = [outfit, outfit]
     super_arts = [super_art, super_art]
 
-    tasks = [create_yolo(), create_sandbox(), create_llm(current_ckpt_path)]
+    if opponent_ckpt_paths is None:
+        opponent_ckpt_paths = []
+    selected_opponent_path = None
+    if len(opponent_ckpt_paths) > 0:
+        selected_opponent_path = random.choice(opponent_ckpt_paths)
 
-    if prior_ckpt_path:
-        tasks.append(create_llm(prior_ckpt_path))
+    tasks = [create_yolo(), create_sandbox()]
+
+    # first round: just use random moves to "bootstrap" the model
+    if round_idx == 0:
+        tasks.append(asyncio.to_thread(lambda: None))
+    else:
+        tasks.append(create_llm(current_ckpt_path))
+
+    if selected_opponent_path:
+        tasks.append(create_llm(selected_opponent_path))
     else:
         tasks.append(asyncio.to_thread(lambda: None))
 
@@ -208,12 +245,12 @@ async def run_rl_episode(
     if yolo is None:
         sandbox.terminate()
         return []
-
-    if current_llm is None:
+    if sandbox is None:
+        return []
+    if round_idx > 0 and current_llm is None:
         sandbox.terminate()
         return []
-
-    if prior_ckpt_path and prior_llm is None:
+    if selected_opponent_path and prior_llm is None:
         sandbox.terminate()
         return []
 
@@ -225,7 +262,7 @@ async def run_rl_episode(
                 outfits,
                 super_arts,
             ),
-            timeout=1 * minutes,
+            timeout=15,
         )
     except asyncio.TimeoutError:
         print("Timeout while creating environment", file=sys.stderr)
@@ -235,43 +272,42 @@ async def run_rl_episode(
         sandbox.terminate()
         return []
 
-    observation, info = env.reset()
+    # init episode
 
+    observation, info = env.reset()
     step_idx = 0
     steps_without_reward = 0
 
-    # buffers for n-step returns
-    step_rewards: list[float] = []
-    step_prompts: list[list[dict[str, str]]] = []
-    step_training_responses: list[list[dict[str, str]]] = []
-    step_frozen_responses: list[list[dict[str, str]]] = []
-    step_timer: list[int] = []
-    step_p1_health: list[int] = []
-    step_p2_health: list[int] = []
-
+    recent_moves = []
     step_data = []
     frames = []
+
+    # for n-step return computation
+    step_rewards = []
+    step_prompts = []
+    step_training_responses = []
+    step_timer = []
+    step_p1_health = []
+    step_p2_health = []
+
+    # run episode
 
     print("Running episode...")
     pbar = tqdm(desc="step_idx", unit="step")
     while True:
+        # get info for prompt
         obs_p1 = observation["P1"]
         obs_p2 = observation["P2"]
-
         boxes, class_ids = await yolo.detect_characters.remote.aio(
             [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
             observation["frame"],
         )
-
         game_info = GameInfo(
-            stage=observation["stage"][0],
             timer=observation["timer"][0],
             boxes=boxes,
             class_ids=class_ids,
         )
-
         p1_side = obs_p1["side"]
-
         player1 = PlayerState(
             character=character,
             super_art=super_arts[0],
@@ -283,7 +319,6 @@ async def run_rl_episode(
             super_count=obs_p1["super_count"][0],
             super_bar=obs_p1["super_bar"][0],
         )
-
         player2 = PlayerState(
             character=character,
             super_art=super_arts[1],
@@ -296,74 +331,78 @@ async def run_rl_episode(
             super_bar=obs_p2["super_bar"][0],
         )
 
-        training_messages = create_messages(game_info, player2, player1)
-        try:
-            training_buttons, training_move_name = await current_llm.chat.remote.aio(
-                training_messages,
-                character,
-                super_arts[0],
-                obs_p1["super_count"][0],
-                p1_side,
-                return_move_name=True,
-            )
-        except Exception as e:
-            print(f"current_llm.chat failed: {e}", file=sys.stderr)
+        # run current policy
+        training_messages = create_messages(game_info, player2, player1, recent_moves)
+        if round_idx == 0:
             available_moves = get_available_instructions_for_character(
                 character, super_arts[0], obs_p1["super_count"][0]
             )
             training_move_name = random.choice(available_moves)
             training_buttons = parse_move(character, training_move_name, p1_side)
+        else:
+            try:
+                (
+                    training_buttons,
+                    training_move_name,
+                ) = await current_llm.chat.remote.aio(
+                    training_messages,
+                    character,
+                    super_arts[0],
+                    obs_p1["super_count"][0],
+                    p1_side,
+                )
+            except Exception as e:
+                print(f"current_llm.chat failed: {e}", file=sys.stderr)
+                sandbox.terminate()
+                return []
 
+        # run opponent policy
         if prior_llm is None:
             available_moves = get_available_instructions_for_character(
                 character, super_arts[1], obs_p2["super_count"][0]
             )
-            frozen_move_name = random.choice(available_moves)
-            frozen_buttons = parse_move(character, frozen_move_name, obs_p2["side"])
+            opponent_move_name = random.choice(available_moves)
+            opponent_buttons = parse_move(character, opponent_move_name, obs_p2["side"])
         else:
-            if random.random() < frozen_random_prob:
+            opponent_messages = create_messages(game_info, player1, player2)
+            try:
+                (
+                    opponent_buttons,
+                    opponent_move_name,
+                ) = await prior_llm.chat.remote.aio(
+                    opponent_messages,
+                    character,
+                    super_arts[1],
+                    obs_p2["super_count"][0],
+                    obs_p2["side"],
+                )
+            except Exception as e:
+                print(f"prior_llm.chat (opponent) failed: {e}", file=sys.stderr)
                 available_moves = get_available_instructions_for_character(
                     character, super_arts[1], obs_p2["super_count"][0]
                 )
-                frozen_move_name = random.choice(available_moves)
-                frozen_buttons = parse_move(character, frozen_move_name, obs_p2["side"])
-            else:
-                frozen_messages = create_messages(game_info, player1, player2)
-                try:
-                    frozen_buttons, frozen_move_name = await prior_llm.chat.remote.aio(
-                        frozen_messages,
-                        character,
-                        super_arts[1],
-                        obs_p2["super_count"][0],
-                        obs_p2["side"],
-                        return_move_name=True,
-                    )
-                except Exception as e:
-                    print(f"prior_llm.chat failed: {e}", file=sys.stderr)
-                    available_moves = get_available_instructions_for_character(
-                        character, super_arts[1], obs_p2["super_count"][0]
-                    )
-                    frozen_move_name = random.choice(available_moves)
-                    frozen_buttons = parse_move(
-                        character, frozen_move_name, obs_p2["side"]
-                    )
+                opponent_move_name = random.choice(available_moves)
+                opponent_buttons = parse_move(
+                    character, opponent_move_name, obs_p2["side"]
+                )
 
-        if len(training_buttons) > len(frozen_buttons):
-            frozen_buttons = frozen_buttons + [0] * (
-                len(training_buttons) - len(frozen_buttons)
+        # pad shorter move sequence to match longer one
+        if len(training_buttons) > len(opponent_buttons):
+            opponent_buttons = opponent_buttons + [0] * (
+                len(training_buttons) - len(opponent_buttons)
             )
-        elif len(frozen_buttons) > len(training_buttons):
+        elif len(opponent_buttons) > len(training_buttons):
             training_buttons = training_buttons + [0] * (
-                len(frozen_buttons) - len(training_buttons)
+                len(opponent_buttons) - len(training_buttons)
             )
 
-        # record pre-step info for tie-breaking and weighting later
+        # step env
         current_timer = observation["timer"][0]
         p1_health_before = obs_p1["health"][0]
         p2_health_before = obs_p2["health"][0]
 
-        move_set_reward = 0
-        for training_button, frozen_button in zip(training_buttons, frozen_buttons):
+        total_reward = 0
+        for training_button, opponent_button in zip(training_buttons, opponent_buttons):
             try:
                 (
                     observation,
@@ -374,24 +413,27 @@ async def run_rl_episode(
                 ) = env.step(
                     {
                         "agent_0": training_button,
-                        "agent_1": frozen_button,
+                        "agent_1": opponent_button,
                     }
                 )
             except Exception as e:
                 print(f"env.step() failed for step {step_idx}: {e}", file=sys.stderr)
-                continue
+                sandbox.terminate()
+                return []
 
-            move_set_reward += reward
+            total_reward += reward
 
             if save_video:
                 boxes, class_ids = await yolo.detect_characters.remote.aio(
                     [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
                     observation["frame"],
                 )
-
                 frames.append(observation["frame"])
 
-        # collect buffers for n-step computation later
+        recent_moves.append(training_move_name)
+        if len(recent_moves) > recent_move_limit:
+            recent_moves.pop(0)
+
         step_prompts.append(training_messages)
         step_training_responses.append(
             [
@@ -401,23 +443,17 @@ async def run_rl_episode(
                 }
             ]
         )
-        step_frozen_responses.append(
-            [
-                {
-                    "role": "assistant",
-                    "content": frozen_move_name,
-                }
-            ]
-        )
-        step_rewards.append(move_set_reward)
+        step_rewards.append(total_reward)
         step_timer.append(current_timer)
         step_p1_health.append(p1_health_before)
         step_p2_health.append(p2_health_before)
 
-        if move_set_reward == 0:
+        if total_reward == 0:
             steps_without_reward += 1
             if steps_without_reward >= max_steps_without_reward:
-                warnings.warn("Max steps without reward reached")
+                warnings.warn(
+                    f"Terminating episode early: {steps_without_reward} steps without reward"
+                )
                 break
         else:
             steps_without_reward = 0
@@ -431,64 +467,73 @@ async def run_rl_episode(
     pbar.close()
     print("Episode finished.")
 
-    # build n-step preferences, including zero-reward states with simple health/time weighting
+    # calculate n-step returns with discounting
+
+    # https://docs.diambra.ai/envs/#reward-function
+    # map health difference and timer to reward in range [-20, 20]
+    # at extreme health advantage (p2=160, p1=0) and high urgency (timer=0): 20
+    # at extreme health disadvantage (p2=0, p1=160) and any timer: -20
+    # at equal health (p2=160, p1=160) and no urgency (timer=100): 0
+    # at equal health (p2=160, p1=160) and high urgency (timer=0): negative (time pressure penalty)
     def compute_weight(timer_value: int, p1_h: int, p2_h: int) -> float:
-        # later in round more important; timer assumed in [0,100]
-        time_factor = max(0.0, min(1.0, (100 - float(timer_value)) / 100.0))
-        health_diff = float(p1_h - p2_h)
-        health_factor = abs(health_diff) / float(HEALTH_MAX)
-        # scaled small to avoid dominating learned signal
-        return max(0.0, min(1.0, time_factor * health_factor))
+        health_diff = (float(p2_h) - float(p1_h)) / float(HEALTH_MAX)  # [-1, 1]
+        time_urgency = (100.0 - float(timer_value)) / 100.0  # [0, 1]
+
+        health_reward = health_diff * 20.0  # [-20, 20]
+        if health_diff <= 0:
+            time_penalty = time_urgency * 10.0 * (1.0 - abs(health_diff))  # [0, 10]
+            weight = health_reward - time_penalty  # [-30, 20]
+        else:
+            time_boost = time_urgency * 5.0 * health_diff  # [0, 5]
+            weight = health_reward + time_boost  # [-20, 25]
+
+        return max(-20.0, min(20.0, weight))  # [-20, 20]
 
     num_steps = len(step_rewards)
     for i in range(num_steps):
-        ret = sum(step_rewards[i : i + max(1, n_move_returns)])
+        n_steps = min(n_move_returns, num_steps - i)
+        ret = sum(step_rewards[i + j] * (gamma**j) for j in range(n_steps))
 
         training_response = step_training_responses[i]
-        frozen_response = step_frozen_responses[i]
 
-        if ret > 0:
+        threshold = 0.5  # make sure we have a clear signal
+        if ret > threshold:
             step_data.append(
                 {
                     "prompt": step_prompts[i],
-                    "chosen": training_response,
-                    "rejected": frozen_response,
-                    "score_chosen": ret,
-                    "score_rejected": -ret,
+                    "completion": training_response,
+                    "label": True,
                 }
             )
-        elif ret < 0:
+        elif ret < -threshold:
             step_data.append(
                 {
                     "prompt": step_prompts[i],
-                    "chosen": frozen_response,
-                    "rejected": training_response,
-                    "score_chosen": ret,
-                    "score_rejected": -ret,
+                    "completion": training_response,
+                    "label": False,
                 }
             )
-        else:
+        elif abs(ret) <= threshold:
             w = compute_weight(step_timer[i], step_p1_health[i], step_p2_health[i])
-            if step_p1_health[i] >= step_p2_health[i]:
+            if w > 5.0:  # require clear advantage
                 step_data.append(
                     {
                         "prompt": step_prompts[i],
-                        "chosen": training_response,
-                        "rejected": frozen_response,
-                        "score_chosen": w,
-                        "score_rejected": -w,
+                        "completion": training_response,
+                        "label": True,
                     }
                 )
-            else:
+            elif w < -5.0:  # require clear disadvantage
                 step_data.append(
                     {
                         "prompt": step_prompts[i],
-                        "chosen": frozen_response,
-                        "rejected": training_response,
-                        "score_chosen": w,
-                        "score_rejected": -w,
+                        "completion": training_response,
+                        "label": False,
                     }
                 )
+
+    # misc
+
     if save_video and len(frames) > 0:
         import cv2
 
@@ -509,16 +554,14 @@ async def run_rl_episode(
             (up_width, up_height),  # 60 fps
         )
 
-        try:
-            for frame in frames:
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                frame = cv2.resize(
-                    frame, (up_width, up_height), interpolation=cv2.INTER_LINEAR
-                )
-                video_writer.write(frame)
-        finally:
-            video_writer.release()
+        for frame in frames:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            frame = cv2.resize(
+                frame, (up_width, up_height), interpolation=cv2.INTER_LINEAR
+            )
+            video_writer.write(frame)
 
+        video_writer.release()
         print(f"Saved video to {out_path}")
 
     print("Cleaning up...")
@@ -526,64 +569,52 @@ async def run_rl_episode(
         env.close()
     except Exception as e:
         warnings.warn(f"Couldn't close environment: {e}")
+    sandbox.terminate()
     print("Done.")
 
-    return [
-        {
-            "prompt": step["prompt"],
-            "chosen": step["chosen"],
-            "rejected": step["rejected"],
-            "score_chosen": step["score_chosen"],
-            "score_rejected": step["score_rejected"],
-        }
-        for step in step_data
-    ]
+    return step_data
 
 
 @app.function(
-    image=train_image, volumes={cache_path: cache_volume}, timeout=60 * minutes
+    image=train_image,
+    volumes={cache_path: cache_volume},
+    # region=region,
+    timeout=2 * 60 * minutes,
 )
 async def create_dataset(
     split: str,
     run_name: str,
     n_episodes: int,
-    n_move_returns: int,
-    frozen_random_prob: float,
-    n_videos: int,
-    max_steps_without_reward: int,
+    round_idx: int,
     current_ckpt_path: str = "",
-    prior_ckpt_path: str = "",
+    opponent_ckpt_paths: list[str] | None = None,
 ):
     import random
 
     from datasets import Dataset
 
+    cache_volume.reload()
+
     video_idxs = range(n_episodes)
-    if n_videos < n_episodes:
-        video_idxs = random.sample(range(n_episodes), n_videos)
+    if n_videos_per_round < n_episodes:
+        video_idxs = random.sample(range(n_episodes), n_videos_per_round)
 
     data = []
-    async for sublist in run_rl_episode.starmap.aio(
+    async for sublist in run_episode_data.starmap.aio(
         [
             (
                 idx,
                 split,
                 run_name,
-                n_move_returns,
-                frozen_random_prob,
                 idx in video_idxs,
-                max_steps_without_reward,
+                round_idx,
                 current_ckpt_path,
-                prior_ckpt_path,
+                opponent_ckpt_paths,
             )
             for idx in range(n_episodes)
         ]
     ):
-        try:
-            data.extend(sublist)
-        except Exception as e:
-            print(f"Ignoring failed episode batch: {e}", file=sys.stderr)
-            continue
+        data.extend(sublist)
 
     if len(data) == 0:
         raise Exception("No data collected")
@@ -596,12 +627,94 @@ async def create_dataset(
 
 # training
 
-n_gpus = 1
+model_name = "Qwen/Qwen3-8B"  # "Qwen/Qwen3-8B-Base"
+
+# increase beta + lr over rounds to encourage more exploitation
+start_beta = 0.01  # 0.1
+end_beta = 0.1  # 1
+start_lr = 5e-7  # 1e-6
+end_lr = 1e-6  # 5e-6
+
+# resources
+n_gpu = 8
+gpu = f"h200:{n_gpu}"
+cpu = n_gpu * 4
+memory = n_gpu * 8 * gb
 
 
 @app.function(
     image=train_image,
-    gpu=f"b200:{n_gpus}",
+    volumes={cache_path: cache_volume},
+)
+def get_round_status(round_idx: int, max_steps: int):
+    import os
+    import time
+
+    cache_volume.reload()
+
+    prefix = f"{round_idx}-"
+    run_dirs = []
+    base = str(cache_path)
+
+    for name in os.listdir(base):
+        full = os.path.join(base, name)
+        if os.path.isdir(full) and name.startswith(prefix):
+            run_dirs.append(full)
+
+    if run_dirs:
+        run_dirs.sort(key=os.path.getmtime)
+        run_dir = run_dirs[-1]
+        run_name = os.path.basename(run_dir)
+    else:
+        run_name = f"{round_idx}-{time.strftime('%Y%m%d_%H%M%S')}"
+        run_dir = os.path.join(base, run_name)
+
+    train_file = os.path.join(run_dir, "train.parquet")
+    val_file = os.path.join(run_dir, "val.parquet")
+    has_train_ds = os.path.exists(train_file)
+    has_val_ds = os.path.exists(val_file)
+
+    latest_ckpt = ""
+    final_ckpt = ""
+    can_resume = False
+    training_complete = False
+
+    if os.path.isdir(run_dir):
+        checkpoints = [
+            os.path.join(run_dir, d)
+            for d in os.listdir(run_dir)
+            if d.startswith("checkpoint-") and os.path.isdir(os.path.join(run_dir, d))
+        ]
+        if checkpoints:
+            checkpoints.sort(
+                key=lambda p: (
+                    int(os.path.basename(p).split("checkpoint-")[-1]),
+                    os.path.getmtime(p),
+                )
+            )
+            latest_ckpt = checkpoints[-1]
+            can_resume = True
+            target = os.path.join(run_dir, f"checkpoint-{max_steps}")
+            if os.path.exists(target):
+                final_ckpt = target
+                training_complete = True
+
+    return {
+        "run_name": run_name,
+        "has_train_ds": has_train_ds,
+        "has_val_ds": has_val_ds,
+        "latest_checkpoint": latest_ckpt,
+        "final_checkpoint": final_ckpt,
+        "training_complete": training_complete,
+        "can_resume": can_resume,
+    }
+
+
+@app.function(
+    image=train_image,
+    gpu=gpu,
+    cpu=cpu,
+    memory=memory,
     volumes={
         cache_path: cache_volume,
         "/root/.cache/huggingface": hf_cache_vol,
@@ -613,129 +726,708 @@ n_gpus = 1
 def train_model(
     run_name: str,
     max_steps: int,
+    beta: float,
+    lr: float,
     current_ckpt_path: str = "",
-    prior_ckpt_path: str = "",
+    resume: bool = False,
 ):
     import os
+    import subprocess
 
-    from datasets import load_dataset
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    from trl import ORPOConfig, ORPOTrainer
+    os.environ["WANDB_PROJECT"] = f"{app.name}-{model_name.split('/')[-1].lower()}"
 
     cache_volume.reload()
 
-    dataset = load_dataset(
-        "parquet",
-        data_files={
-            "train": str(cache_path / run_name / "train.parquet"),
-            "test": str(cache_path / run_name / "val.parquet"),
-        },
+    cmd = [
+        "accelerate",
+        "launch",
+        f"--num_processes={str(n_gpu)}",
+        "--mixed_precision=bf16",
+        remote_train_script_path,
+        "--run_name",
+        run_name,
+        "--train_file",
+        str(cache_path / run_name / "train.parquet"),
+        "--eval_file",
+        str(cache_path / run_name / "val.parquet"),
+        "--model_name_or_path",
+        current_ckpt_path or model_name,
+        "--save_dir",
+        str(cache_path / run_name),
+        "--max_steps",
+        str(max_steps),
+        "--beta",
+        str(beta),
+        "--lr",
+        str(lr),
+        "--seed",
+        str(seed),
+    ]
+
+    if resume:
+        cmd.append("--resume")
+
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"Accelerate training failed with code {result.returncode}")
+
+    save_path = cache_path / run_name / f"checkpoint-{max_steps}"
+    return str(save_path)
+
+
+# evaluation
+
+
+async def create_openai_client():
+    from openai import OpenAI
+
+    return OpenAI()
+
+
+opponent = "gpt-5"
+reasoning = {"effort": "minimal"}
+text = {"verbosity": "low"}
+
+k_factor = 16.0
+initial_rating = 1200.0
+
+
+@app.function(
+    image=train_image,
+    volumes={cache_path: cache_volume},
+    # region=region,
+    secrets=[modal.Secret.from_name("ajhinh-openai-secret")],
+    timeout=2 * 60 * minutes,
+)
+async def run_episode_eval(
+    idx: int,
+    save_video: bool,
+    current_ckpt_path: str = "",
+):
+    import asyncio
+
+    from tqdm import tqdm
+
+    ## init bg processes
+
+    characters = [character, character]
+    outfits = [outfit, outfit]
+    super_arts = [super_art, super_art]
+
+    tasks = [
+        create_yolo(),
+        create_sandbox(),
+        create_llm(current_ckpt_path),
+        create_openai_client(),
+    ]
+    yolo, sandbox, trained_llm, openai_client = await asyncio.gather(*tasks)
+
+    if yolo is None:
+        sandbox.terminate()
+        return []
+    if sandbox is None:
+        return []
+    if trained_llm is None:
+        sandbox.terminate()
+        return []
+
+    try:
+        env = await asyncio.wait_for(
+            asyncio.to_thread(
+                create_environment,
+                characters,
+                outfits,
+                super_arts,
+            ),
+            timeout=15,
+        )
+    except asyncio.TimeoutError:
+        print("Timeout while creating environment", file=sys.stderr)
+        sandbox.terminate()
+        return []
+    if env is None:
+        sandbox.terminate()
+        return []
+
+    # init episode
+
+    observation, info = env.reset()
+    step_idx = 0
+
+    winner = None
+    recent_moves = []
+    frames = []
+
+    # run episode
+
+    print("Running episode...")
+    pbar = tqdm(desc="step_idx", unit="step")
+    while True:
+        # get info for prompt
+        obs_p1 = observation["P1"]
+        obs_p2 = observation["P2"]
+        boxes, class_ids = await yolo.detect_characters.remote.aio(
+            [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
+            observation["frame"],
+        )
+        game_info = GameInfo(
+            timer=observation["timer"][0],
+            boxes=boxes,
+            class_ids=class_ids,
+        )
+        p1_side = obs_p1["side"]
+        player1 = PlayerState(
+            character=character,
+            super_art=super_arts[0],
+            wins=obs_p1["wins"][0],
+            side=p1_side,
+            stunned=obs_p1["stunned"],
+            stun_bar=obs_p1["stun_bar"][0],
+            health=obs_p1["health"][0],
+            super_count=obs_p1["super_count"][0],
+            super_bar=obs_p1["super_bar"][0],
+        )
+        player2 = PlayerState(
+            character=character,
+            super_art=super_arts[1],
+            wins=obs_p2["wins"][0],
+            side=obs_p2["side"],
+            stunned=obs_p2["stunned"],
+            stun_bar=obs_p2["stun_bar"][0],
+            health=obs_p2["health"][0],
+            super_count=obs_p2["super_count"][0],
+            super_bar=obs_p2["super_bar"][0],
+        )
+
+        # run trained policy
+        p1_messages = create_messages(game_info, player2, player1, recent_moves)
+        try:
+            (
+                p1_buttons,
+                p1_move_name,
+            ) = await trained_llm.chat.remote.aio(
+                p1_messages,
+                character,
+                super_arts[0],
+                obs_p1["super_count"][0],
+                p1_side,
+            )
+        except Exception as e:
+            print(f"trained_llm.chat failed: {e}", file=sys.stderr)
+            sandbox.terminate()
+            return []
+
+        # run opponent policy
+        p2_messages = create_messages(game_info, player1, player2)
+        try:
+            response = openai_client.responses.create(
+                model=opponent,
+                input=p2_messages,
+                reasoning=reasoning,
+                text=text,
+            )
+            p2_move_name = response.output_text
+            p2_buttons = parse_move(character, p2_move_name, obs_p2["side"])
+        except Exception as e:
+            print(f"openai_client.responses.create failed: {e}", file=sys.stderr)
+            sandbox.terminate()
+            return []
+
+        # pad shorter move sequence to match longer one
+        if len(p1_buttons) > len(p2_buttons):
+            p2_buttons = p2_buttons + [0] * (len(p1_buttons) - len(p2_buttons))
+        elif len(p2_buttons) > len(p1_buttons):
+            p1_buttons = p1_buttons + [0] * (len(p2_buttons) - len(p1_buttons))
+
+        # step env
+        for p1_button, p2_button in zip(p1_buttons, p2_buttons):
+            try:
+                (
+                    observation,
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                ) = env.step(
+                    {
+                        "agent_0": p1_button,
+                        "agent_1": p2_button,
+                    }
+                )
+            except Exception as e:
+                print(f"env.step() failed for step {step_idx}: {e}", file=sys.stderr)
+                sandbox.terminate()
+                return []
+
+            if save_video:
+                boxes, class_ids = await yolo.detect_characters.remote.aio(
+                    [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
+                    observation["frame"],
+                )
+                frames.append(observation["frame"])
+
+        recent_moves.append(p1_move_name)
+        if len(recent_moves) > recent_move_limit:
+            recent_moves.pop(0)
+
+        if terminated or truncated:
+            break
+
+        step_idx += 1
+        pbar.update(1)
+
+    pbar.close()
+    print("Episode finished.")
+
+    # misc
+
+    if save_video and len(frames) > 0:
+        import cv2
+
+        print("Saving video...")
+
+        out_path = cache_path / f"eval_{idx}.mp4"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        scale_factor = 3  # 384x224 -> 1152x672
+        orig_height, orig_width = frames[0].shape[:2]
+        up_height, up_width = orig_height * scale_factor, orig_width * scale_factor
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        video_writer = cv2.VideoWriter(
+            str(out_path),
+            fourcc,
+            60.0,
+            (up_width, up_height),  # 60 fps
+        )
+
+        for frame in frames:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            frame = cv2.resize(
+                frame, (up_width, up_height), interpolation=cv2.INTER_LINEAR
+            )
+            video_writer.write(frame)
+
+        video_writer.release()
+        print(f"Saved video to {out_path}")
+
+    print("Cleaning up...")
+    try:
+        env.close()
+    except Exception as e:
+        warnings.warn(f"Couldn't close environment: {e}")
+    sandbox.terminate()
+    print("Done.")
+
+    p1_wins = observation["P1"]["wins"][0]
+    p2_wins = observation["P2"]["wins"][0]
+    if p1_wins > p2_wins:
+        winner = current_ckpt_path
+    elif p2_wins > p1_wins:
+        winner = opponent
+    else:
+        winner = None
+    return winner
+
+
+def create_win_rate_matrix_visualization(
+    models: list,
+    match_results: list,
+    save_path: str = None,
+):
+    from collections import defaultdict
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    wins = defaultdict(lambda: defaultdict(int))
+    total_matches = defaultdict(lambda: defaultdict(int))
+
+    for result in match_results:
+        if result is not None:
+            winner = result
+            loser = [m for m in models if m != winner][0]
+            wins[winner][loser] += 1
+            total_matches[winner][loser] += 1
+            total_matches[loser][winner] += 1
+        else:
+            total_matches[models[0]][models[1]] += 1
+            total_matches[models[1]][models[0]] += 1
+
+    n = len(models)
+    win_rate_matrix = np.zeros((n, n))
+
+    for i, model_i in enumerate(models):
+        for j, model_j in enumerate(models):
+            win_rate = wins[model_i][model_j] / total_matches[model_i][model_j]
+            win_rate_matrix[i, j] = win_rate
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    im = ax.imshow(win_rate_matrix, cmap="RdYlGn", vmin=0, vmax=1, aspect="auto")
+    model_labels = [m.split("/")[-1] if "/" in m else m for m in models]
+    ax.set_xticks(np.arange(n))
+    ax.set_yticks(np.arange(n))
+    ax.set_xticklabels(model_labels, rotation=45, ha="right")
+    ax.set_yticklabels(model_labels)
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("Win Rate", rotation=270, labelpad=20)
+
+    for i in range(n):
+        for j in range(n):
+            ax.text(
+                j,
+                i,
+                f"{win_rate_matrix[i, j]:.2f}",
+                ha="center",
+                va="center",
+                color="black" if 0.3 < win_rate_matrix[i, j] < 0.7 else "white",
+            )
+
+    ax.set_title("Win Rate Matrix\n(Row vs Column)", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Opponent", fontsize=12)
+    ax.set_ylabel("Player", fontsize=12)
+
+    plt.tight_layout()
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"Win rate matrix visualization saved to {save_path}")
+    plt.close()
+
+    return win_rate_matrix
+
+
+def calculate_elo_scores(
+    models: list,
+    match_results: list,
+):
+    from collections import defaultdict
+
+    ratings = defaultdict(lambda: initial_rating)
+    match_history = []
+    elo_over_time = {model: [initial_rating] for model in models}
+
+    for match_idx, result in enumerate(match_results):
+        if result is not None:
+            winner = result
+            loser = [m for m in models if m != winner][0]
+
+            r_winner = ratings[winner]
+            r_loser = ratings[loser]
+
+            e_winner = 1 / (1 + 10 ** ((r_loser - r_winner) / 400))
+            e_loser = 1 / (1 + 10 ** ((r_winner - r_loser) / 400))
+
+            ratings[winner] = r_winner + k_factor * (1 - e_winner)
+            ratings[loser] = r_loser + k_factor * (0 - e_loser)
+
+            match_history.append(
+                {
+                    "match_num": match_idx + 1,
+                    "type": "win",
+                    "winner": winner,
+                    "loser": loser,
+                    "winner_elo_before": r_winner,
+                    "winner_elo_after": ratings[winner],
+                    "loser_elo_before": r_loser,
+                    "loser_elo_after": ratings[loser],
+                }
+            )
+        else:
+            r1 = ratings[models[0]]
+            r2 = ratings[models[1]]
+
+            e1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
+            e2 = 1 / (1 + 10 ** ((r1 - r2) / 400))
+
+            ratings[models[0]] = r1 + k_factor * (0.5 - e1)
+            ratings[models[1]] = r2 + k_factor * (0.5 - e2)
+
+            match_history.append(
+                {
+                    "match_num": match_idx + 1,
+                    "type": "draw",
+                    "player1": models[0],
+                    "player2": models[1],
+                    "player1_elo_before": r1,
+                    "player1_elo_after": ratings[models[0]],
+                    "player2_elo_before": r2,
+                    "player2_elo_after": ratings[models[1]],
+                }
+            )
+
+        for model in models:
+            elo_over_time[model].append(ratings[model])
+
+    return dict(ratings), match_history, elo_over_time
+
+
+def create_match_history_visualization(
+    models: list,
+    match_results: list,
+    save_path: str = None,
+):
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    elo_scores, match_history, elo_over_time = calculate_elo_scores(
+        models, match_results
     )
-    train_dataset = dataset["train"]
-    val_dataset = dataset["test"]
 
-    os.environ["WANDB_PROJECT"] = f"{app.name}-{MODEL_NAME.split('/')[-1].lower()}-orpo"
-    save_path = cache_path / run_name
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
 
-    load_path = current_ckpt_path or MODEL_NAME
-    model = AutoModelForCausalLM.from_pretrained(load_path)
-    tokenizer = AutoTokenizer.from_pretrained(load_path)
+    for model in models:
+        elo_trajectory = elo_over_time[model]
+        label = model.split("/")[-1] if "/" in model else model
+        ax1.plot(
+            range(len(elo_trajectory)),
+            elo_trajectory,
+            marker="o",
+            markersize=3,
+            linewidth=2,
+            label=label,
+            alpha=0.8,
+        )
 
-    batch_size = 8
-    log_steps = 10
-
-    training_args = ORPOConfig(
-        # sppo
-        beta=0.1,
-        # hp
-        max_steps=max_steps,
-        per_device_train_batch_size=batch_size,
-        gradient_accumulation_steps=1,
-        learning_rate=5e-5,
-        lr_scheduler_type="cosine",
-        bf16=True,
-        # eval
-        eval_strategy="steps",
-        eval_steps=log_steps,
-        per_device_eval_batch_size=batch_size,
-        # wandb
-        report_to="wandb",
-        run_name=run_name,
-        logging_steps=log_steps,
-        # ckpt
-        output_dir=save_path,
-        resume_from_checkpoint=current_ckpt_path,
-        # misc
-        seed=seed,
-        remove_unused_columns=False,
+    ax1.axhline(
+        y=initial_rating,
+        color="gray",
+        linestyle="--",
+        alpha=0.5,
+        label=f"Initial ({initial_rating})",
     )
-    trainer = ORPOTrainer(
-        model=model,
-        args=training_args,
-        processing_class=tokenizer,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-    )
-    trainer.train()
+    ax1.set_xlabel("Match Number", fontsize=12)
+    ax1.set_ylabel("ELO Rating", fontsize=12)
+    ax1.set_title("ELO Rating Progression Over Time", fontsize=14, fontweight="bold")
+    ax1.legend(loc="best")
+    ax1.grid(True, alpha=0.3)
 
-    return str(save_path / f"checkpoint-{max_steps}"), current_ckpt_path
+    match_nums = []
+    outcomes = []
+    colors = []
+
+    for match in match_history:
+        match_nums.append(match["match_num"])
+        if match["type"] == "win":
+            winner = match["winner"]
+            if winner == models[0]:
+                outcomes.append(1)
+                colors.append("green")
+            else:
+                outcomes.append(-1)
+                colors.append("red")
+        else:
+            outcomes.append(0)
+            colors.append("yellow")
+
+    ax2.scatter(match_nums, outcomes, c=colors, s=50, alpha=0.7, edgecolors="black")
+    ax2.set_xlabel("Match Number", fontsize=12)
+    ax2.set_ylabel("Match Outcome", fontsize=12)
+    ax2.set_title("Match Outcomes Timeline", fontsize=14, fontweight="bold")
+    ax2.set_yticks([-1, 0, 1])
+    ax2.set_yticklabels(
+        [
+            f"{models[1] if len(models) > 1 else 'Opponent'} Win",
+            "Draw",
+            f"{models[0]} Win",
+        ]
+    )
+    ax2.grid(True, axis="y", alpha=0.3)
+    ax2.set_ylim(-1.5, 1.5)
+
+    current_streak = 0
+    max_streak = 0
+    streak_owner = None
+
+    for outcome in outcomes:
+        if outcome == 1:
+            if current_streak >= 0:
+                current_streak += 1
+            else:
+                current_streak = 1
+            if current_streak > max_streak:
+                max_streak = current_streak
+                streak_owner = models[0]
+        elif outcome == -1:
+            if current_streak <= 0:
+                current_streak -= 1
+            else:
+                current_streak = -1
+            if abs(current_streak) > max_streak:
+                max_streak = abs(current_streak)
+                streak_owner = models[1] if len(models) > 1 else "Opponent"
+        else:
+            current_streak = 0
+
+    total_matches = len(match_results)
+    wins_p1 = sum(1 for r in match_results if r == models[0])
+    wins_p2 = sum(1 for r in match_results if r != models[0] and r is not None)
+    draws = sum(1 for r in match_results if r is None)
+
+    summary_text = f"Total Matches: {total_matches}\n"
+    summary_text += (
+        f"{models[0]}: {wins_p1} wins ({wins_p1 / total_matches * 100:.1f}%)\n"
+    )
+    if len(models) > 1:
+        summary_text += (
+            f"{models[1]}: {wins_p2} wins ({wins_p2 / total_matches * 100:.1f}%)\n"
+        )
+    summary_text += f"Draws: {draws} ({draws / total_matches * 100:.1f}%)\n"
+    summary_text += f"Max Win Streak: {max_streak} ({streak_owner})"
+
+    ax2.text(
+        0.02,
+        0.98,
+        summary_text,
+        transform=ax2.transAxes,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
+
+    plt.suptitle(
+        f"Match History Analysis (K-factor: {k_factor})", fontsize=16, fontweight="bold"
+    )
+    plt.tight_layout()
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"Match history visualization saved to {save_path}")
+    plt.close()
+
+    return elo_scores
+
+
+@app.function(
+    image=train_image,
+    volumes={cache_path: cache_volume},
+    # region=region,
+    timeout=2 * 60 * minutes,
+)
+async def evaluate_model(
+    n_episodes: int,
+    current_ckpt_path: str = "",
+):
+    import random
+
+    video_idxs = range(n_episodes)
+    if n_videos_per_round < n_episodes:
+        video_idxs = random.sample(range(n_episodes), n_videos_per_round)
+
+    data = []
+    async for winner in run_episode_eval.starmap.aio(
+        [
+            (
+                idx,
+                idx in video_idxs,
+                current_ckpt_path,
+            )
+            for idx in range(n_episodes)
+        ]
+    ):
+        data.append(winner)
+
+    if len(data) == 0:
+        raise Exception("No data collected")
+
+    models = [current_ckpt_path, opponent]
+
+    viz_path = cache_path / "match_history.png"
+    elo_scores = create_match_history_visualization(
+        models, data, save_path=str(viz_path)
+    )
+    matrix_path = cache_path / "win-rate-matrix.png"
+    create_win_rate_matrix_visualization(models, data, save_path=str(matrix_path))
+
+    return {
+        "trained_win_rate": sum(1 for r in data if r == current_ckpt_path) / len(data),
+        "trained_elo": elo_scores[current_ckpt_path],
+        "opponent_win_rate": sum(1 for r in data if r == opponent) / len(data),
+        "opponent_elo": elo_scores[opponent],
+        "draw_rate": sum(1 for r in data if r is None) / len(data),
+    }
 
 
 @app.local_entrypoint()
 async def local(
-    # data
+    # scale
     n_rounds: int = 10,
-    n_train_episodes_per_round: int = 450,
-    n_val_episodes_per_round: int = 50,
-    n_move_returns: int = 5,
-    frozen_random_prob_start: float = 0.75,
-    frozen_random_prob_end: float = 0.25,
-    n_videos_per_round: int = 1,
-    max_steps_without_reward: int = 50,
+    n_train_episodes_per_round: int = 900,
+    n_val_episodes_per_round: int = 100,
     # training
-    max_steps: int = 500,
+    max_steps: int = 1000,
+    # evaluation
+    n_eval_episodes: int = 100,
 ):
     import asyncio
-    import time
 
-    prior_ckpt_path = ""
     current_ckpt_path = ""
+    all_prior_models = []
 
     for round_idx in range(n_rounds):
-        run_name = f"{round_idx}-{time.strftime('%Y%m%d_%H%M%S')}"
+        status = get_round_status.remote(round_idx, max_steps)
+        run_name = status["run_name"]
 
-        # linear curriculum for opponent diversity
-        denom = max(1, n_rounds - 1)
-        frac = round_idx / denom
-        frozen_random_prob = max(
-            frozen_random_prob_end,
-            frozen_random_prob_start * (1.0 - frac),
-        )
+        if status["training_complete"] and status["final_checkpoint"]:
+            if current_ckpt_path:
+                all_prior_models.append(current_ckpt_path)
+            current_ckpt_path = status["final_checkpoint"]
+            continue
 
-        await asyncio.gather(
-            create_dataset.remote.aio(
-                "train",
-                run_name,
-                n_train_episodes_per_round,
-                n_move_returns,
-                frozen_random_prob,
-                n_videos_per_round,
-                max_steps_without_reward,
-                current_ckpt_path,
-                prior_ckpt_path,
-            ),
-            create_dataset.remote.aio(
-                "val",
-                run_name,
-                n_val_episodes_per_round,
-                n_move_returns,
-                frozen_random_prob,
-                n_videos_per_round,
-                max_steps_without_reward,
-                current_ckpt_path,
-                prior_ckpt_path,
-            ),
+        if not (status["has_train_ds"] and status["has_val_ds"]):
+            if round_idx == 0:  # only random moves for bootstrapping
+                opponent_pool = []
+            elif round_idx == 1:  # self-play against round 0 model + random
+                opponent_pool = [current_ckpt_path] if current_ckpt_path else []
+            else:  # mix of recent models for diverse opponents
+                recent_models = all_prior_models[-opponent_pool_size_per_round:]
+                opponent_pool = recent_models + [None] if recent_models else [None]
+
+            ckpt_to_use = "" if round_idx == 0 else current_ckpt_path
+
+            await asyncio.gather(
+                create_dataset.remote.aio(
+                    "train",
+                    run_name,
+                    n_train_episodes_per_round,
+                    round_idx,
+                    ckpt_to_use,
+                    opponent_pool,
+                ),
+                create_dataset.remote.aio(
+                    "val",
+                    run_name,
+                    n_val_episodes_per_round,
+                    round_idx,
+                    ckpt_to_use,
+                    opponent_pool,
+                ),
+            )
+
+        status = get_round_status.remote(round_idx, max_steps)
+        model_to_train_from = "" if round_idx == 0 else current_ckpt_path
+
+        progress = round_idx / max(1, n_rounds - 1)
+        beta = start_beta + (end_beta - start_beta) * progress
+        lr = start_lr + (end_lr - start_lr) * progress
+
+        print(f"Round {round_idx}: beta={beta:.3f}, lr={lr:.2e}")
+
+        new_ckpt_path = train_model.remote(
+            run_name,
+            max_steps,
+            beta,
+            lr,
+            model_to_train_from,
+            status["can_resume"],
         )
-        current_ckpt_path, prior_ckpt_path = train_model.remote(
-            run_name, max_steps, current_ckpt_path, prior_ckpt_path
-        )
+        if current_ckpt_path:
+            all_prior_models.append(current_ckpt_path)
+        current_ckpt_path = new_ckpt_path
+
+    stats = evaluate_model.remote(
+        n_eval_episodes,
+        current_ckpt_path,
+    )
+    print(stats)

@@ -30,11 +30,8 @@ then store it as `assets/engine/sfiii3n.zip`.
 # Test the (trained) YOLO model
 modal run -m src.yolo
 
-# Test the LLM
+# Test the (pretrained or trained) LLM
 modal run -m src.llm
-
-# Test the (pretrained) RM
-modal run -m src.training.rm
 
 # Serve the web app
 modal serve -m src.app
