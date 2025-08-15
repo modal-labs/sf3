@@ -1,4 +1,4 @@
-import { byId } from './utils.js';
+import { byId } from "./utils.js";
 
 export const WebSocketManager = {
   socket: null,

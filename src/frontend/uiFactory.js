@@ -40,16 +40,19 @@ export const UIFactory = {
       const isSelectedByP2 =
         isPortrait && gameState.characterGrid.p2.character === character;
 
-      if (isPortrait && !isSelectedByP1 && !isSelectedByP2) {
-        element.classList.remove("border-transparent");
-        const currentBorderColor = `border-${getPlayerColor(
-          gameState.characterGrid.activePlayer
-        )}`;
-        element.classList.add(currentBorderColor);
-      } else if (!isPortrait) {
+      if (isPortrait) {
+        if (!isSelectedByP1 && !isSelectedByP2) {
+          element.classList.remove("border-transparent");
+          const currentBorderColor = `border-${getPlayerColor(
+            gameState.characterGrid.activePlayer
+          )}`;
+          element.classList.add(currentBorderColor);
+        }
+      } else {
         if (
           !element.classList.contains("border-sf-red") &&
-          !element.classList.contains("border-sf-blue")
+          !element.classList.contains("border-sf-blue") &&
+          !element.classList.contains("border-sf-green")
         ) {
           element.classList.remove("border-transparent");
           const currentBorderColor = `border-${getPlayerColor(
@@ -80,18 +83,45 @@ export const UIFactory = {
         : gameState.characterGrid.p2.outfit === index + 1;
 
       if (!isSelectedByP1 && !isSelectedByP2) {
-        element.classList.remove("border-sf-red", "border-sf-blue");
+        element.classList.remove(
+          "border-sf-red",
+          "border-sf-blue",
+          "border-sf-green"
+        );
         element.classList.add("border-transparent");
       } else if (isPortrait) {
         element.classList.remove(
           "border-sf-red",
           "border-sf-blue",
+          "border-sf-green",
           "border-transparent"
         );
-        if (isSelectedByP1) {
+        if (isSelectedByP1 && isSelectedByP2) {
+          element.classList.add("border-sf-green");
+        } else if (isSelectedByP1) {
           element.classList.add("border-sf-blue");
         } else if (isSelectedByP2) {
           element.classList.add("border-sf-red");
+        }
+      } else {
+        const sameCharacter =
+          gameState.characterGrid.p1.character ===
+          gameState.characterGrid.p2.character;
+        element.classList.remove(
+          "border-sf-red",
+          "border-sf-blue",
+          "border-sf-green",
+          "border-transparent"
+        );
+
+        if (sameCharacter && isSelectedByP1 && isSelectedByP2) {
+          element.classList.add("border-sf-green");
+        } else if (isSelectedByP1) {
+          element.classList.add("border-sf-blue");
+        } else if (isSelectedByP2) {
+          element.classList.add("border-sf-red");
+        } else {
+          element.classList.add("border-transparent");
         }
       }
 

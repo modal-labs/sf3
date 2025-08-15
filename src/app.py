@@ -241,8 +241,9 @@ class Web:
 
                 # game duration state
 
-                self.player1_next_moves = []
-                self.player2_next_moves = []
+                self.player1_next_buttons = []
+                self.player2_next_buttons = []
+                self.next_buttons_limit = 30
                 self.player1_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
 
@@ -276,7 +277,9 @@ class Web:
                 # super art
 
                 if action == 18:
-                    super_art_name = action_data["super_art"]
+                    super_art_name = action_data.get("super_art")
+                    if not super_art_name:
+                        return
 
                     p1_obs = self.observation["P1"]
                     p1_character = CHARACTER_TO_ID[
@@ -288,7 +291,7 @@ class Web:
                         p1_character in SPECIAL_MOVES
                         and super_art_name in SPECIAL_MOVES[p1_character]
                     ):
-                        self.player1_next_moves.extend(
+                        self.player1_next_buttons.extend(
                             SPECIAL_MOVES[p1_character][super_art_name][p1_direction]
                         )
 
@@ -304,7 +307,7 @@ class Web:
                     p1_direction = "left" if p1_obs["side"] == 0 else "right"
 
                     if p1_character in COMBOS and combo_name in COMBOS[p1_character]:
-                        self.player1_next_moves.extend(
+                        self.player1_next_buttons.extend(
                             COMBOS[p1_character][combo_name][p1_direction]
                         )
 
@@ -314,7 +317,7 @@ class Web:
                     if action <= 8:  # directional, so don't queue
                         self.player1_current_action = action
                     else:  # attack moves (9-17), so queue
-                        self.player1_next_moves.append(action)
+                        self.player1_next_buttons.append(action)
 
             async def cleanup_environment(self):
                 print("Cleaning up environment...")
@@ -338,8 +341,8 @@ class Web:
                 self.game_state = create_initial_game_state()
                 self.observation = None
                 self.info = None
-                self.player1_next_moves = []
-                self.player2_next_moves = []
+                self.player1_next_buttons = []
+                self.player2_next_buttons = []
                 self.player1_recent_move_names = []
                 self.player2_recent_move_names = []
                 self.player1_current_action = 0
@@ -504,8 +507,15 @@ class Web:
                                 obs_p1["super_count"][0],
                                 obs_p1["side"],
                             )
-                            session.player1_next_moves.extend(moves_p1)
+                            session.player1_next_buttons.extend(moves_p1)
                             session.player1_recent_move_names.append(move_name_p1)
+
+                            if (
+                                len(session.player1_next_buttons)
+                                > session.next_buttons_limit
+                            ):
+                                session.player1_next_buttons.pop(0)
+
                             if (
                                 len(session.player1_recent_move_names)
                                 > session.recent_move_limit
@@ -529,8 +539,15 @@ class Web:
                             obs_p2["super_count"][0],
                             obs_p2["side"],
                         )
-                        session.player2_next_moves.extend(moves)
+                        session.player2_next_buttons.extend(moves)
                         session.player2_recent_move_names.append(move_name)
+
+                        if (
+                            len(session.player2_next_buttons)
+                            > session.next_buttons_limit
+                        ):
+                            session.player2_next_buttons.pop(0)
+
                         if (
                             len(session.player2_recent_move_names)
                             > session.recent_move_limit
@@ -573,7 +590,7 @@ class Web:
                             disable_joystick=disable_joystick,
                             render_mode="rgb_array",
                             splash_screen=False,
-                            grpc_timeout=15,
+                            grpc_timeout=30,
                             action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
                             characters=[
                                 p1_settings["character"],
@@ -591,7 +608,7 @@ class Web:
                         try:
                             session.env = await asyncio.wait_for(
                                 asyncio.to_thread(arena.make, "sfiii3n", settings),
-                                timeout=15,
+                                timeout=30,
                             )
                         except Exception as e:
                             print(f"Error creating DIAMBRA environment: {e}")
@@ -644,15 +661,15 @@ class Web:
                                     session.transition_start_time = None
                             else:
                                 session.actions = {
-                                    "agent_0": session.player1_next_moves.pop(0)
-                                    if session.player1_next_moves
+                                    "agent_0": session.player1_next_buttons.pop(0)
+                                    if session.player1_next_buttons
                                     else (
                                         session.player1_current_action
                                         if session.game_settings.get("humanVsLlm", True)
                                         else 0
                                     ),
-                                    "agent_1": session.player2_next_moves.pop(0)
-                                    if session.player2_next_moves
+                                    "agent_1": session.player2_next_buttons.pop(0)
+                                    if session.player2_next_buttons
                                     else 0,
                                 }
 
