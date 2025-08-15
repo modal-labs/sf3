@@ -29,6 +29,7 @@ class StreetFighterGame {
   initializeState() {
     this.assetsLoaded = false;
     this.capcomTimeout = null;
+    this.transitionTimeout = null;
 
     this.gameState = {
       humanVsLlm: true,
@@ -587,6 +588,10 @@ class StreetFighterGame {
         '<p class="text-sf-red">Failed to load combos</p>';
       elements.superArtsList.innerHTML =
         '<p class="text-sf-red">Failed to load super arts</p>';
+
+      this.combos = {};
+      this.specialMoves = {};
+      this.movesByLength = {};
     }
   }
 
@@ -1295,10 +1300,10 @@ class StreetFighterGame {
 
   processGamepadInput(currentState) {
     const directions = {
-      left: currentState.axes.left.x < -0.5 || currentState.buttons[14],
-      right: currentState.axes.left.x > 0.5 || currentState.buttons[15],
-      up: currentState.axes.left.y < -0.5 || currentState.buttons[12],
-      down: currentState.axes.left.y > 0.5 || currentState.buttons[13],
+      left: currentState.axes.left.x < -0.3 || currentState.buttons[14],
+      right: currentState.axes.left.x > 0.3 || currentState.buttons[15],
+      up: currentState.axes.left.y < -0.3 || currentState.buttons[12],
+      down: currentState.axes.left.y > 0.3 || currentState.buttons[13],
     };
 
     const attacks = {
@@ -1464,15 +1469,6 @@ class StreetFighterGame {
       if (elapsedTime >= this.transitionMinDisplayTime) {
         this.hideTransitionOverlay();
       } else {
-        const remainingTime = this.transitionMinDisplayTime - elapsedTime;
-        setTimeout(() => {
-          if (
-            this.gameState.readyToHideTransition &&
-            this.gameState.inTransition
-          ) {
-            this.hideTransitionOverlay();
-          }
-        }, remainingTime);
       }
     }
 
@@ -1569,6 +1565,11 @@ class StreetFighterGame {
   }
 
   handleTransition(data) {
+    if (this.transitionTimeout) {
+      clearTimeout(this.transitionTimeout);
+      this.transitionTimeout = null;
+    }
+
     this.gameState.inTransition = true;
     this.gameState.transitionStartTime = Date.now();
     this.gameState.readyToHideTransition = false;
@@ -1600,7 +1601,7 @@ class StreetFighterGame {
       header.classList.remove("hidden");
     }
 
-    setTimeout(() => {
+    this.transitionTimeout = setTimeout(() => {
       if (this.gameState.readyToHideTransition && this.gameState.inTransition) {
         this.hideTransitionOverlay();
       }
@@ -1608,6 +1609,11 @@ class StreetFighterGame {
   }
 
   hideTransitionOverlay() {
+    if (this.transitionTimeout) {
+      clearTimeout(this.transitionTimeout);
+      this.transitionTimeout = null;
+    }
+
     this.gameState.inTransition = false;
     this.gameState.transitionStartTime = null;
     this.gameState.readyToHideTransition = false;
@@ -1900,21 +1906,35 @@ class StreetFighterGame {
     const portraits = $$("#character-grid > div");
 
     portraits.forEach((el) => {
-      el.classList.remove("border-sf-red", "border-sf-blue");
+      el.classList.remove("border-sf-red", "border-sf-blue", "border-sf-green");
       el.classList.add("border-transparent");
     });
 
-    ["p1", "p2"].forEach((player) => {
-      if (this.characterGrid[player].character) {
-        const selected = Array.from(portraits).find(
-          (p) => p.dataset.character === this.characterGrid[player].character
-        );
-        if (selected) {
-          selected.classList.remove("border-transparent");
-          selected.classList.add(`border-${this.getPlayerColor(player)}`);
-        }
+    const p1Character = this.characterGrid.p1.character;
+    const p2Character = this.characterGrid.p2.character;
+    const sameCharacter = p1Character === p2Character && p1Character !== null;
+
+    if (sameCharacter) {
+      const selected = Array.from(portraits).find(
+        (p) => p.dataset.character === p1Character
+      );
+      if (selected) {
+        selected.classList.remove("border-transparent");
+        selected.classList.add("border-sf-green");
       }
-    });
+    } else {
+      ["p1", "p2"].forEach((player) => {
+        if (this.characterGrid[player].character) {
+          const selected = Array.from(portraits).find(
+            (p) => p.dataset.character === this.characterGrid[player].character
+          );
+          if (selected) {
+            selected.classList.remove("border-transparent");
+            selected.classList.add(`border-${this.getPlayerColor(player)}`);
+          }
+        }
+      });
+    }
   }
 
   selectCharacter(player, character) {
@@ -1931,9 +1951,14 @@ class StreetFighterGame {
     setTimeout(() => {
       selectedPortrait.classList.remove("animate-character-flash");
 
+      const previousCharacter = this.characterGrid[player].character;
+      const shouldResetOutfit = previousCharacter !== character;
+
       this.characterGrid[player].selected = true;
       this.characterGrid[player].character = character;
-      this.characterGrid[player].outfit = 1;
+      if (shouldResetOutfit) {
+        this.characterGrid[player].outfit = 1;
+      }
 
       if (player === "p1") {
         this.currentCharacter = character;
@@ -2019,14 +2044,33 @@ class StreetFighterGame {
   updateOutfitBorders() {
     const outfits = $$("#outfit-grid > div");
     const activePlayer = this.characterGrid.activePlayer;
-    const selectedOutfit = this.characterGrid[activePlayer].outfit;
-    const borderColor = `border-${this.getPlayerColor(activePlayer)}`;
+    const inactivePlayer = activePlayer === "p1" ? "p2" : "p1";
+
+    const sameCharacter =
+      this.characterGrid.p1.character === this.characterGrid.p2.character &&
+      this.characterGrid.p1.character !== null;
 
     outfits.forEach((el, index) => {
-      el.classList.remove("border-sf-red", "border-sf-blue");
-      if (selectedOutfit && selectedOutfit === index + 1) {
-        el.classList.remove("border-transparent");
-        el.classList.add(borderColor);
+      el.classList.remove(
+        "border-sf-red",
+        "border-sf-blue",
+        "border-sf-green",
+        "border-transparent"
+      );
+
+      const outfitNum = index + 1;
+      const p1Selected = this.characterGrid.p1.outfit === outfitNum;
+      const p2Selected = this.characterGrid.p2.outfit === outfitNum;
+
+      if (sameCharacter && p1Selected && p2Selected) {
+        el.classList.add("border-sf-green");
+      } else if (this.characterGrid[activePlayer].outfit === outfitNum) {
+        el.classList.add(`border-${this.getPlayerColor(activePlayer)}`);
+      } else if (
+        sameCharacter &&
+        this.characterGrid[inactivePlayer].outfit === outfitNum
+      ) {
+        el.classList.add(`border-${this.getPlayerColor(inactivePlayer)}`);
       } else {
         el.classList.add("border-transparent");
       }
@@ -2077,8 +2121,8 @@ class StreetFighterGame {
   resetSelections() {
     this.characterGrid = {
       activePlayer: "p1",
-      p1: { selected: false, character: "Ryu", outfit: 1 },
-      p2: { selected: false, character: "Ken", outfit: 1 },
+      p1: { selected: false, character: "Ken", outfit: 1 },
+      p2: { selected: false, character: "Ryu", outfit: 1 },
     };
 
     this.currentCharacter = null;
@@ -2110,7 +2154,7 @@ class StreetFighterGame {
     this.updatePlayerBoxes();
     this.updateCharacterBorders();
 
-    this.initializeOutfitGrid(null);
+    this.initializeOutfitGrid("Ken");
     this.updateGamepadSections(true);
   }
 
@@ -2160,6 +2204,11 @@ class StreetFighterGame {
     if (this.capcomTimeout) {
       clearTimeout(this.capcomTimeout);
       this.capcomTimeout = null;
+    }
+
+    if (this.transitionTimeout) {
+      clearTimeout(this.transitionTimeout);
+      this.transitionTimeout = null;
     }
 
     AudioManager.stopAll();
