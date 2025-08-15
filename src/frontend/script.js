@@ -254,6 +254,14 @@ class StreetFighterGame {
         this.updateSuperArtsDisplay(this.currentCharacter);
         this.updateHelpIconVisibility();
         this.updateGamepadNavVisibility();
+
+        const currentScreen = this.getCurrentScreen();
+        if (currentScreen === this.screens.SPLASH) {
+          const muteButton = byId("mute-toggle");
+          if (muteButton) {
+            muteButton.classList.toggle("hidden", connected);
+          }
+        }
       },
       onInput: (state) => {
         this.processGamepadInput(state);
@@ -1710,7 +1718,8 @@ class StreetFighterGame {
       const hideMute =
         hideAll ||
         (isGameplay && this.gameState.humanVsLlm) ||
-        (isMinimalScreen && this.gameState.humanVsLlm);
+        (isMinimalScreen && this.gameState.humanVsLlm) ||
+        (screenId === this.screens.SPLASH && GamepadManager.isConnected());
       muteButton.classList.toggle("hidden", hideMute);
     }
 

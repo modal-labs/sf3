@@ -99,7 +99,7 @@ def main():
     # start training
 
     log_steps = 10
-    eval_steps = 100
+    eval_steps = args.max_steps // 10
 
     training_args = KTOConfig(
         max_length=max_length,

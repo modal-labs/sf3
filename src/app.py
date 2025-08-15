@@ -606,7 +606,16 @@ class Web:
                         session.game_state["status"] = "running"
                         await session.send_game_state()
 
-                        session.observation, session.info = session.env.reset()
+                        try:
+                            session.observation, session.info = session.env.reset()
+                        except Exception as e:
+                            print(f"Error during env.reset: {e}")
+                            session.game_state["status"] = "error"
+                            session.game_state["error"] = str(e)
+                            await session.send_game_state()
+                            await session.prepare_for_next_game()
+                            await session.send_game_state()
+                            continue
 
                         # according to https://docs.diambra.ai/envs/games/
                         # SF3 runs at 164 FPS natively, but we want 60 FPS output
