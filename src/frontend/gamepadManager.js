@@ -10,7 +10,9 @@ export const GamepadManager = {
     axes: { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } },
     buttons: {},
   },
-  deadzone: 0.3,
+  deadzone: 0.15,
+  gameplayThreshold: 0.25,
+  uiThreshold: 0.7,
   buttonMapping: {
     0: "LP",
     1: "MP",
@@ -75,7 +77,7 @@ export const GamepadManager = {
 
     const splashText = byId("splash-skip-text");
     if (splashText) {
-      splashText.textContent = "Press A/X to skip";
+      splashText.textContent = "Press A to skip";
     }
 
     document.body.classList.add("gamepad-connected");
@@ -179,10 +181,16 @@ export const GamepadManager = {
     const currentTime = Date.now();
 
     const directions = {
-      left: currentState.axes.left.x < -0.7 || currentState.buttons[14],
-      right: currentState.axes.left.x > 0.7 || currentState.buttons[15],
-      up: currentState.axes.left.y < -0.7 || currentState.buttons[12],
-      down: currentState.axes.left.y > 0.7 || currentState.buttons[13],
+      left:
+        currentState.axes.left.x < -this.uiThreshold ||
+        currentState.buttons[14],
+      right:
+        currentState.axes.left.x > this.uiThreshold || currentState.buttons[15],
+      up:
+        currentState.axes.left.y < -this.uiThreshold ||
+        currentState.buttons[12],
+      down:
+        currentState.axes.left.y > this.uiThreshold || currentState.buttons[13],
     };
 
     const buttons = {

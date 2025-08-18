@@ -97,8 +97,8 @@ def create_move_dict(moves_list):
 
 
 CLOSE_IN_MOVES = {
-    "Move Closer": create_move_dict([MOVES["Left"]] * 8),
-    "Jump Closer": create_move_dict([MOVES["Left+Up"]] * 4),
+    "Move Closer": create_move_dict([MOVES["Right"]] * 4),
+    "Jump Closer": create_move_dict([MOVES["Right+Up"]] * 4),
 }
 
 COMBOS = {
@@ -1824,7 +1824,7 @@ def create_messages(
     prev_player1: PlayerState | None = None,
     prev_player2: PlayerState | None = None,
     recent_moves: list[str] | None = None,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], list[str]]:
     past_info_available = (
         prev_game_info is not None
         and prev_player1 is not None
@@ -1863,19 +1863,28 @@ def create_messages(
             prev_game_info.boxes,
             prev_game_info.class_ids,
         )
-        p2_prev_x = (prev_p2_box[0] + prev_p2_box[2]) / 2
-        p2_curr_x = (p2_box[0] + p2_box[2]) / 2
-        p2_movement = p2_curr_x - p2_prev_x
 
-        p1_prev_x = (prev_p1_box[0] + prev_p1_box[2]) / 2
-        p1_curr_x = (p1_box[0] + p1_box[2]) / 2
-        p1_movement = p1_curr_x - p1_prev_x
+        if (
+            prev_p2_box is not None
+            and prev_p1_box is not None
+            and p2_box is not None
+            and p1_box is not None
+        ):
+            p2_prev_x = (prev_p2_box[0] + prev_p2_box[2]) / 2
+            p2_curr_x = (p2_box[0] + p2_box[2]) / 2
+            p2_movement = p2_curr_x - p2_prev_x
 
-        if p2_movement * p1_movement < 0:  # opposite directions
-            if abs(p2_curr_x - p1_curr_x) < abs(p2_prev_x - p1_prev_x):
-                position_prompt += " You are closing distance. Keep going or attack!"
-            else:
-                position_prompt += " Distance is increasing. Move closer."
+            p1_prev_x = (prev_p1_box[0] + prev_p1_box[2]) / 2
+            p1_curr_x = (p1_box[0] + p1_box[2]) / 2
+            p1_movement = p1_curr_x - p1_prev_x
+
+            if p2_movement * p1_movement < 0:  # opposite directions
+                if abs(p2_curr_x - p1_curr_x) < abs(p2_prev_x - p1_prev_x):
+                    position_prompt += (
+                        " You are closing distance. Keep going or attack!"
+                    )
+                else:
+                    position_prompt += " Distance is increasing. Move closer."
 
     # stun
     stun_prompt = f"Your stun bar is at {player2.stun_bar / STUN_BAR_MAX * 100}% . Your opponent's stun bar is at {player1.stun_bar / STUN_BAR_MAX * 100}%."
@@ -1928,7 +1937,7 @@ def create_messages(
     moves_prompt = "You may only use the following moves:\n"
     moves_prompt += chr(10).join("- " + move for move in available_moves)
 
-    return [  # OpenAI chat format
+    messages = [  # OpenAI chat format
         {
             "role": "system",
             "content": dedent(
@@ -1948,6 +1957,7 @@ def create_messages(
         },
         {"role": "user", "content": "Your next move is:"},
     ]
+    return messages, available_moves
 
 
 def est_super_ct(super_bar: int) -> int:
@@ -1962,7 +1972,7 @@ def est_super_ct(super_bar: int) -> int:
 
 
 def create_random_messages() -> tuple[
-    list[dict[str, str]], str, int, int, int
+    list[dict[str, str]], str, int, int, int, list[str]
 ]:  # for warmup, testing
     import random
 
@@ -2026,12 +2036,15 @@ def create_random_messages() -> tuple[
         super_bar=player2_super_bar,
     )
 
+    messages, available_moves = create_messages(game_info, player1, player2)
+
     return (
-        create_messages(game_info, player1, player2),
+        messages,
         player2_character,
         player2_super_art,
         player2_super_count,
         side,
+        available_moves,
     )
 
 
