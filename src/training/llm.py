@@ -188,12 +188,12 @@ recent_move_limit = 8
 opponent_pool_size_per_round = 4
 
 # td-lambda returns
-n_move_returns = 32
+n_move_returns = 32  # roughly length of round
 gamma = 0.99
 
 # misc
 n_videos_per_round = 1
-max_steps_without_reward = 64
+max_steps_without_reward = 128
 
 
 @app.function(
@@ -286,6 +286,9 @@ async def run_episode_data(
     step_idx = 0
     steps_without_reward = 0
 
+    prev_game_info = None
+    prev_player1_state = None
+    prev_player2_state = None
     p1_recent_moves = []
     p2_recent_moves = []
     step_data = []
@@ -334,7 +337,13 @@ async def run_episode_data(
 
         # run current policy
         p1_messages, p1_available_moves = create_messages(
-            game_info, player2, player1, p1_recent_moves
+            game_info,
+            player2,
+            player1,
+            prev_game_info,
+            prev_player2_state,
+            prev_player1_state,
+            p1_recent_moves,
         )
         if round_idx == 0:
             p1_move_name = random.choice(p1_available_moves)
@@ -359,7 +368,13 @@ async def run_episode_data(
 
         # run opponent policy
         p2_messages, p2_available_moves = create_messages(
-            game_info, player1, player2, p2_recent_moves
+            game_info,
+            player1,
+            player2,
+            prev_game_info,
+            prev_player1_state,
+            prev_player2_state,
+            p2_recent_moves,
         )
         if prior_llm is None:
             p2_move_name = random.choice(p2_available_moves)
@@ -431,6 +446,10 @@ async def run_episode_data(
         p2_recent_moves.append(p2_move_name)
         if len(p2_recent_moves) > recent_move_limit:
             p2_recent_moves.pop(0)
+
+        prev_game_info = game_info
+        prev_player1_state = player1
+        prev_player2_state = player2
 
         step_data.append(
             {
@@ -695,8 +714,8 @@ lr_scheduler_type = "cosine"
 warmup_ratio = 0.1
 start_beta = 0.1
 end_beta = 1
-start_lr = 1e-6
-end_lr = 5e-6
+start_lr = 1e-6  # 5e-7
+end_lr = 5e-6  # 1e-6
 
 
 @app.function(
@@ -865,440 +884,463 @@ def train_model(
     return str(save_path)
 
 
-# # evaluation
-
-
-# async def create_openai_client():
-#     from openai import OpenAI
-
-#     return OpenAI()
-
-
-# opponent = "gpt-5"
-# reasoning = {"effort": "minimal"}
-# text = {"verbosity": "low"}
-
-# k_factor = 16.0
-# initial_rating = 1200.0
-
-
-# @app.function(
-#     image=train_image,
-#     volumes={cache_path: cache_volume},
-#     # region=region,
-#     secrets=[modal.Secret.from_name("openai-secret")],
-#     timeout=2 * 60 * minutes,
-# )
-# async def run_episode_eval(
-#     idx: int,
-#     run_name: str,
-#     project_name: str,
-#     save_video: bool,
-#     current_ckpt_path: str = "",
-# ):
-#     import asyncio
-
-#     from tqdm import tqdm
-
-#     ## init bg processes
-
-#     characters = [character, character]
-#     outfits = [outfit, outfit]
-#     super_arts = [super_art, super_art]
-
-#     tasks = [
-#         create_sandbox(),
-#         create_yolo(),
-#         create_llm(current_ckpt_path),
-#         create_openai_client(),
-#     ]
-#     sandbox, yolo, trained_llm, openai_client = await asyncio.gather(*tasks)
-
-#     if sandbox is None:
-#         return None
-#     if yolo is None:
-#         sandbox.terminate()
-#         return None
-#     if trained_llm is None:
-#         sandbox.terminate()
-#         return None
-
-#     try:
-#         env = await asyncio.wait_for(
-#             asyncio.to_thread(
-#                 create_environment,
-#                 characters,
-#                 outfits,
-#                 super_arts,
-#             ),
-#             timeout=30,
-#         )
-#     except asyncio.TimeoutError:
-#         print("Timeout while creating environment", file=sys.stderr)
-#         sandbox.terminate()
-#         return None
-#     if env is None:
-#         sandbox.terminate()
-#         return None
-
-#     # init episode
-
-#     try:
-#         observation, info = env.reset()
-#     except Exception as e:
-#         print(f"env.reset() failed: {e}", file=sys.stderr)
-#         sandbox.terminate()
-#         return None
-
-#     step_idx = 0
-
-#     winner = None
-#     p1_recent_moves = []
-#     p2_recent_moves = []
-#     frames = []
-
-#     # run episode
-
-#     print("Running episode...")
-#     pbar = tqdm(desc="step_idx", unit="step")
-#     while True:
-#         # get info for prompt
-#         obs_p1 = observation["P1"]
-#         obs_p2 = observation["P2"]
-#         boxes, class_ids = await yolo.detect_characters.remote.aio(
-#             [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
-#             observation["frame"],
-#         )
-#         game_info = GameInfo(
-#             timer=observation["timer"][0],
-#             boxes=boxes,
-#             class_ids=class_ids,
-#         )
-#         p1_side = obs_p1["side"]
-#         player1 = PlayerState(
-#             character=character,
-#             super_art=super_arts[0],
-#             wins=obs_p1["wins"][0],
-#             side=p1_side,
-#             stunned=obs_p1["stunned"],
-#             stun_bar=obs_p1["stun_bar"][0],
-#             health=obs_p1["health"][0],
-#             super_count=obs_p1["super_count"][0],
-#             super_bar=obs_p1["super_bar"][0],
-#         )
-#         player2 = PlayerState(
-#             character=character,
-#             super_art=super_arts[1],
-#             wins=obs_p2["wins"][0],
-#             side=obs_p2["side"],
-#             stunned=obs_p2["stunned"],
-#             stun_bar=obs_p2["stun_bar"][0],
-#             health=obs_p2["health"][0],
-#             super_count=obs_p2["super_count"][0],
-#             super_bar=obs_p2["super_bar"][0],
-#         )
-
-#         # run trained policy
-#         p1_messages = create_messages(game_info, player2, player1, p1_recent_moves)
-#         try:
-#             (
-#                 p1_buttons,
-#                 p1_move_name,
-#             ) = await trained_llm.chat.remote.aio(
-#                 p1_messages,
-#                 character,
-#                 super_arts[0],
-#                 obs_p1["super_count"][0],
-#                 p1_side,
-#             )
-#         except Exception as e:
-#             print(f"trained_llm.chat failed: {e}", file=sys.stderr)
-#             sandbox.terminate()
-#             return None
-
-#         # run opponent policy
-#         p2_messages = create_messages(game_info, player1, player2, p2_recent_moves)
-#         try:
-#             response = openai_client.responses.create(
-#                 model=opponent,
-#                 input=p2_messages,
-#                 reasoning=reasoning,
-#                 text=text,
-#             )
-#             p2_move_name = response.output_text
-#             p2_buttons = parse_move(character, p2_move_name, obs_p2["side"])
-#             if p2_buttons is None:
-#                 raise Exception(f"Invalid move from OpenAI: {p2_move_name}")
-#         except Exception as e:
-#             print(f"openai_client.responses.create failed: {e}", file=sys.stderr)
-#             sandbox.terminate()
-#             return None
-
-#         # pad shorter move sequence to match longer one
-#         if len(p1_buttons) > len(p2_buttons):
-#             p2_buttons = p2_buttons + [0] * (len(p1_buttons) - len(p2_buttons))
-#         elif len(p2_buttons) > len(p1_buttons):
-#             p1_buttons = p1_buttons + [0] * (len(p2_buttons) - len(p1_buttons))
-
-#         # step env
-#         for p1_button, p2_button in zip(p1_buttons, p2_buttons):
-#             try:
-#                 (
-#                     observation,
-#                     reward,
-#                     terminated,
-#                     truncated,
-#                     info,
-#                 ) = env.step(
-#                     {
-#                         "agent_0": p1_button,
-#                         "agent_1": p2_button,
-#                     }
-#                 )
-#             except Exception as e:
-#                 print(f"env.step() failed for step {step_idx}: {e}", file=sys.stderr)
-#                 sandbox.terminate()
-#                 return None
-
-#             if save_video:
-#                 boxes, class_ids = await yolo.detect_characters.remote.aio(
-#                     [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
-#                     observation["frame"],
-#                 )
-#                 frames.append(observation["frame"])
-
-#         p1_recent_moves.append(p1_move_name)
-#         if len(p1_recent_moves) > recent_move_limit:
-#             p1_recent_moves.pop(0)
-#         p2_recent_moves.append(p2_move_name)
-#         if len(p2_recent_moves) > recent_move_limit:
-#             p2_recent_moves.pop(0)
-
-#         if terminated or truncated:
-#             break
-
-#         step_idx += 1
-#         pbar.update(1)
-
-#     pbar.close()
-#     print("Episode finished.")
-
-#     # misc
-
-#     if save_video and len(frames) > 0:
-#         import cv2
-
-#         print("Saving video...")
-
-#         out_path = cache_path / project_name / run_name / f"eval_{idx}.mp4"
-#         out_path.parent.mkdir(parents=True, exist_ok=True)
-
-#         scale_factor = 3  # 384x224 -> 1152x672
-#         orig_height, orig_width = frames[0].shape[:2]
-#         up_height, up_width = orig_height * scale_factor, orig_width * scale_factor
-
-#         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-#         video_writer = cv2.VideoWriter(
-#             str(out_path),
-#             fourcc,
-#             60.0,
-#             (up_width, up_height),  # 60 fps
-#         )
-
-#         for frame in frames:
-#             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-#             frame = cv2.resize(
-#                 frame, (up_width, up_height), interpolation=cv2.INTER_LINEAR
-#             )
-#             video_writer.write(frame)
-
-#         video_writer.release()
-#         print(f"Saved video to {out_path}")
-
-#     print("Cleaning up...")
-#     try:
-#         env.close()
-#     except Exception as e:
-#         warnings.warn(f"Couldn't close environment: {e}")
-#     sandbox.terminate()
-#     print("Done.")
-
-#     p1_wins = observation["P1"]["wins"][0]
-#     p2_wins = observation["P2"]["wins"][0]
-#     if p1_wins > p2_wins:
-#         winner = current_ckpt_path or "pretrained"
-#     elif p2_wins > p1_wins:
-#         winner = opponent
-#     else:
-#         winner = None
-#     return winner
-
-
-# def calculate_elo_scores(
-#     models: list,
-#     match_results: list,
-# ):
-#     from collections import defaultdict
-
-#     ratings = defaultdict(lambda: initial_rating)
-#     match_history = []
-#     elo_over_time = {model: [initial_rating] for model in models}
-
-#     for match_idx, result in enumerate(match_results):
-#         if result is not None:
-#             winner = result
-#             loser = [m for m in models if m != winner][0]
-
-#             r_winner = ratings[winner]
-#             r_loser = ratings[loser]
-
-#             e_winner = 1 / (1 + 10 ** ((r_loser - r_winner) / 400))
-#             e_loser = 1 / (1 + 10 ** ((r_winner - r_loser) / 400))
-
-#             ratings[winner] = r_winner + k_factor * (1 - e_winner)
-#             ratings[loser] = r_loser + k_factor * (0 - e_loser)
-
-#             match_history.append(
-#                 {
-#                     "match_num": match_idx + 1,
-#                     "type": "win",
-#                     "winner": winner,
-#                     "loser": loser,
-#                     "winner_elo_before": r_winner,
-#                     "winner_elo_after": ratings[winner],
-#                     "loser_elo_before": r_loser,
-#                     "loser_elo_after": ratings[loser],
-#                 }
-#             )
-#         else:
-#             r1 = ratings[models[0]]
-#             r2 = ratings[models[1]]
-
-#             e1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
-#             e2 = 1 / (1 + 10 ** ((r1 - r2) / 400))
-
-#             ratings[models[0]] = r1 + k_factor * (0.5 - e1)
-#             ratings[models[1]] = r2 + k_factor * (0.5 - e2)
-
-#             match_history.append(
-#                 {
-#                     "match_num": match_idx + 1,
-#                     "type": "draw",
-#                     "player1": models[0],
-#                     "player2": models[1],
-#                     "player1_elo_before": r1,
-#                     "player1_elo_after": ratings[models[0]],
-#                     "player2_elo_before": r2,
-#                     "player2_elo_after": ratings[models[1]],
-#                 }
-#             )
-
-#         for model in models:
-#             elo_over_time[model].append(ratings[model])
-
-#     return dict(ratings), match_history, elo_over_time
-
-
-# def create_elo_prog_viz(
-#     models: list,
-#     match_results: list,
-#     save_path: str = None,
-# ):
-#     import matplotlib.pyplot as plt
-
-#     elo_scores, match_history, elo_over_time = calculate_elo_scores(
-#         models, match_results
-#     )
-
-#     fig, ax = plt.subplots(figsize=(12, 6))
-
-#     for model in models:
-#         elo_trajectory = elo_over_time[model]
-#         label = model.split("/")[-1] if "/" in model else model
-#         ax.plot(
-#             range(len(elo_trajectory)),
-#             elo_trajectory,
-#             marker="o",
-#             markersize=2,
-#             label=label,
-#         )
-#     ax.axhline(y=initial_rating, color="gray", linestyle="--", alpha=0.5)
-#     ax.set_xlabel("Match Number")
-#     ax.set_ylabel("ELO Rating")
-#     ax.set_title("ELO Progression")
-#     ax.legend()
-#     ax.grid(True, alpha=0.3)
-
-#     plt.tight_layout()
-#     save_path = Path(save_path)
-#     save_path.parent.mkdir(parents=True, exist_ok=True)
-#     plt.savefig(save_path, dpi=150, bbox_inches="tight")
-#     plt.close()
-
-#     print(f"Match history visualization saved to {save_path}")
-
-#     return elo_scores
-
-
-# @app.function(
-#     image=train_image,
-#     volumes={cache_path: cache_volume},
-#     # region=region,
-#     timeout=2 * 60 * minutes,
-# )
-# async def evaluate_model(
-#     run_name: str,
-#     project_name: str,
-#     n_episodes: int,
-#     eval_suffix: str,
-#     current_ckpt_path: str = "",
-# ):
-#     import json
-#     import random
-
-#     video_idxs = range(n_episodes)
-#     if n_videos_per_round < n_episodes:
-#         video_idxs = random.sample(range(n_episodes), n_videos_per_round)
-
-#     data = []
-#     async for winner in run_episode_eval.starmap.aio(
-#         [
-#             (
-#                 idx,
-#                 run_name,
-#                 project_name,
-#                 idx in video_idxs,
-#                 current_ckpt_path,
-#             )
-#             for idx in range(n_episodes)
-#         ]
-#     ):
-#         data.append(winner)
-
-#     if len(data) == 0:
-#         raise Exception("No data collected")
-
-#     if not current_ckpt_path:
-#         current_ckpt_path = "pretrained"
-
-#     models = [current_ckpt_path, opponent]
-
-#     viz_path = cache_path / project_name / f"match_history{eval_suffix}.png"
-#     elo_scores = create_elo_prog_viz(models, data, save_path=str(viz_path))
-
-#     eval_results_path = cache_path / project_name / f"eval_results{eval_suffix}.json"
-#     with open(eval_results_path, "w") as f:
-#         json.dump(
-#             {
-#                 "trained_elo": elo_scores[current_ckpt_path],
-#                 "opponent_elo": elo_scores[opponent],
-#                 "trained_win_rate": sum(1 for r in data if r == current_ckpt_path)
-#                 / len(data),
-#                 "opponent_win_rate": sum(1 for r in data if r == opponent) / len(data),
-#                 "draw_rate": sum(1 for r in data if r is None) / len(data),
-#             },
-#             f,
-#         )
+# evaluation
+
+
+async def create_openai_client():
+    from openai import OpenAI
+
+    return OpenAI()
+
+
+opponent = "gpt-5"
+reasoning = {"effort": "minimal"}
+text = {"verbosity": "low"}
+
+k_factor = 16.0
+initial_rating = 1200.0
+
+
+@app.function(
+    image=train_image,
+    volumes={cache_path: cache_volume},
+    # region=region,
+    secrets=[modal.Secret.from_name("openai-secret")],
+    timeout=2 * 60 * minutes,
+)
+async def run_episode_eval(
+    idx: int,
+    run_name: str,
+    project_name: str,
+    save_video: bool,
+    current_ckpt_path: str = "",
+):
+    import asyncio
+
+    from tqdm import tqdm
+
+    ## init bg processes
+
+    characters = [character, character]
+    outfits = [outfit, outfit]
+    super_arts = [super_art, super_art]
+
+    tasks = [
+        create_sandbox(),
+        create_yolo(),
+        create_llm(current_ckpt_path),
+        create_openai_client(),
+    ]
+    sandbox, yolo, trained_llm, openai_client = await asyncio.gather(*tasks)
+
+    if sandbox is None:
+        return None
+    if yolo is None:
+        sandbox.terminate()
+        return None
+    if trained_llm is None:
+        sandbox.terminate()
+        return None
+
+    try:
+        env = await asyncio.wait_for(
+            asyncio.to_thread(
+                create_environment,
+                characters,
+                outfits,
+                super_arts,
+            ),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        print("Timeout while creating environment", file=sys.stderr)
+        sandbox.terminate()
+        return None
+    if env is None:
+        sandbox.terminate()
+        return None
+
+    # init episode
+
+    try:
+        observation, info = env.reset()
+    except Exception as e:
+        print(f"env.reset() failed: {e}", file=sys.stderr)
+        sandbox.terminate()
+        return None
+
+    step_idx = 0
+    winner = None
+
+    prev_game_info = None
+    prev_player1_state = None
+    prev_player2_state = None
+    p1_recent_moves = []
+    p2_recent_moves = []
+    frames = []
+
+    # run episode
+
+    print("Running episode...")
+    pbar = tqdm(desc="step_idx", unit="step")
+    while True:
+        # get info for prompt
+        obs_p1 = observation["P1"]
+        obs_p2 = observation["P2"]
+        boxes, class_ids = await yolo.detect_characters.remote.aio(
+            [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
+            observation["frame"],
+        )
+        game_info = GameInfo(
+            timer=observation["timer"][0],
+            boxes=boxes,
+            class_ids=class_ids,
+        )
+        p1_side = obs_p1["side"]
+        player1 = PlayerState(
+            character=character,
+            super_art=super_arts[0],
+            wins=obs_p1["wins"][0],
+            side=p1_side,
+            stunned=obs_p1["stunned"],
+            stun_bar=obs_p1["stun_bar"][0],
+            health=obs_p1["health"][0],
+            super_count=obs_p1["super_count"][0],
+            super_bar=obs_p1["super_bar"][0],
+        )
+        player2 = PlayerState(
+            character=character,
+            super_art=super_arts[1],
+            wins=obs_p2["wins"][0],
+            side=obs_p2["side"],
+            stunned=obs_p2["stunned"],
+            stun_bar=obs_p2["stun_bar"][0],
+            health=obs_p2["health"][0],
+            super_count=obs_p2["super_count"][0],
+            super_bar=obs_p2["super_bar"][0],
+        )
+
+        # run trained policy
+        p1_messages = create_messages(
+            game_info,
+            player2,
+            player1,
+            prev_game_info,
+            prev_player2_state,
+            prev_player1_state,
+            p1_recent_moves,
+        )
+        try:
+            (
+                p1_buttons,
+                p1_move_name,
+            ) = await trained_llm.chat.remote.aio(
+                p1_messages,
+                character,
+                super_arts[0],
+                obs_p1["super_count"][0],
+                p1_side,
+            )
+        except Exception as e:
+            print(f"trained_llm.chat failed: {e}", file=sys.stderr)
+            sandbox.terminate()
+            return None
+
+        # run opponent policy
+        p2_messages = create_messages(
+            game_info,
+            player1,
+            player2,
+            prev_game_info,
+            prev_player1_state,
+            prev_player2_state,
+            p2_recent_moves,
+        )
+        try:
+            response = openai_client.responses.create(
+                model=opponent,
+                input=p2_messages,
+                reasoning=reasoning,
+                text=text,
+            )
+            p2_move_name = response.output_text
+            p2_buttons = parse_move(character, p2_move_name, obs_p2["side"])
+            if p2_buttons is None:
+                raise Exception(f"Invalid move from OpenAI: {p2_move_name}")
+        except Exception as e:
+            print(f"openai_client.responses.create failed: {e}", file=sys.stderr)
+            sandbox.terminate()
+            return None
+
+        # pad shorter move sequence to match longer one
+        if len(p1_buttons) > len(p2_buttons):
+            p2_buttons = p2_buttons + [0] * (len(p1_buttons) - len(p2_buttons))
+        elif len(p2_buttons) > len(p1_buttons):
+            p1_buttons = p1_buttons + [0] * (len(p2_buttons) - len(p1_buttons))
+
+        # step env
+        for p1_button, p2_button in zip(p1_buttons, p2_buttons):
+            try:
+                (
+                    observation,
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                ) = env.step(
+                    {
+                        "agent_0": p1_button,
+                        "agent_1": p2_button,
+                    }
+                )
+            except Exception as e:
+                print(f"env.step() failed for step {step_idx}: {e}", file=sys.stderr)
+                sandbox.terminate()
+                return None
+
+            if save_video:
+                boxes, class_ids = await yolo.detect_characters.remote.aio(
+                    [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
+                    observation["frame"],
+                )
+                frames.append(observation["frame"])
+
+        p1_recent_moves.append(p1_move_name)
+        if len(p1_recent_moves) > recent_move_limit:
+            p1_recent_moves.pop(0)
+        p2_recent_moves.append(p2_move_name)
+        if len(p2_recent_moves) > recent_move_limit:
+            p2_recent_moves.pop(0)
+
+        prev_game_info = game_info
+        prev_player1_state = player1
+        prev_player2_state = player2
+
+        if terminated or truncated:
+            break
+
+        step_idx += 1
+        pbar.update(1)
+
+    pbar.close()
+    print("Episode finished.")
+
+    # misc
+
+    if save_video and len(frames) > 0:
+        import cv2
+
+        print("Saving video...")
+
+        out_path = cache_path / project_name / run_name / f"eval_{idx}.mp4"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        scale_factor = 3  # 384x224 -> 1152x672
+        orig_height, orig_width = frames[0].shape[:2]
+        up_height, up_width = orig_height * scale_factor, orig_width * scale_factor
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        video_writer = cv2.VideoWriter(
+            str(out_path),
+            fourcc,
+            60.0,
+            (up_width, up_height),  # 60 fps
+        )
+
+        for frame in frames:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            frame = cv2.resize(
+                frame, (up_width, up_height), interpolation=cv2.INTER_LINEAR
+            )
+            video_writer.write(frame)
+
+        video_writer.release()
+        print(f"Saved video to {out_path}")
+
+    print("Cleaning up...")
+    try:
+        env.close()
+    except Exception as e:
+        warnings.warn(f"Couldn't close environment: {e}")
+    sandbox.terminate()
+    print("Done.")
+
+    p1_wins = observation["P1"]["wins"][0]
+    p2_wins = observation["P2"]["wins"][0]
+    if p1_wins > p2_wins:
+        winner = current_ckpt_path or "pretrained"
+    elif p2_wins > p1_wins:
+        winner = opponent
+    else:
+        winner = None
+    return winner
+
+
+def calculate_elo_scores(
+    models: list,
+    match_results: list,
+):
+    from collections import defaultdict
+
+    ratings = defaultdict(lambda: initial_rating)
+    match_history = []
+    elo_over_time = {model: [initial_rating] for model in models}
+
+    for match_idx, result in enumerate(match_results):
+        if result is not None:
+            winner = result
+            loser = [m for m in models if m != winner][0]
+
+            r_winner = ratings[winner]
+            r_loser = ratings[loser]
+
+            e_winner = 1 / (1 + 10 ** ((r_loser - r_winner) / 400))
+            e_loser = 1 / (1 + 10 ** ((r_winner - r_loser) / 400))
+
+            ratings[winner] = r_winner + k_factor * (1 - e_winner)
+            ratings[loser] = r_loser + k_factor * (0 - e_loser)
+
+            match_history.append(
+                {
+                    "match_num": match_idx + 1,
+                    "type": "win",
+                    "winner": winner,
+                    "loser": loser,
+                    "winner_elo_before": r_winner,
+                    "winner_elo_after": ratings[winner],
+                    "loser_elo_before": r_loser,
+                    "loser_elo_after": ratings[loser],
+                }
+            )
+        else:
+            r1 = ratings[models[0]]
+            r2 = ratings[models[1]]
+
+            e1 = 1 / (1 + 10 ** ((r2 - r1) / 400))
+            e2 = 1 / (1 + 10 ** ((r1 - r2) / 400))
+
+            ratings[models[0]] = r1 + k_factor * (0.5 - e1)
+            ratings[models[1]] = r2 + k_factor * (0.5 - e2)
+
+            match_history.append(
+                {
+                    "match_num": match_idx + 1,
+                    "type": "draw",
+                    "player1": models[0],
+                    "player2": models[1],
+                    "player1_elo_before": r1,
+                    "player1_elo_after": ratings[models[0]],
+                    "player2_elo_before": r2,
+                    "player2_elo_after": ratings[models[1]],
+                }
+            )
+
+        for model in models:
+            elo_over_time[model].append(ratings[model])
+
+    return dict(ratings), match_history, elo_over_time
+
+
+def create_elo_prog_viz(
+    models: list,
+    match_results: list,
+    save_path: str = None,
+):
+    import matplotlib.pyplot as plt
+
+    elo_scores, match_history, elo_over_time = calculate_elo_scores(
+        models, match_results
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    for model in models:
+        elo_trajectory = elo_over_time[model]
+        label = model.split("/")[-1] if "/" in model else model
+        ax.plot(
+            range(len(elo_trajectory)),
+            elo_trajectory,
+            marker="o",
+            markersize=2,
+            label=label,
+        )
+    ax.axhline(y=initial_rating, color="gray", linestyle="--", alpha=0.5)
+    ax.set_xlabel("Match Number")
+    ax.set_ylabel("ELO Rating")
+    ax.set_title("ELO Progression")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    print(f"Match history visualization saved to {save_path}")
+
+    return elo_scores
+
+
+@app.function(
+    image=train_image,
+    volumes={cache_path: cache_volume},
+    # region=region,
+    timeout=2 * 60 * minutes,
+)
+async def evaluate_model(
+    run_name: str,
+    project_name: str,
+    n_episodes: int,
+    eval_suffix: str,
+    current_ckpt_path: str = "",
+):
+    import json
+    import random
+
+    video_idxs = range(n_episodes)
+    if n_videos_per_round < n_episodes:
+        video_idxs = random.sample(range(n_episodes), n_videos_per_round)
+
+    data = []
+    async for winner in run_episode_eval.starmap.aio(
+        [
+            (
+                idx,
+                run_name,
+                project_name,
+                idx in video_idxs,
+                current_ckpt_path,
+            )
+            for idx in range(n_episodes)
+        ]
+    ):
+        data.append(winner)
+
+    if len(data) == 0:
+        raise Exception("No data collected")
+
+    if not current_ckpt_path:
+        current_ckpt_path = "pretrained"
+
+    models = [current_ckpt_path, opponent]
+
+    viz_path = cache_path / project_name / f"match_history{eval_suffix}.png"
+    elo_scores = create_elo_prog_viz(models, data, save_path=str(viz_path))
+
+    eval_results_path = cache_path / project_name / f"eval_results{eval_suffix}.json"
+    with open(eval_results_path, "w") as f:
+        json.dump(
+            {
+                "trained_elo": elo_scores[current_ckpt_path],
+                "opponent_elo": elo_scores[opponent],
+                "trained_win_rate": sum(1 for r in data if r == current_ckpt_path)
+                / len(data),
+                "opponent_win_rate": sum(1 for r in data if r == opponent) / len(data),
+                "draw_rate": sum(1 for r in data if r is None) / len(data),
+            },
+            f,
+        )
 
 
 @app.local_entrypoint()
@@ -1310,7 +1352,7 @@ async def local(
     # training
     max_steps: int = 1000,  # bs = 32 -> 32k samples
     # evaluation
-    # n_eval_episodes: int = 100,
+    n_eval_episodes: int = 100,
 ):
     import asyncio
 

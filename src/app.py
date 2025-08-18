@@ -558,9 +558,9 @@ class Web:
                         ):
                             session.player2_recent_move_names.pop(0)
 
+                        session.prev_game_info = game_info
                         session.prev_player1_state = player1
                         session.prev_player2_state = player2
-                        session.prev_game_info = game_info
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in robot background")
