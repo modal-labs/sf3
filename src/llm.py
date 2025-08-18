@@ -82,7 +82,7 @@ class LLMServer:
         print(f"Loading model from {load_path}")
 
         self.llm = LLM(
-            model=load_path,
+            model=str(load_path),
             max_num_seqs=max_num_seqs,
             max_num_batched_tokens=40960,  # https://qwen.readthedocs.io/en/latest/deployment/vllm.html#faq, https://docs.vllm.ai/en/latest/configuration/optimization.html#performance-tuning-with-chunked-prefill
             enforce_eager=True,
@@ -103,7 +103,7 @@ class LLMServer:
 
         # warm up model
 
-        messages, _, _, _, _ = create_random_messages()
+        messages, _, _, _, _, _ = create_random_messages()
 
         _ = self.llm.chat(
             [messages],
@@ -123,13 +123,17 @@ class LLMServer:
         super_art: int,
         super_count: int,
         side: int,
+        available_moves: list[str] | None = None,
     ) -> tuple[list[int], str]:
         from vllm.sampling_params import GuidedDecodingParams
 
-        self.sampling_params.guided_decoding = GuidedDecodingParams(
-            choice=get_available_instructions_for_character(
+        if available_moves is None:
+            available_moves = get_available_instructions_for_character(
                 character, super_art, super_count
-            ),
+            )
+
+        self.sampling_params.guided_decoding = GuidedDecodingParams(
+            choice=available_moves,
         )
 
         outputs = self.llm.chat(
@@ -155,10 +159,12 @@ async def local(
 
     ms_per_move = []
     for sample_idx in range(n_samples):
-        messages, character, super_art, super_count, side = create_random_messages()
+        messages, character, super_art, super_count, side, available_moves = (
+            create_random_messages()
+        )
         start_time = time.perf_counter()
         _, moves = await llm.chat.remote.aio(
-            messages, character, super_art, super_count, side
+            messages, character, super_art, super_count, side, available_moves
         )
         elapsed = (time.perf_counter() - start_time) * 1000
         n_moves = len(moves) if moves else 1

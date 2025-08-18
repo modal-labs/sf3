@@ -243,7 +243,9 @@ class Web:
 
                 self.player1_next_buttons = []
                 self.player2_next_buttons = []
-                self.next_buttons_limit = 30
+                self.next_buttons_limit = (
+                    20  # simply for memory, roughly length of longest combo
+                )
                 self.player1_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
 
@@ -253,7 +255,7 @@ class Web:
 
                 self.player1_recent_move_names = []
                 self.player2_recent_move_names = []
-                self.recent_move_limit = 20
+                self.recent_move_limit = 8  # memory + min for good move variety
 
                 # communication
 
@@ -490,7 +492,7 @@ class Web:
                         )
 
                         if not session.game_settings.get("humanVsLlm", True):
-                            messages_p1 = create_messages(
+                            messages_p1, available_moves_p1 = create_messages(
                                 game_info,
                                 player2,
                                 player1,
@@ -506,6 +508,7 @@ class Web:
                                 p1_settings["superArt"],
                                 obs_p1["super_count"][0],
                                 obs_p1["side"],
+                                available_moves_p1,
                             )
                             session.player1_next_buttons.extend(moves_p1)
                             session.player1_recent_move_names.append(move_name_p1)
@@ -522,7 +525,7 @@ class Web:
                             ):
                                 session.player1_recent_move_names.pop(0)
 
-                        messages = create_messages(
+                        messages, available_moves = create_messages(
                             game_info,
                             player1,
                             player2,
@@ -538,6 +541,7 @@ class Web:
                             p2_settings["superArt"],
                             obs_p2["super_count"][0],
                             obs_p2["side"],
+                            available_moves,
                         )
                         session.player2_next_buttons.extend(moves)
                         session.player2_recent_move_names.append(move_name)
@@ -683,6 +687,11 @@ class Web:
                                     ) = session.env.step(session.actions)
                                 except Exception as e:
                                     print(f"Error during env.step: {e}")
+                                    session.game_state["status"] = "error"
+                                    session.game_state["error"] = str(e)
+                                    await session.send_game_state()
+                                    await session.prepare_for_next_game()
+                                    await session.send_game_state()
                                     continue
 
                                 if session.info.get("game_done", False):

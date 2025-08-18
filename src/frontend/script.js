@@ -54,6 +54,7 @@ class StreetFighterGame {
       currentSection: 0,
       currentElement: 0,
       sections: [],
+      lastSidePanelIndex: -1,
     };
 
     this.currentCharacter = null;
@@ -97,26 +98,26 @@ class StreetFighterGame {
       { name: "Right+Down", display: "↘", gamepadDisplay: "↘" },
       { name: "Down", display: "↓", gamepadDisplay: "↓" },
       { name: "Down+Left", display: "↙", gamepadDisplay: "↙" },
-      { name: "Low Punch", display: "J", gamepadDisplay: "A/X" },
-      { name: "Medium Punch", display: "K", gamepadDisplay: "B/◯" },
-      { name: "High Punch", display: "L", gamepadDisplay: "RB/R1" },
-      { name: "Low Kick", display: "U", gamepadDisplay: "X/□" },
-      { name: "Medium Kick", display: "I", gamepadDisplay: "Y/△" },
-      { name: "High Kick", display: "O", gamepadDisplay: "LB/L1" },
+      { name: "Low Punch", display: "J", gamepadDisplay: "A" },
+      { name: "Medium Punch", display: "K", gamepadDisplay: "B" },
+      { name: "High Punch", display: "L", gamepadDisplay: "RB" },
+      { name: "Low Kick", display: "U", gamepadDisplay: "X" },
+      { name: "Medium Kick", display: "I", gamepadDisplay: "Y" },
+      { name: "High Kick", display: "O", gamepadDisplay: "LB" },
       {
         name: "Low Punch+Low Kick",
         display: "J + U",
-        gamepadDisplay: "A/X + X/□",
+        gamepadDisplay: "A + X",
       },
       {
         name: "Medium Punch+Medium Kick",
         display: "K + I",
-        gamepadDisplay: "B/◯ + Y/△",
+        gamepadDisplay: "B + Y",
       },
       {
         name: "High Punch+High Kick",
         display: "L + O",
-        gamepadDisplay: "RB/R1 + LB/L1",
+        gamepadDisplay: "RB + LB",
       },
     ];
 
@@ -132,7 +133,7 @@ class StreetFighterGame {
     this.maxInputHistory = 20;
 
     this.animationDuration = 600;
-    this.comboTimeout = 500;
+    this.comboTimeout = 750;
     this.transitionMinDisplayTime = 3000;
     this.coinSoundDuration = 1000;
     this.capcomSoundDuration = 6000;
@@ -609,7 +610,6 @@ class StreetFighterGame {
     });
     byId("play-again-btn").addEventListener("click", () => {
       playClick();
-      this.resetSelections();
       this.showScreen(this.screens.SETTINGS);
     });
     byId("error-back-btn").addEventListener("click", () => {
@@ -652,16 +652,6 @@ class StreetFighterGame {
     }
 
     if (!this.gamepadUIState.sections.length) return;
-
-    if (currentScreen === this.screens.SETTINGS) {
-      if (buttons.lb) {
-        this.changeGamepadSection(-1);
-        return;
-      } else if (buttons.rb) {
-        this.changeGamepadSection(1);
-        return;
-      }
-    }
 
     if (buttons.a) {
       this.handleGamepadSelect();
@@ -714,6 +704,10 @@ class StreetFighterGame {
     this.gamepadUIState.currentElement = 0;
     this.gamepadUIState.sections = [];
 
+    if (currentScreen !== this.screens.SETTINGS) {
+      this.gamepadUIState.lastSidePanelIndex = -1;
+    }
+
     switch (currentScreen) {
       case this.screens.COIN:
         this.gamepadUIState.sections = [
@@ -724,55 +718,60 @@ class StreetFighterGame {
         this.gamepadUIState.sections = [];
         break;
       case this.screens.SETTINGS:
-        const topNavElements = [];
+        const settingsElements = [];
 
-        topNavElements.push("#start-game-btn");
+        settingsElements.push("#start-game-btn");
+
+        settingsElements.push("#p1-selected-portrait");
+        settingsElements.push("#p2-selected-portrait");
+
+        const characterGridElements = this.getCharacterGridElements();
+        settingsElements.push(...characterGridElements);
+
+        settingsElements.push("#toggle-options-btn");
 
         const controlsHelp = byId("controls-help");
         if (controlsHelp && !controlsHelp.classList.contains("hidden")) {
-          topNavElements.push("#controls-help");
+          settingsElements.push("#controls-help");
         }
 
         const playerToggle = byId("player-toggle");
         if (playerToggle && !playerToggle.classList.contains("hidden")) {
-          topNavElements.push("#player-toggle");
+          settingsElements.push("#player-toggle");
         }
 
-        topNavElements.push("#mute-toggle");
-
-        const mainElements = [];
-
-        mainElements.push("#p1-selected-portrait");
-        mainElements.push("#p2-selected-portrait");
-
-        const characterGridElements = this.getCharacterGridElements();
-        mainElements.push(...characterGridElements);
-
-        mainElements.push("#toggle-options-btn");
+        const muteToggle = byId("mute-toggle");
+        if (muteToggle && !muteToggle.classList.contains("hidden")) {
+          settingsElements.push("#mute-toggle");
+        }
 
         const optionsPanel = byId("options-panel");
         if (optionsPanel && !optionsPanel.classList.contains("hidden")) {
-          mainElements.push("#super-art-select-p1");
-          mainElements.push("#super-art-select-p2");
+          settingsElements.push("#super-art-select-p1");
+          settingsElements.push("#super-art-select-p2");
 
           const outfitElements = this.getOutfitElements();
-          mainElements.push(...outfitElements);
+          settingsElements.push(...outfitElements);
         }
 
         this.gamepadUIState.sections = [
-          { elements: topNavElements, name: "top-nav" },
           {
-            elements: mainElements,
-            name: "main-area",
-            special: "settings-main",
+            elements: settingsElements,
+            name: "settings",
+            special: "settings-linear",
           },
         ];
         break;
       case this.screens.WIN:
         if (!this.gameState.humanVsLlm) {
+          const winElements = ["#play-again-btn"];
+          const muteToggle = byId("mute-toggle");
+          if (muteToggle && !muteToggle.classList.contains("hidden")) {
+            winElements.push("#mute-toggle");
+          }
           this.gamepadUIState.sections = [
             {
-              elements: ["#play-again-btn", "#mute-toggle"],
+              elements: winElements,
               name: "win-controls",
             },
           ];
@@ -784,9 +783,14 @@ class StreetFighterGame {
         break;
       case this.screens.ERROR:
         if (!this.gameState.humanVsLlm) {
+          const errorElements = ["#error-back-btn"];
+          const muteToggle = byId("mute-toggle");
+          if (muteToggle && !muteToggle.classList.contains("hidden")) {
+            errorElements.push("#mute-toggle");
+          }
           this.gamepadUIState.sections = [
             {
-              elements: ["#error-back-btn", "#mute-toggle"],
+              elements: errorElements,
               name: "error-controls",
             },
           ];
@@ -798,9 +802,15 @@ class StreetFighterGame {
         break;
       case this.screens.LOADING:
         if (!this.gameState.humanVsLlm) {
-          this.gamepadUIState.sections = [
-            { elements: ["#mute-toggle"], name: "loading-controls" },
-          ];
+          const loadingElements = [];
+          const muteToggle = byId("mute-toggle");
+          if (muteToggle && !muteToggle.classList.contains("hidden")) {
+            loadingElements.push("#mute-toggle");
+          }
+          this.gamepadUIState.sections =
+            loadingElements.length > 0
+              ? [{ elements: loadingElements, name: "loading-controls" }]
+              : [];
         } else {
           this.gamepadUIState.sections = [
             { elements: this.getSimpleScreenElements([]) },
@@ -809,9 +819,15 @@ class StreetFighterGame {
         break;
       case this.screens.GAME:
         if (!this.gameState.humanVsLlm) {
-          this.gamepadUIState.sections = [
-            { elements: ["#mute-toggle"], name: "game-controls" },
-          ];
+          const gameElements = [];
+          const muteToggle = byId("mute-toggle");
+          if (muteToggle && !muteToggle.classList.contains("hidden")) {
+            gameElements.push("#mute-toggle");
+          }
+          this.gamepadUIState.sections =
+            gameElements.length > 0
+              ? [{ elements: gameElements, name: "game-controls" }]
+              : [];
         } else {
           this.gamepadUIState.sections = [];
         }
@@ -841,13 +857,7 @@ class StreetFighterGame {
         break;
       case this.screens.SETTINGS:
         this.gamepadUIState.currentSection = 0;
-        const topNavSection = this.gamepadUIState.sections[0];
-        if (topNavSection && topNavSection.elements) {
-          const startGameIdx =
-            topNavSection.elements.indexOf("#start-game-btn");
-          this.gamepadUIState.currentElement =
-            startGameIdx >= 0 ? startGameIdx : 0;
-        }
+        this.gamepadUIState.currentElement = 0;
         break;
       case this.screens.WIN:
         this.gamepadUIState.currentSection = 0;
@@ -863,7 +873,12 @@ class StreetFighterGame {
         break;
     }
 
-    if (preservePosition) {
+    if (preservePosition && currentScreen === this.screens.SETTINGS) {
+      const section = this.gamepadUIState.sections[0];
+      if (section && section.elements && oldElement < section.elements.length) {
+        this.gamepadUIState.currentElement = oldElement;
+      }
+    } else if (preservePosition) {
       if (oldSection < this.gamepadUIState.sections.length) {
         this.gamepadUIState.currentSection = oldSection;
         const section = this.gamepadUIState.sections[oldSection];
@@ -917,7 +932,10 @@ class StreetFighterGame {
       elements.push("#player-toggle");
     }
 
-    elements.push("#mute-toggle");
+    const muteToggle = byId("mute-toggle");
+    if (muteToggle && !muteToggle.classList.contains("hidden")) {
+      elements.push("#mute-toggle");
+    }
 
     return elements;
   }
@@ -937,30 +955,6 @@ class StreetFighterGame {
     return 0;
   }
 
-  changeGamepadSection(direction) {
-    const numSections = this.gamepadUIState.sections.length;
-    if (numSections === 0) return;
-
-    const currentScreen = this.getCurrentScreen();
-    if (currentScreen === this.screens.SETTINGS && numSections > 1) {
-      this.gamepadUIState.currentSection =
-        (this.gamepadUIState.currentSection + direction + numSections) %
-        numSections;
-
-      if (this.gamepadUIState.currentSection === 0) {
-        const startGameIdx =
-          this.gamepadUIState.sections[0].elements.indexOf("#start-game-btn");
-        this.gamepadUIState.currentElement =
-          startGameIdx >= 0 ? startGameIdx : 0;
-      } else {
-        this.gamepadUIState.currentElement = 0;
-      }
-    }
-
-    this.updateGamepadHover();
-    AudioManager.playSound(SOUND_KEYS.HOVER);
-  }
-
   handleGamepadNavigation(inputX, inputY) {
     const section = this.getCurrentSection();
     if (!section || !section.elements.length) return;
@@ -968,14 +962,16 @@ class StreetFighterGame {
     const currentScreen = this.getCurrentScreen();
 
     if (currentScreen !== this.screens.SETTINGS) {
-      if (inputY !== 0) this.stepCursor(inputY);
+      if (inputY !== 0) {
+        this.stepCursor(inputY);
+      } else if (inputX !== 0) {
+        this.stepCursor(inputX);
+      }
       return;
     }
 
-    if (section.name === "top-nav") {
-      if (inputY !== 0) this.stepCursor(inputY);
-    } else if (section.special === "settings-main") {
-      this.navigateSettingsMain(inputX, inputY, section);
+    if (section.special === "settings-linear") {
+      this.navigateSettingsLinear(inputX, inputY, section);
     } else if (section.grid) {
       this.navigateGrid(inputX, inputY, section);
     } else if (section.controls) {
@@ -985,139 +981,178 @@ class StreetFighterGame {
     }
   }
 
-  navigateSettingsMain(inputX, inputY, section) {
-    const onPlayerBox = this.gamepadUIState.currentElement < 2;
-    const characterStartIdx = GRID.START;
-    const characterEndIdx = GRID.START + GRID.COUNT;
+  navigateSettingsLinear(inputX, inputY, section) {
+    const currentEl = section.elements[this.gamepadUIState.currentElement];
+
+    const startBtnIdx = 0;
+    const p1BoxIdx = 1;
+    const p2BoxIdx = 2;
+    const characterStartIdx = 3;
+    const characterEndIdx = characterStartIdx + 19;
+    const toggleOptionsIdx = section.elements.indexOf("#toggle-options-btn");
+    const controlsHelpIdx = section.elements.indexOf("#controls-help");
+    const playerToggleIdx = section.elements.indexOf("#player-toggle");
+    const muteToggleIdx = section.elements.indexOf("#mute-toggle");
+    const superArtP1Idx = section.elements.indexOf("#super-art-select-p1");
+    const superArtP2Idx = section.elements.indexOf("#super-art-select-p2");
+
+    const onStartBtn = this.gamepadUIState.currentElement === startBtnIdx;
+    const onPlayerBox =
+      this.gamepadUIState.currentElement === p1BoxIdx ||
+      this.gamepadUIState.currentElement === p2BoxIdx;
     const onCharacterGrid =
       this.gamepadUIState.currentElement >= characterStartIdx &&
       this.gamepadUIState.currentElement < characterEndIdx;
+    const onToggleOptions =
+      this.gamepadUIState.currentElement === toggleOptionsIdx;
+    const onSidePanel =
+      currentEl === "#controls-help" ||
+      currentEl === "#player-toggle" ||
+      currentEl === "#mute-toggle";
+    const onSuperArt =
+      this.gamepadUIState.currentElement === superArtP1Idx ||
+      this.gamepadUIState.currentElement === superArtP2Idx;
+    const onOutfits = currentEl && currentEl.includes("outfit-");
 
-    const superArtP1Idx = section.elements.indexOf("#super-art-select-p1");
-    const superArtP2Idx = section.elements.indexOf("#super-art-select-p2");
-    const onSuperArtSelect =
-      superArtP1Idx >= 0 &&
-      (this.gamepadUIState.currentElement === superArtP1Idx ||
-        this.gamepadUIState.currentElement === superArtP2Idx);
-
-    const outfitStartIdx = superArtP2Idx >= 0 ? superArtP2Idx + 1 : -1;
-    const onOutfits =
-      outfitStartIdx >= 0 &&
-      this.gamepadUIState.currentElement >= outfitStartIdx &&
-      section.elements[this.gamepadUIState.currentElement] &&
-      section.elements[this.gamepadUIState.currentElement].includes("outfit-");
-
-    if (onPlayerBox) {
+    if (onStartBtn) {
+      if (inputY > 0) this.moveCursor(p1BoxIdx);
+      else if (inputY < 0) {
+        const firstOutfitIdx = section.elements.findIndex((el) =>
+          el.includes("outfit-")
+        );
+        if (firstOutfitIdx >= 0) {
+          this.moveCursor(firstOutfitIdx + 2);
+        } else {
+          this.moveCursor(toggleOptionsIdx);
+        }
+      }
+    } else if (onPlayerBox) {
       if (inputX !== 0) {
-        this.moveCursor(inputX > 0 ? 1 : 0);
-      }
-      if (inputY > 0) {
-        this.moveCursor(characterStartIdx);
-      }
-      if (inputY < 0) {
-        this.moveCursor(section.elements.length - 1);
+        this.moveCursor(inputX > 0 ? p2BoxIdx : p1BoxIdx);
+      } else if (inputY > 0) {
+        const targetCol =
+          this.gamepadUIState.currentElement === p2BoxIdx ? 5 : 4;
+        this.moveCursor(characterStartIdx + targetCol);
+      } else if (inputY < 0) {
+        this.moveCursor(startBtnIdx);
       }
     } else if (onCharacterGrid) {
-      const gridIndex = this.gamepadUIState.currentElement - GRID.START;
+      const gridIndex = this.gamepadUIState.currentElement - characterStartIdx;
       const cols = GRID.COLS;
       const currentRow = Math.floor(gridIndex / cols);
       const currentCol = gridIndex % cols;
 
-      let newRow = currentRow;
-      let newCol = currentCol;
-
       if (inputY < 0) {
         if (currentRow === 0) {
-          this.moveCursor(currentCol < 5 ? 0 : 1);
-          return;
+          this.moveCursor(currentCol < 5 ? p1BoxIdx : p2BoxIdx);
         } else {
-          newRow = currentRow - 1;
+          const newIndex =
+            characterStartIdx + (currentRow - 1) * cols + currentCol;
+          if (newIndex < characterEndIdx) this.moveCursor(newIndex);
         }
       } else if (inputY > 0) {
-        if (currentRow === 1 || gridIndex >= GRID.COLS) {
-          this.moveCursor(characterEndIdx);
-          return;
+        if (currentRow === 1 || gridIndex >= 9) {
+          this.moveCursor(toggleOptionsIdx);
         } else {
-          newRow = currentRow + 1;
+          const newCol = Math.min(currentCol, 8);
+          const newIndex = characterStartIdx + cols + newCol;
+          if (newIndex < characterEndIdx) this.moveCursor(newIndex);
+        }
+      } else if (inputX !== 0) {
+        const maxCol = currentRow === 1 ? 8 : 9;
+        let newCol = currentCol + inputX;
+        if (newCol < 0) newCol = maxCol;
+        else if (newCol > maxCol) newCol = 0;
+        const newIndex = characterStartIdx + currentRow * cols + newCol;
+        if (newIndex < characterEndIdx) this.moveCursor(newIndex);
+      }
+    } else if (onToggleOptions) {
+      if (inputY < 0) {
+        this.moveCursor(characterEndIdx - 5);
+      } else if (inputY > 0) {
+        if (superArtP1Idx >= 0) {
+          this.moveCursor(superArtP1Idx);
+        } else {
+          this.moveCursor(startBtnIdx);
+        }
+      } else if (inputX !== 0) {
+        const sidePanelElements = [
+          controlsHelpIdx,
+          playerToggleIdx,
+          muteToggleIdx,
+        ].filter((idx) => idx >= 0);
+
+        if (sidePanelElements.length > 0) {
+          if (
+            this.gamepadUIState.lastSidePanelIndex >= 0 &&
+            sidePanelElements.includes(this.gamepadUIState.lastSidePanelIndex)
+          ) {
+            this.moveCursor(this.gamepadUIState.lastSidePanelIndex);
+          } else {
+            this.moveCursor(sidePanelElements[0]);
+          }
         }
       }
+    } else if (onSidePanel) {
+      this.gamepadUIState.lastSidePanelIndex =
+        this.gamepadUIState.currentElement;
 
-      if (inputX < 0) {
-        const maxCol = currentRow === 1 ? 8 : cols - 1;
-        newCol = currentCol === 0 ? maxCol : currentCol - 1;
-      } else if (inputX > 0) {
-        const maxCol = currentRow === 1 ? 8 : cols - 1;
-        newCol = currentCol === maxCol ? 0 : currentCol + 1;
-      }
+      if (inputX !== 0) {
+        this.moveCursor(toggleOptionsIdx);
+      } else if (inputY !== 0) {
+        const sidePanelElements = [
+          controlsHelpIdx,
+          playerToggleIdx,
+          muteToggleIdx,
+        ].filter((idx) => idx >= 0);
+        const currentSidePanelIdx = sidePanelElements.indexOf(
+          this.gamepadUIState.currentElement
+        );
 
-      const newGridIndex = newRow * cols + newCol;
-      if (newGridIndex < 19) {
-        this.moveCursor(characterStartIdx + newGridIndex);
+        if (currentSidePanelIdx >= 0) {
+          let newIdx = currentSidePanelIdx + inputY;
+          if (newIdx < 0) newIdx = sidePanelElements.length - 1;
+          else if (newIdx >= sidePanelElements.length) newIdx = 0;
+          const newElement = sidePanelElements[newIdx];
+          this.moveCursor(newElement);
+          this.gamepadUIState.lastSidePanelIndex = newElement;
+        }
       }
-    } else if (onSuperArtSelect) {
+    } else if (onSuperArt) {
       if (inputX !== 0) {
         this.moveCursor(inputX > 0 ? superArtP2Idx : superArtP1Idx);
-      }
-      if (inputY > 0) {
-        this.moveCursor(superArtP2Idx + 1);
-      }
-      if (inputY < 0) {
-        this.moveCursor(characterEndIdx);
+      } else if (inputY < 0) {
+        this.moveCursor(toggleOptionsIdx);
+      } else if (inputY > 0) {
+        const firstOutfitIdx = section.elements.findIndex((el) =>
+          el.includes("outfit-")
+        );
+        if (firstOutfitIdx >= 0) {
+          const targetOutfit =
+            this.gamepadUIState.currentElement === superArtP2Idx ? 3 : 2;
+          this.moveCursor(firstOutfitIdx + targetOutfit);
+        } else {
+          this.moveCursor(startBtnIdx);
+        }
       }
     } else if (onOutfits) {
-      if (inputX !== 0) {
-        const outfitEndIdx = section.elements.findIndex(
-          (el, idx) => idx > outfitStartIdx && !el.includes("outfit-")
-        );
-        const lastOutfitIdx =
-          outfitEndIdx > 0 ? outfitEndIdx - 1 : section.elements.length - 1;
-        const numOutfits = lastOutfitIdx - outfitStartIdx + 1;
+      const outfitStartIdx = section.elements.findIndex((el) =>
+        el.includes("outfit-")
+      );
+      const outfitCount = 6;
+      const outfitIndex = this.gamepadUIState.currentElement - outfitStartIdx;
 
-        const outfitIndex = this.gamepadUIState.currentElement - outfitStartIdx;
-        const newOutfitIndex = (outfitIndex + inputX + numOutfits) % numOutfits;
-        this.moveCursor(outfitStartIdx + newOutfitIndex);
-      }
-      if (inputY < 0) {
-        this.moveCursor(superArtP1Idx);
-      }
-      if (inputY > 0) {
-        this.moveCursor(0);
-      }
-    } else {
       if (inputX !== 0) {
-        this.stepCursor(inputX);
-      } else if (
-        inputY < 0 &&
-        this.gamepadUIState.currentElement === characterEndIdx
-      ) {
-        this.moveCursor(characterEndIdx - 1);
-      } else if (inputY !== 0) {
-        if (inputY > 0) {
-          if (
-            this.gamepadUIState.currentElement === characterEndIdx &&
-            superArtP1Idx >= 0
-          ) {
-            this.moveCursor(superArtP1Idx);
-          } else if (
-            this.gamepadUIState.currentElement ===
-            section.elements.length - 1
-          ) {
-            this.moveCursor(0);
-          } else {
-            this.moveCursor(this.gamepadUIState.currentElement + 1);
-          }
-        } else {
-          if (this.gamepadUIState.currentElement === characterEndIdx) {
-            this.moveCursor(characterEndIdx - 1);
-          } else {
-            const direction = -1;
-            const numElements = section.elements.length;
-            this.moveCursor(
-              (this.gamepadUIState.currentElement + direction + numElements) %
-                numElements
-            );
-          }
-        }
+        let newOutfitIdx = outfitIndex + inputX;
+        if (newOutfitIdx < 0) newOutfitIdx = outfitCount - 1;
+        else if (newOutfitIdx >= outfitCount) newOutfitIdx = 0;
+        this.moveCursor(outfitStartIdx + newOutfitIdx);
+      } else if (inputY < 0) {
+        const targetSuperArt =
+          outfitIndex === 3 ? superArtP2Idx : superArtP1Idx;
+        this.moveCursor(targetSuperArt);
+      } else if (inputY > 0) {
+        this.moveCursor(startBtnIdx);
       }
     }
   }
@@ -1212,7 +1247,7 @@ class StreetFighterGame {
       section.elements[this.gamepadUIState.currentElement];
     const element = $(elementSelector);
 
-    if (element) {
+    if (element && !element.classList.contains("hidden")) {
       if (element.tagName === "SELECT") {
         const currentIndex = element.selectedIndex;
         const nextIndex = (currentIndex + 1) % element.options.length;
@@ -1272,12 +1307,11 @@ class StreetFighterGame {
       this.gamepadUIState.sections[this.gamepadUIState.currentSection];
     if (section && section.elements[this.gamepadUIState.currentElement]) {
       const element = $(section.elements[this.gamepadUIState.currentElement]);
-      if (element) {
+      if (element && !element.classList.contains("hidden")) {
         element.classList.add("gamepad-hover");
         element.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
         if (element.dataset.character) {
-          // Trigger the same hover logic as mouse hover
           if (this.characterGrid && this.characterGrid.onPortraitHover) {
             const character = element.dataset.character;
             const imageSrc = `/portraits/${character.toLowerCase()}.png`;
@@ -1299,11 +1333,19 @@ class StreetFighterGame {
   }
 
   processGamepadInput(currentState) {
+    const threshold = GamepadManager.gameplayThreshold;
+
+    const stickX = currentState.axes.left.x;
+    const stickY = currentState.axes.left.y;
+
+    const isDiagonal =
+      Math.abs(stickX) > threshold && Math.abs(stickY) > threshold;
+
     const directions = {
-      left: currentState.axes.left.x < -0.3 || currentState.buttons[14],
-      right: currentState.axes.left.x > 0.3 || currentState.buttons[15],
-      up: currentState.axes.left.y < -0.3 || currentState.buttons[12],
-      down: currentState.axes.left.y > 0.3 || currentState.buttons[13],
+      left: stickX < -threshold || currentState.buttons[14],
+      right: stickX > threshold || currentState.buttons[15],
+      up: stickY < -threshold || currentState.buttons[12],
+      down: stickY > threshold || currentState.buttons[13],
     };
 
     const attacks = {
@@ -1335,14 +1377,16 @@ class StreetFighterGame {
       action = this.actions.MEDIUM_KICK;
     } else if (attacks.LK) {
       action = this.actions.LOW_KICK;
-    } else if (directions.left && directions.up) {
-      action = this.actions.LEFT_UP;
-    } else if (directions.right && directions.up) {
-      action = this.actions.UP_RIGHT;
-    } else if (directions.left && directions.down) {
-      action = this.actions.DOWN_LEFT;
-    } else if (directions.right && directions.down) {
-      action = this.actions.RIGHT_DOWN;
+    } else if (isDiagonal) {
+      if (directions.left && directions.up) {
+        action = this.actions.LEFT_UP;
+      } else if (directions.right && directions.up) {
+        action = this.actions.UP_RIGHT;
+      } else if (directions.left && directions.down) {
+        action = this.actions.DOWN_LEFT;
+      } else if (directions.right && directions.down) {
+        action = this.actions.RIGHT_DOWN;
+      }
     } else if (directions.left) {
       action = this.actions.LEFT;
     } else if (directions.right) {
@@ -1392,25 +1436,26 @@ class StreetFighterGame {
   handleActionFromInput(action) {
     WebSocketManager.send("player_action", { action });
 
-    if (action === this.actions.NO_MOVE) return;
+    if (action !== this.actions.NO_MOVE) {
+      this.inputHistory.push({ action, time: Date.now() });
 
-    this.inputHistory.push({ action, time: Date.now() });
+      if (this.inputHistory.length > this.maxInputHistory) {
+        this.inputHistory.shift();
+      }
 
-    if (this.inputHistory.length > this.maxInputHistory) {
-      this.inputHistory.shift();
-    }
+      const { match, history } = MovesEngine.detectExtra(
+        this.inputHistory,
+        this.comboTimeout,
+        this.movesByLength
+      );
+      this.inputHistory = history;
 
-    const { match, history } = MovesEngine.detectExtra(
-      this.inputHistory,
-      this.comboTimeout,
-      this.movesByLength
-    );
-    this.inputHistory = history;
-    if (match) {
-      WebSocketManager.send("player_action", {
-        action: match.type === "super_art" ? 18 : 19,
-        [match.type === "super_art" ? "super_art" : "combo"]: match.name,
-      });
+      if (match) {
+        WebSocketManager.send("player_action", {
+          action: match.type === "super_art" ? 18 : 19,
+          [match.type === "super_art" ? "super_art" : "combo"]: match.name,
+        });
+      }
     }
   }
 
@@ -1782,15 +1827,15 @@ class StreetFighterGame {
     const onPad = GamepadManager.isConnected();
     const controls = {
       "movement-display": onPad ? "Left Stick / D-Pad" : "WASD / Arrow Keys",
-      "lp-display": onPad ? "A/X" : "J",
-      "mp-display": onPad ? "B/◯" : "K",
-      "hp-display": onPad ? "RB/R1" : "L",
-      "lk-display": onPad ? "X/□" : "U",
-      "mk-display": onPad ? "Y/△" : "I",
-      "hk-display": onPad ? "LB/L1" : "O",
-      "lplk-display": onPad ? "A/X + X/□" : "J + U",
-      "mpmk-display": onPad ? "B/◯ + Y/△" : "K + I",
-      "hphk-display": onPad ? "RB/R1 + LB/L1" : "L + O",
+      "lp-display": onPad ? "A" : "J",
+      "mp-display": onPad ? "B" : "K",
+      "hp-display": onPad ? "RB" : "L",
+      "lk-display": onPad ? "X" : "U",
+      "mk-display": onPad ? "Y" : "I",
+      "hk-display": onPad ? "LB" : "O",
+      "lplk-display": onPad ? "A + X" : "J + U",
+      "mpmk-display": onPad ? "B + Y" : "K + I",
+      "hphk-display": onPad ? "RB + LB" : "L + O",
     };
 
     Object.entries(controls).forEach(([id, text]) => {
@@ -1975,7 +2020,9 @@ class StreetFighterGame {
 
       this.updatePlayerPortrait(player, character);
       this.updateCharacterBorders();
-      this.initializeOutfitGrid(character);
+      if (player === this.characterGrid.activePlayer) {
+        this.initializeOutfitGrid(character);
+      }
       this.updateGamepadSections(true);
     }, this.animationDuration);
   }
@@ -2116,46 +2163,6 @@ class StreetFighterGame {
 
   getPlayerColor(player) {
     return player === "p1" ? "sf-blue" : "sf-red";
-  }
-
-  resetSelections() {
-    this.characterGrid = {
-      activePlayer: "p1",
-      p1: { selected: false, character: "Ken", outfit: 1 },
-      p2: { selected: false, character: "Ryu", outfit: 1 },
-    };
-
-    this.currentCharacter = null;
-
-    const p1Img = $("#p1-selected-portrait img");
-    const p2Img = $("#p2-selected-portrait img");
-
-    p1Img.src = "";
-    p1Img.classList.add("hidden");
-    p2Img.src = "";
-    p2Img.classList.add("hidden");
-
-    setText("p1-selected-name", "-");
-    setText("p2-selected-name", "-");
-
-    this.gameState.player1 = { character: null, outfit: 1, superArt: 1 };
-    this.gameState.player2 = { character: null, outfit: 1, superArt: 1 };
-
-    const sa1 = byId("super-art-select-p1");
-    if (sa1) sa1.value = "1";
-    const sa2 = byId("super-art-select-p2");
-    if (sa2) sa2.value = "1";
-
-    byId("combos-list").innerHTML = "";
-    byId("super-arts-list").innerHTML = "";
-
-    this.selectCharacter("p1", "Ken");
-    this.selectCharacter("p2", "Ryu");
-    this.updatePlayerBoxes();
-    this.updateCharacterBorders();
-
-    this.initializeOutfitGrid("Ken");
-    this.updateGamepadSections(true);
   }
 
   updateHelpIconVisibility(screenId = null) {

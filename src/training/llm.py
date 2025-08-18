@@ -178,22 +178,22 @@ def create_environment(
 
 # dataset
 
-# reduce variance
-character = "Ken"
+# reduce problem difficulty
+character = "Ryu"
 outfit = 1
 super_art = 1
 
-# increase move var
-recent_move_limit = 20
-max_steps_without_reward = 64
-opponent_pool_size_per_round = 3
+# increase move variety
+recent_move_limit = 8
+opponent_pool_size_per_round = 4
 
-# TD-lambda returns
-n_move_returns = 16
+# td-lambda returns
+n_move_returns = 32
 gamma = 0.99
 
 # misc
 n_videos_per_round = 1
+max_steps_without_reward = 64
 
 
 @app.function(
@@ -333,12 +333,11 @@ async def run_episode_data(
         )
 
         # run current policy
-        p1_messages = create_messages(game_info, player2, player1, p1_recent_moves)
+        p1_messages, p1_available_moves = create_messages(
+            game_info, player2, player1, p1_recent_moves
+        )
         if round_idx == 0:
-            available_moves = get_available_instructions_for_character(
-                character, super_arts[0], obs_p1["super_count"][0]
-            )
-            p1_move_name = random.choice(available_moves)
+            p1_move_name = random.choice(p1_available_moves)
             p1_buttons = parse_move(character, p1_move_name, p1_side)
         else:
             try:
@@ -351,6 +350,7 @@ async def run_episode_data(
                     super_arts[0],
                     obs_p1["super_count"][0],
                     p1_side,
+                    p1_available_moves,
                 )
             except Exception as e:
                 print(f"current_llm.chat failed: {e}", file=sys.stderr)
@@ -358,12 +358,11 @@ async def run_episode_data(
                 return []
 
         # run opponent policy
-        p2_messages = create_messages(game_info, player1, player2, p2_recent_moves)
+        p2_messages, p2_available_moves = create_messages(
+            game_info, player1, player2, p2_recent_moves
+        )
         if prior_llm is None:
-            available_moves = get_available_instructions_for_character(
-                character, super_arts[1], obs_p2["super_count"][0]
-            )
-            p2_move_name = random.choice(available_moves)
+            p2_move_name = random.choice(p2_available_moves)
             p2_buttons = parse_move(character, p2_move_name, obs_p2["side"])
         else:
             try:
@@ -376,6 +375,7 @@ async def run_episode_data(
                     super_arts[1],
                     obs_p2["super_count"][0],
                     obs_p2["side"],
+                    p2_available_moves,
                 )
             except Exception as e:
                 print(f"prior_llm.chat (opponent) failed: {e}", file=sys.stderr)
@@ -478,7 +478,7 @@ async def run_episode_data(
     pbar.close()
     print("Episode finished.")
 
-    # calculate TD-lambda returns
+    # calculate td-lambda returns
 
     dataset = []
 
@@ -677,13 +677,7 @@ async def create_dataset(
 
 # training
 
-model_name = "Qwen/Qwen3-8B"  # "Qwen/Qwen3-8B-Base"
-
-# increase beta + lr over rounds to encourage more exploitation
-start_beta = 0.01  # 0.1
-end_beta = 0.1  # 1
-start_lr = 5e-7
-end_lr = 1e-6  # 5e-6
+model_name = "Qwen/Qwen3-8B"  # Qwen/Qwen3-8B-Base
 
 # resources
 n_gpu = 8
@@ -691,20 +685,32 @@ gpu = f"h200:{n_gpu}"
 cpu = n_gpu * 4
 memory = n_gpu * 8 * gb
 
+# batch size: https://huggingface.co/docs/trl/main/en/kto_trainer#batch-size-recommendations
+global_bs = 128
+bs_per_device = 8
+grad_accum_steps = global_bs // (n_gpu * bs_per_device)
+
+# beta/lr: https://huggingface.co/docs/trl/main/en/kto_trainer#learning-rate-recommendations
+lr_scheduler_type = "cosine"
+warmup_ratio = 0.1
+start_beta = 0.1
+end_beta = 1
+start_lr = 1e-6
+end_lr = 5e-6
+
 
 @app.function(
     image=train_image,
     volumes={cache_path: cache_volume},
 )
-def get_round_status(round_idx: int, max_steps: int):
+def get_round_status(round_idx: int, max_steps: int, project_name: str):
     import time
 
     cache_volume.reload()
 
-    project_name = f"{app.name}-{model_name.split('/')[-1].lower()}"
     base_path = cache_path / project_name
-
     prefix = f"{round_idx}-"
+
     run_dirs = []
     if base_path.exists():
         for path in base_path.iterdir():
@@ -799,10 +805,22 @@ def train_model(
 ):
     import os
     import subprocess
-
-    os.environ["WANDB_PROJECT"] = project_name
+    import time
 
     cache_volume.reload()
+
+    train_file = cache_path / project_name / run_name / "train.parquet"
+    val_file = cache_path / project_name / run_name / "val.parquet"
+
+    while not train_file.exists() or not val_file.exists():
+        if not train_file.exists():
+            print(f"train_file doesn't exist yet: {train_file}")
+        if not val_file.exists():
+            print(f"val_file doesn't exist yet: {val_file}")
+        time.sleep(1)
+
+    os.environ["WANDB_PROJECT"] = project_name
+    os.environ["WANDB_RUN_NAME"] = run_name
 
     cmd = [
         "accelerate",
@@ -810,22 +828,28 @@ def train_model(
         f"--num_processes={str(n_gpu)}",
         "--mixed_precision=bf16",
         remote_train_script_path,
-        "--run_name",
-        run_name,
         "--train_file",
-        str(cache_path / project_name / run_name / "train.parquet"),
+        str(train_file),
         "--eval_file",
-        str(cache_path / project_name / run_name / "val.parquet"),
+        str(val_file),
         "--model_name_or_path",
         current_ckpt_path or model_name,
         "--save_dir",
         str(cache_path / project_name / run_name),
+        "--bs_per_device",
+        str(bs_per_device),
+        "--grad_accum_steps",
+        str(grad_accum_steps),
         "--max_steps",
         str(max_steps),
         "--beta",
         str(beta),
         "--lr",
         str(lr),
+        "--lr_scheduler_type",
+        lr_scheduler_type,
+        "--warmup_ratio",
+        str(warmup_ratio),
         "--seed",
         str(seed),
     ]
@@ -1280,21 +1304,25 @@ def train_model(
 @app.local_entrypoint()
 async def local(
     # scale
-    n_rounds: int = 10,
-    n_train_episodes_per_round: int = 90,  # ~30k samples
+    n_rounds: int = 100,
+    n_train_episodes_per_round: int = 90,  # ~32k samples
     n_val_episodes_per_round: int = 10,
     # training
-    max_steps: int = 1000,  # bs = 32
+    max_steps: int = 1000,  # bs = 32 -> 32k samples
     # evaluation
-    n_eval_episodes: int = 100,
+    # n_eval_episodes: int = 100,
 ):
     import asyncio
+
+    project_name = (
+        f"{app.name}-{model_name.split('/')[-1].lower()}-{n_rounds}-{max_steps}"
+    )
 
     current_ckpt_path = ""
     all_prior_models = []
 
     # # baseline evaluation before any training
-    # status = get_round_status.remote(0, max_steps)
+    # status = get_round_status.remote(0, max_steps, project_name)
     # project_name = status["project_name"]
     # baseline_run_name = status["run_name"]
 
@@ -1308,7 +1336,7 @@ async def local(
 
     # training loop
     for round_idx in range(n_rounds):
-        status = get_round_status.remote(round_idx, max_steps)
+        status = get_round_status.remote(round_idx, max_steps, project_name)
         project_name = status["project_name"]
         run_name = status["run_name"]
 
@@ -1350,7 +1378,7 @@ async def local(
                 ),
             )
 
-        status = get_round_status.remote(round_idx, max_steps)
+        status = get_round_status.remote(round_idx, max_steps, project_name)
 
         if not status["training_complete"]:
             progress = round_idx / max(1, n_rounds - 1)
@@ -1374,7 +1402,7 @@ async def local(
                 all_prior_models.append(current_ckpt_path)
             current_ckpt_path = status["final_checkpoint"]
 
-    # final_status = get_round_status.remote(n_rounds - 1, max_steps)
+    # final_status = get_round_status.remote(n_rounds - 1, max_steps, project_name)
     # if not final_status.get("has_final_eval", False):
     #     await evaluate_model.remote.aio(
     #         final_status["run_name"],
