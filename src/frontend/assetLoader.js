@@ -111,10 +111,16 @@ const createAssetLoader = () => {
 
     const gameplayMusicMap = buildGameplayMusicMap();
 
-    await Promise.all([
-      AudioManager.preloadSounds(soundFiles, gameplayMusicMap),
-      ...imagePromises,
-    ]);
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (!isMobile) {
+      await Promise.all([
+        AudioManager.preloadSounds(soundFiles, gameplayMusicMap),
+        ...imagePromises,
+      ]);
+    } else {
+      AudioManager.preloadSounds(soundFiles, gameplayMusicMap);
+      await Promise.all(imagePromises);
+    }
 
     GameState.update({ assetsLoaded: true });
     setText("loading-status", "Connecting to server...");

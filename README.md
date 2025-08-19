@@ -56,6 +56,7 @@ modal run -m src.training.llm
 
 - [Help](https://www.flaticon.com/free-icons/question)
 - [Close](https://www.flaticon.com/free-icons/close)
+- [Keyboard](https://www.flaticon.com/free-icons/electric-keyboard)
 - [Gamepad](https://www.flaticon.com/free-icons/controller)
 - [Human](https://www.flaticon.com/free-icons/muscle)
 - [LLM](https://www.flaticon.com/free-icons/robot)

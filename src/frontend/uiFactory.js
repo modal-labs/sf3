@@ -9,8 +9,8 @@ export const UIFactory = {
     const isPortrait = type === "portrait";
     const element = this.createImageBox({
       className: isPortrait
-        ? "relative w-full aspect-square bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200"
-        : "relative size-24 bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200 mx-auto",
+        ? "relative size-16 lg:size-20 aspect-square bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200"
+        : "relative size-16 lg:size-20 bg-sf-dark border-2 border-transparent rounded-lg hover:scale-105 cursor-pointer transition-all duration-200 mx-auto",
       imageSrc,
       imageAlt,
       imageClassName: isPortrait
@@ -27,7 +27,7 @@ export const UIFactory = {
 
     const label = document.createElement("div");
     label.className =
-      "absolute bottom-0 left-0 right-0 p-1 text-center font-bold text-sf-green bg-sf-darker/80 backdrop-blur-sm rounded-b-lg";
+      "absolute bottom-0 left-0 right-0 p-0.5 lg:p-1 text-center font-bold text-xs lg:text-sm text-sf-green bg-sf-darker/80 backdrop-blur-sm rounded-b-lg";
     label.textContent = labelText;
     element.appendChild(label);
 
