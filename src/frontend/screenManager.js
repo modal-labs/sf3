@@ -66,7 +66,9 @@ const createScreenManager = () => {
 
     const muteButton = byId("mute-toggle");
     if (muteButton) {
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       const hideMute =
+        isMobile ||
         hideAll ||
         (isGameplay && state.humanVsLlm) ||
         (isMinimalScreen && state.humanVsLlm) ||
@@ -315,7 +317,9 @@ const createScreenManager = () => {
     const coinBtn = byId("insert-coin-btn");
     if (!coinBtn) return;
 
-    coinBtn.addEventListener("click", () => {
+    const handleCoinInsert = () => {
+      if (coinBtn.disabled) return;
+
       coinBtn.disabled = true;
       coinBtn.classList.remove("animate-coin-shine");
       coinBtn.classList.add("animate-coin-insert");
@@ -325,6 +329,12 @@ const createScreenManager = () => {
       setTimeout(() => {
         transitionToSplash();
       }, 1000);
+    };
+
+    coinBtn.addEventListener("click", handleCoinInsert);
+    coinBtn.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      handleCoinInsert();
     });
 
     coinBtn.addEventListener("mouseenter", () => {
@@ -336,9 +346,15 @@ const createScreenManager = () => {
     const splashScreen = byId("splash-screen");
     if (!splashScreen) return;
 
-    splashScreen.addEventListener("click", () => {
+    const handleSplashSkip = () => {
       if (splashScreen.classList.contains("hidden")) return;
       skipSplash();
+    };
+
+    splashScreen.addEventListener("click", handleSplashSkip);
+    splashScreen.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      handleSplashSkip();
     });
   };
 

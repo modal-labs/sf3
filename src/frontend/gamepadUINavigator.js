@@ -102,6 +102,18 @@ const createGamepadUINavigator = () => {
     const oldSection = preservePosition ? currentUIState.currentSection : 0;
     const oldElement = preservePosition ? currentUIState.currentElement : 0;
 
+    let oldElementSelector = null;
+    if (preservePosition && currentUIState.sections[oldSection]) {
+      const oldSectionData = currentUIState.sections[oldSection];
+      if (
+        oldSectionData &&
+        oldSectionData.elements &&
+        oldSectionData.elements[oldElement]
+      ) {
+        oldElementSelector = oldSectionData.elements[oldElement];
+      }
+    }
+
     let sections = [];
     let lastSidePanelIndex = currentUIState.lastSidePanelIndex;
 
@@ -272,13 +284,52 @@ const createGamepadUINavigator = () => {
         break;
     }
 
-    if (preservePosition && currentScreen === "settings") {
-      const section = sections[0];
-      if (section && section.elements && oldElement < section.elements.length) {
-        currentElement = oldElement;
+    if (preservePosition && oldElementSelector) {
+      for (let sIdx = 0; sIdx < sections.length; sIdx++) {
+        const section = sections[sIdx];
+        if (section && section.elements) {
+          const elementIdx = section.elements.indexOf(oldElementSelector);
+          if (elementIdx >= 0) {
+            currentSection = sIdx;
+            currentElement = elementIdx;
+            break;
+          }
+        }
+      }
+
+      if (currentElement === 0 && currentSection === 0) {
+        if (currentScreen === "settings") {
+          const section = sections[0];
+          if (
+            section &&
+            section.elements &&
+            oldElement < section.elements.length
+          ) {
+            currentElement = oldElement;
+          }
+        } else if (oldSection < sections.length) {
+          currentSection = oldSection;
+          const section = sections[oldSection];
+          if (
+            section &&
+            section.elements &&
+            oldElement < section.elements.length
+          ) {
+            currentElement = oldElement;
+          }
+        }
       }
     } else if (preservePosition) {
-      if (oldSection < sections.length) {
+      if (currentScreen === "settings") {
+        const section = sections[0];
+        if (
+          section &&
+          section.elements &&
+          oldElement < section.elements.length
+        ) {
+          currentElement = oldElement;
+        }
+      } else if (oldSection < sections.length) {
         currentSection = oldSection;
         const section = sections[oldSection];
         if (
@@ -409,6 +460,8 @@ const createGamepadUINavigator = () => {
           const lastIndex = state.lastSidePanelIndex;
           if (lastIndex >= 0 && sidePanelElements.includes(lastIndex)) {
             moveCursor(lastIndex);
+          } else if (playerToggleIdx >= 0) {
+            moveCursor(playerToggleIdx);
           } else {
             moveCursor(sidePanelElements[0]);
           }
