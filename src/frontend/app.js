@@ -60,11 +60,20 @@ const initApp = async () => {
     if (changeType === "screenChange") {
       const state = GameState.get();
       if (state.currentScreen === "settings") {
-        const defaultCharacter = state.characterGrid.p1.character || "Ken";
-        GameState.updateProperty("currentCharacter", defaultCharacter);
-        UIController.updateCombosDisplay(defaultCharacter);
-        UIController.updateSuperArtsDisplay(defaultCharacter);
-        CharacterSelectionManager.initOutfitGrid(defaultCharacter);
+        const activePlayer = state.characterGrid.activePlayer;
+        const activeCharacter = state.characterGrid[activePlayer].character;
+
+        CharacterSelectionManager.updatePlayerBoxes();
+        CharacterSelectionManager.updateCharacterBorders();
+
+        if (activeCharacter) {
+          GameState.updateProperty("currentCharacter", activeCharacter);
+          UIController.updateCombosDisplay(activeCharacter);
+          UIController.updateSuperArtsDisplay(activeCharacter);
+          CharacterSelectionManager.initOutfitGrid(activeCharacter);
+        } else {
+          CharacterSelectionManager.initOutfitGrid(null);
+        }
       }
     }
   });

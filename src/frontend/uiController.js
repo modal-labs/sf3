@@ -40,6 +40,44 @@ const createUIController = () => {
     });
   };
 
+  const setupDifficultySlider = () => {
+    const slider = byId("difficulty-slider");
+    const description = byId("difficulty-description");
+
+    if (!slider || !description) return;
+
+    const descriptions = [
+      "No combos or super arts",
+      "Combos enabled, no super arts",
+      "All moves available",
+    ];
+
+    const updateDescription = () => {
+      const value = parseInt(slider.value);
+      description.textContent = descriptions[value];
+
+      description.classList.remove(
+        "text-sf-green",
+        "text-sf-blue",
+        "text-sf-red"
+      );
+      if (value === 0) description.classList.add("text-sf-green");
+      else if (value === 1) description.classList.add("text-sf-blue");
+      else description.classList.add("text-sf-red");
+    };
+
+    slider.addEventListener("input", updateDescription);
+    slider.addEventListener("change", () => {
+      AudioManager.playSound(SOUND_KEYS.CLICK);
+    });
+
+    slider.addEventListener("mouseenter", () => {
+      AudioManager.playSound(SOUND_KEYS.HOVER);
+    });
+
+    updateDescription();
+  };
+
   const setupOptionsPanel = () => {
     const optionsToggle = byId("toggle-options-btn");
     const optionsPanel = byId("options-panel");
@@ -53,6 +91,8 @@ const createUIController = () => {
         GamepadUINavigator.updateGamepadSections(true);
       });
     }
+
+    setupDifficultySlider();
 
     const superArtP1 = byId("super-art-select-p1");
     const superArtP2 = byId("super-art-select-p2");
@@ -95,7 +135,15 @@ const createUIController = () => {
 
     if (!helpButton || !overlay || !closeBtn) return;
 
+    let savedNavPosition = null;
+
     const openOverlay = () => {
+      const navState = GameState.getGamepadUIState();
+      savedNavPosition = {
+        section: navState.currentSection,
+        element: navState.currentElement,
+      };
+
       overlay.classList.remove("hidden");
       updateControlsDisplay();
       updateGamepadNavVisibility();
@@ -130,6 +178,11 @@ const createUIController = () => {
       AudioManager.playSound(SOUND_KEYS.CLICK);
       GamepadManager.setUIActive(true);
       GamepadUINavigator.updateGamepadSections(true);
+
+      if (savedNavPosition) {
+        GamepadUINavigator.restoreNavPosition(savedNavPosition);
+        savedNavPosition = null;
+      }
     };
 
     helpButton.addEventListener("click", openOverlay);

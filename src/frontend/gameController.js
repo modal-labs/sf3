@@ -10,6 +10,10 @@ const createGameController = () => {
   const startGame = () => {
     const state = GameState.get();
 
+    const difficultySlider = byId("difficulty-slider");
+    const difficultyValue = parseInt(difficultySlider?.value || 2);
+    const difficultyMap = ["basic", "advanced", "expert"];
+
     const gameConfig = {
       humanVsLlm: state.humanVsLlm,
       player1: {
@@ -23,6 +27,7 @@ const createGameController = () => {
         superArt: parseInt(byId("super-art-select-p2")?.value || 1),
       },
       gamepadConnected: GamepadManager.isConnected(),
+      difficulty: difficultyMap[difficultyValue],
     };
 
     GameState.update({
