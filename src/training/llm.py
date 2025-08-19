@@ -812,6 +812,7 @@ def get_round_status(round_idx: int, max_steps: int, project_name: str):
     },
     secrets=[modal.Secret.from_name("ajhinh-wandb-secret")],
     timeout=24 * 60 * minutes,
+    retries=3,
 )
 def train_model(
     run_name: str,
@@ -824,19 +825,8 @@ def train_model(
 ):
     import os
     import subprocess
-    import time
 
     cache_volume.reload()
-
-    train_file = cache_path / project_name / run_name / "train.parquet"
-    val_file = cache_path / project_name / run_name / "val.parquet"
-
-    while not train_file.exists() or not val_file.exists():
-        if not train_file.exists():
-            print(f"train_file doesn't exist yet: {train_file}")
-        if not val_file.exists():
-            print(f"val_file doesn't exist yet: {val_file}")
-        time.sleep(1)
 
     os.environ["WANDB_PROJECT"] = project_name
     os.environ["WANDB_RUN_NAME"] = run_name
@@ -848,9 +838,9 @@ def train_model(
         "--mixed_precision=bf16",
         remote_train_script_path,
         "--train_file",
-        str(train_file),
+        str(cache_path / project_name / run_name / "train.parquet"),
         "--eval_file",
-        str(val_file),
+        str(cache_path / project_name / run_name / "val.parquet"),
         "--model_name_or_path",
         current_ckpt_path or model_name,
         "--save_dir",
