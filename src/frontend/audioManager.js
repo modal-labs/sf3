@@ -9,38 +9,28 @@ export const AudioManager = {
   selectSound: null,
   transitionSound: null,
   winLoseSound: null,
+  isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent),
 
   init() {
+    if (this.isMobile) {
+      this.enabled = false;
+      return;
+    }
+
     this.enabled = localStorage.getItem("audioEnabled") !== "false";
     this.setupMuteButton();
   },
 
   async preloadSounds(soundFiles, gameplayMusicMap) {
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    const skipAudio =
-      isMobile || localStorage.getItem("skipAudioPreload") === "true";
-
-    if (skipAudio) {
-      this.deferredSounds = {
-        soundFiles,
-        gameplayMusicMap,
-      };
+    if (this.isMobile) {
       return;
     }
-
-    const promises = [];
 
     Object.entries(soundFiles).forEach(([, filename]) => {
       const asset = new Audio(`/sounds/${filename}.mp3`);
       asset.volume = this.volume;
       asset.preload = "auto";
       this.sounds[filename] = asset;
-      promises.push(
-        new Promise((resolve) => {
-          asset.addEventListener("canplaythrough", resolve, { once: true });
-          asset.addEventListener("error", resolve, { once: true });
-        })
-      );
     });
 
     Object.entries(gameplayMusicMap).forEach(([key, filename]) => {
@@ -48,6 +38,10 @@ export const AudioManager = {
       asset.volume = this.volume;
       asset.preload = "auto";
       this.sounds[key] = asset;
+    });
+
+    const promises = [];
+    Object.values(this.sounds).forEach((asset) => {
       promises.push(
         new Promise((resolve) => {
           asset.addEventListener("canplaythrough", resolve, { once: true });
@@ -60,6 +54,10 @@ export const AudioManager = {
   },
 
   play(soundName, options = {}) {
+    if (this.isMobile) {
+      return;
+    }
+
     const {
       volume = 1,
       loop = false,
@@ -67,37 +65,12 @@ export const AudioManager = {
       onEnd = null,
     } = options;
 
-    let sound = this.sounds[soundName];
-
-    if (!sound && this.deferredSounds) {
-      const { soundFiles, gameplayMusicMap } = this.deferredSounds;
-
-      for (const [, filename] of Object.entries(soundFiles)) {
-        if (filename === soundName) {
-          sound = new Audio(`/sounds/${filename}.mp3`);
-          sound.volume = this.volume;
-          this.sounds[soundName] = sound;
-          break;
-        }
-      }
-
-      if (!sound && gameplayMusicMap[soundName]) {
-        sound = new Audio(
-          `/sounds/gameplay/${gameplayMusicMap[soundName]}.mp3`
-        );
-        sound.volume = this.volume;
-        this.sounds[soundName] = sound;
-      }
-    }
+    const sound = this.sounds[soundName];
 
     if (!sound) {
       console.warn(`No sound found for: ${soundName}`);
       return;
     }
-
-    if (sound.readyState === 0) {
-      sound.load();
-    } // on mobile, load audio on first user interaction
 
     if (trackAs === "select") this.stopTrack("select");
     else if (trackAs === "transition") this.stopTrack("transition");
@@ -155,6 +128,7 @@ export const AudioManager = {
   },
 
   stopTrack(trackType) {
+    if (this.isMobile) return;
     const trackMap = {
       select: "selectSound",
       winLose: "winLoseSound",
@@ -173,6 +147,8 @@ export const AudioManager = {
   },
 
   stopAll() {
+    if (this.isMobile) return;
+
     this.stopTrack("select");
     this.stopTrack("winLose");
     this.stopTrack("transition");
@@ -185,6 +161,7 @@ export const AudioManager = {
   },
 
   toggleMute() {
+    if (this.isMobile) return;
     this.enabled = !this.enabled;
     localStorage.setItem("audioEnabled", this.enabled);
 
