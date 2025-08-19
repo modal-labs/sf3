@@ -2,7 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <title>Street Fighter III</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -127,6 +132,10 @@
                   filter: "drop-shadow(0 0 20px #ffd700) brightness(1.2)",
                 },
               },
+              "rotate-90": {
+                "0%, 100%": { transform: "rotate(0deg)" },
+                "50%": { transform: "rotate(-90deg)" },
+              },
             },
             animation: {
               "character-flash": "character-flash 0.2s 3",
@@ -136,6 +145,7 @@
               "coin-insert": "coin-insert 2s ease-in forwards",
               "coin-shine": "coin-shine 2s ease-in-out infinite",
               "gamepad-pulse": "gamepad-pulse 1.5s ease-in-out infinite",
+              "rotate-90": "rotate-90 2s ease-in-out infinite",
             },
           },
         },
@@ -144,7 +154,7 @@
     <style type="text/tailwindcss">
       @layer components {
         .panel {
-          @apply p-8 w-full bg-sf-darker rounded-lg flex flex-col justify-start items-center gap-8;
+          @apply p-6 lg:p-8 w-full bg-sf-darker rounded-lg flex flex-col justify-start items-center gap-6 lg:gap-8;
         }
         .capcom-logo {
           @apply animate-capcom-intro;
@@ -172,19 +182,19 @@
           cursor: none !important;
         }
         .btn-rect {
-          @apply py-4 px-8 bg-sf-darker border-2 font-bold text-xl rounded-lg shadow-lg hover:bg-sf-dark transition-all duration-200;
+          @apply py-4 lg:py-6 px-6 lg:px-8 bg-sf-darker border-2 font-bold text-base lg:text-xl rounded-lg shadow-lg hover:bg-sf-dark transition-all duration-200;
         }
         .btn-icon {
           @apply p-3 border-2 rounded-full shadow-lg transition-all duration-200;
         }
-        .icon-6 {
-          @apply size-6 filter invert;
+        .img-icon {
+          @apply size-4 lg:size-6 filter invert;
         }
         .dropdown {
-          @apply py-3 pl-3 pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none hover:bg-sf-darker hover:border-sf-green-dark transition-all duration-200;
+          @apply py-2 lg:py-3 pl-3 pr-6 lg:pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none hover:bg-sf-darker hover:border-sf-green-dark transition-all duration-200;
         }
         .game-ctrl {
-          @apply px-3 py-1 bg-sf-dark border border-sf-green rounded-lg;
+          @apply py-1 px-3 bg-sf-dark border border-sf-green rounded-lg;
         }
         .spinner {
           @apply border-4 border-sf-green/30 border-t-sf-green rounded-full animate-spin;
@@ -193,7 +203,7 @@
           @apply [text-shadow:0_0_10px_currentColor];
         }
         .portrait-box {
-          @apply size-24 bg-sf-dark border-4 rounded-lg hover:opacity-80 transition-all duration-200 cursor-pointer;
+          @apply size-16 lg:size-20 bg-sf-dark border-4 rounded-lg hover:opacity-80 transition-all duration-200 cursor-pointer;
         }
         .loading-placeholder {
           @apply bg-gradient-to-r from-sf-dark via-sf-beige to-sf-dark bg-[length:200%_100%] animate-skeleton-loading;
@@ -202,26 +212,74 @@
           @apply appearance-none size-5 bg-sf-beige rounded-full shadow-lg cursor-pointer hover:bg-sf-beige-dark transition-all duration-200;
         }
         .slider::-moz-range-thumb {
-          @apply size-5 bg-sf-beige rounded-full shadow-lg cursor-pointer hover:bg-sf-beige-dark transition-all duration-200 border-0;
+          @apply appearance-none size-5 bg-sf-beige rounded-full shadow-lg cursor-pointer hover:bg-sf-beige-dark transition-all duration-200 border-0;
         }
       }
     </style>
   </head>
 
   <body
-    class="font-mono bg-sf-dark text-sf-beige min-h-screen text-center flex flex-col"
+    class="font-mono bg-sf-dark text-sf-beige min-h-screen text-center flex flex-col text-sm lg:text-base"
   >
+    <div
+      id="rotate-device"
+      class="fixed inset-0 bg-sf-dark z-[100] flex-col justify-center items-center gap-8 hidden"
+    >
+      <h2
+        id="requirement-title"
+        class="text-2xl text-sf-green text-glow animate-pulse"
+      >
+        Please Rotate Your Device
+      </h2>
+      <p
+        id="requirement-text"
+        class="text-sf-beige-dark px-8 text-center max-w-sm whitespace-pre-line"
+      >
+        This game requires landscape orientation on mobile devices.
+      </p>
+      <div
+        id="requirement-icon"
+        class="border-4 border-sf-gold rounded-lg w-12 h-20 relative animate-rotate-90"
+      >
+        <div
+          class="absolute top-1 left-1/2 transform -translate-x-1/2 w-4 h-1 bg-sf-gold rounded-full"
+        ></div>
+      </div>
+      <div id="input-icons" class="hidden flex-row gap-4 items-center">
+        <div class="flex flex-col items-center gap-2">
+          <div class="p-4 border-2 border-sf-gold rounded-lg">
+            <img
+              src="/icons/keyboard.png"
+              alt="Keyboard"
+              class="size-12 filter invert"
+            />
+          </div>
+          <span class="text-sf-gold text-sm">Keyboard</span>
+        </div>
+        <span class="text-sf-beige">OR</span>
+        <div class="flex flex-col items-center gap-2">
+          <div class="p-4 border-2 border-sf-gold rounded-lg">
+            <img
+              src="/icons/gamepad.png"
+              alt="Gamepad"
+              class="size-12 filter invert"
+            />
+          </div>
+          <span class="text-sf-gold text-sm">Gamepad</span>
+        </div>
+      </div>
+    </div>
     <header
       id="game-header"
-      class="hidden p-8 bg-sf-darker border-b-2 border-sf-green flex justify-between items-center gap-8"
+      class="hidden p-6 lg:p-8 bg-sf-darker border-b-2 border-sf-green flex justify-between items-center gap-6 lg:gap-8"
     >
       <h1
-        class="text-left text-4xl font-bold tracking-wider text-sf-green text-glow"
+        class="text-left text-2xl lg:text-4xl font-bold tracking-wider text-sf-green text-glow"
       >
         STREET FIGHTER III
       </h1>
-      <div class="flex flex-col justify-center items-end gap-4">
-        <h2 class="text-2xl text-sf-green">made with</h2>
+      <div class="flex flex-col justify-center items-end gap-3 lg:gap-4">
+        <h2 class="text-lg lg:text-2xl text-sf-green">made with</h2>
         <a
           href="https://modal.com"
           target="_blank"
@@ -232,7 +290,7 @@
           <img
             src="/modal.svg"
             alt="Modal Logo"
-            class="h-10 w-auto transition-all duration-200"
+            class="h-6 lg:h-10 w-auto transition-all duration-200"
           />
         </a>
       </div>
@@ -248,7 +306,7 @@
         src="/icons/help.png"
         alt=""
         aria-hidden="true"
-        class="icon-6"
+        class="img-icon"
       />
     </button>
     <button
@@ -263,7 +321,7 @@
         src="/icons/human.png"
         alt=""
         aria-hidden="true"
-        class="icon-6"
+        class="img-icon"
       />
     </button>
     <button
@@ -278,7 +336,7 @@
         src="/icons/unmute.svg"
         alt=""
         aria-hidden="true"
-        class="icon-6"
+        class="img-icon"
       />
     </button>
     <div
@@ -294,7 +352,7 @@
         src="/icons/gamepad.png"
         alt=""
         aria-hidden="true"
-        class="icon-6"
+        class="img-icon"
       />
     </div>
     <main class="relative flex-1 flex flex-col justify-center items-center">
@@ -302,10 +360,10 @@
         id="loading-screen"
         class="flex flex-col justify-center items-center gap-8"
       >
-        <div class="spinner size-16"></div>
+        <div class="spinner size-12 lg:size-16"></div>
         <h2
           id="loading-status"
-          class="text-2xl text-sf-green text-glow animate-pulse"
+          class="text-xl lg:text-2xl text-sf-green text-glow animate-pulse"
           aria-live="polite"
           role="status"
         >
@@ -327,7 +385,7 @@
         <img
           src="/capcom.svg"
           alt="Capcom"
-          class="capcom-logo w-96 h-auto z-10"
+          class="capcom-logo w-64 lg:w-96 h-auto z-10"
         />
         <div class="fixed inset-0 animate-static-flicker static-noise"></div>
         <p
@@ -351,87 +409,103 @@
             src="/icons/close.png"
             alt=""
             aria-hidden="true"
-            class="icon-6"
+            class="img-icon"
           />
         </button>
-        <div class="flex flex-wrap justify-center items-start gap-8">
-          <div class="panel max-w-xl border-2 border-sf-green">
-            <div id="gamepad-nav-section" class="w-full flex flex-col gap-8">
-              <h2 class="text-sf-green text-lg text-glow">
+        <div class="flex justify-center items-start gap-6 lg:gap-8">
+          <div class="panel max-w-sm lg:max-w-xl border-2 border-sf-green">
+            <div
+              id="gamepad-nav-section"
+              class="w-full flex flex-col gap-6 lg:gap-8"
+            >
+              <h2 class="text-sf-green text-base lg:text-lg text-glow">
                 Gamepad Navigation
               </h2>
-              <div class="w-full flex flex-col gap-4 text-sm">
+              <div
+                class="w-full flex flex-col gap-2 lg:gap-3 text-xs lg:text-sm"
+              >
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl">D-Pad/Left Stick</span>
-                  <h3 class="text-sf-gold">Navigate</h3>
+                  <span class="game-ctrl text-xs">D-Pad/Left Stick</span>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">Navigate</h3>
                 </div>
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl">A</span>
-                  <h3 class="text-sf-gold">Select</h3>
+                  <span class="game-ctrl text-xs">A</span>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">Select</h3>
                 </div>
               </div>
             </div>
-            <div class="w-full flex flex-col gap-8">
-              <h2 class="text-sf-green text-lg text-glow">Gameplay Controls</h2>
-              <div class="w-full flex flex-col gap-4 text-sm">
+            <div class="w-full flex flex-col gap-6 lg:gap-8">
+              <h2 class="text-sf-green text-base lg:text-lg text-glow">
+                Gameplay Controls
+              </h2>
+              <div
+                class="w-full flex flex-col gap-2 lg:gap-3 text-xs lg:text-sm"
+              >
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl" id="movement-display"
+                  <span class="game-ctrl text-xs" id="movement-display"
                     >WASD / Arrow Keys</span
                   >
-                  <h3 class="text-sf-gold">Movement</h3>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">Movement</h3>
                 </div>
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl"
+                  <span class="game-ctrl text-xs"
                     ><span id="lp-display">J</span> /
                     <span id="mp-display">K</span> /
                     <span id="hp-display">L</span></span
                   >
-                  <h3 class="text-sf-gold">Punches</h3>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">Punches</h3>
                 </div>
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl"
+                  <span class="game-ctrl text-xs"
                     ><span id="lk-display">U</span> /
                     <span id="mk-display">I</span> /
                     <span id="hk-display">O</span></span
                   >
-                  <h3 class="text-sf-gold">Kicks</h3>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">Kicks</h3>
                 </div>
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl" id="lplk-display">J + U</span>
-                  <h3 class="text-sf-gold">LP + LK</h3>
+                  <span class="game-ctrl text-xs" id="lplk-display">J + U</span>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">LP + LK</h3>
                 </div>
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl" id="mpmk-display">K + I</span>
-                  <h3 class="text-sf-gold">MP + MK</h3>
+                  <span class="game-ctrl text-xs" id="mpmk-display">K + I</span>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">MP + MK</h3>
                 </div>
                 <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl" id="hphk-display">L + O</span>
-                  <h3 class="text-sf-gold">HP + HK</h3>
+                  <span class="game-ctrl text-xs" id="hphk-display">L + O</span>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">HP + HK</h3>
                 </div>
               </div>
             </div>
           </div>
-          <div class="panel max-w-xl border-2 border-sf-green">
+          <div class="panel max-w-sm lg:max-w-xl border-2 border-sf-green">
             <div
               id="combos-section"
-              class="w-full flex flex-col justify-center items-center gap-8 text-sm"
+              class="w-full flex flex-col justify-center items-center gap-6 lg:gap-8"
             >
-              <h2 class="text-sf-green text-lg text-glow">Combos</h2>
-              <div id="combos-loading" class="spinner size-8"></div>
+              <h2 class="text-sf-green text-base lg:text-lg text-glow">
+                Combos
+              </h2>
+              <div id="combos-loading" class="spinner size-6 lg:size-8"></div>
               <div
                 id="combos-list"
-                class="w-full flex flex-col gap-4 text-sm"
+                class="w-full flex flex-col gap-2 lg:gap-3 text-xs lg:text-sm"
               ></div>
             </div>
             <div
               id="super-arts-section"
-              class="w-full flex flex-col justify-center items-center gap-8 text-sm"
+              class="w-full flex flex-col justify-center items-center gap-6 lg:gap-8"
             >
-              <h2 class="text-sf-green text-lg text-glow">Super Arts</h2>
-              <div id="super-arts-loading" class="spinner size-8"></div>
+              <h2 class="text-sf-green text-base lg:text-lg text-glow">
+                Super Arts
+              </h2>
+              <div
+                id="super-arts-loading"
+                class="spinner size-6 lg:size-8"
+              ></div>
               <div
                 id="super-arts-list"
-                class="w-full flex flex-col gap-4 text-sm"
+                class="w-full flex flex-col gap-2 lg:gap-3 text-xs lg:text-sm"
               ></div>
             </div>
           </div>
@@ -448,13 +522,15 @@
         >
           Connecting to server...
         </button>
-        <div class="panel max-w-5xl border-2 border-sf-green">
-          <div class="flex justify-center items-center gap-8">
+        <div
+          class="panel w-full max-w-3xl lg:max-w-5xl border-2 border-sf-green"
+        >
+          <div class="flex justify-center items-center gap-6 lg:gap-8">
             <div
               id="p1-selection-box"
-              class="flex flex-col justify-center items-center gap-4"
+              class="flex flex-col justify-center items-center gap-3 lg:gap-4"
             >
-              <h2 class="text-sf-blue text-xl text-glow">YOU</h2>
+              <h2 class="text-sf-blue text-base lg:text-xl text-glow">YOU</h2>
               <div
                 id="p1-selected-portrait"
                 class="portrait-box border-sf-blue"
@@ -469,9 +545,9 @@
             </div>
             <div
               id="p2-selection-box"
-              class="flex flex-col justify-center items-center gap-4"
+              class="flex flex-col justify-center items-center gap-3 lg:gap-4"
             >
-              <h2 class="text-sf-red text-xl text-glow">LLM</h2>
+              <h2 class="text-sf-red text-base lg:text-xl text-glow">LLM</h2>
               <div
                 id="p2-selected-portrait"
                 class="portrait-box border-transparent"
@@ -499,11 +575,11 @@
         </button>
         <div
           id="options-panel"
-          class="hidden panel max-w-3xl border-2 border-sf-green"
+          class="hidden panel max-w-xl lg:max-w-3xl border-2 border-sf-green"
         >
-          <div class="w-full flex flex-col gap-8">
+          <div class="w-full flex flex-col gap-6 lg:gap-8">
             <div class="flex flex-col justify-center items-center gap-4">
-              <div class="relative w-full max-w-md">
+              <div class="relative w-full max-w-md flex flex-col gap-2">
                 <input
                   type="range"
                   id="difficulty-slider"
@@ -511,9 +587,9 @@
                   max="2"
                   value="2"
                   step="1"
-                  class="w-full h-2 bg-sf-dark rounded-lg appearance-none cursor-pointer slider"
+                  class="w-full h-2 bg-gradient-to-r from-sf-green via-sf-blue to-sf-red rounded-lg cursor-pointer slider appearance-none"
                 />
-                <div class="flex justify-between mt-2">
+                <div class="flex justify-between">
                   <span class="text-sf-green">Basic</span>
                   <span class="text-sf-blue">Advanced</span>
                   <span class="text-sf-red">Expert</span>
@@ -523,10 +599,12 @@
                 All moves available
               </p>
             </div>
-            <div class="flex justify-center items-center gap-12">
+            <div class="flex justify-center items-center gap-8 lg:gap-12">
               <div class="flex items-center gap-4">
-                <label class="text-sf-gold text-lg">P1 Super Art</label>
-                <div class="relative w-16">
+                <label class="text-sf-gold text-md lg:text-lg"
+                  >P1 Super Art</label
+                >
+                <div class="relative w-12 lg:w-16">
                   <select id="super-art-select-p1" class="dropdown">
                     <option value="1">1</option>
                     <option value="2">2</option>
@@ -536,7 +614,7 @@
                     class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
                   >
                     <svg
-                      class="size-4"
+                      class="size-3 lg:size-4"
                       fill="none"
                       stroke="currentColor"
                       stroke-width="2"
@@ -552,8 +630,10 @@
                 </div>
               </div>
               <div class="flex items-center gap-4">
-                <label class="text-sf-gold text-lg">P2 Super Art</label>
-                <div class="relative w-16">
+                <label class="text-sf-gold text-md lg:text-lg"
+                  >P2 Super Art</label
+                >
+                <div class="relative w-12 lg:w-16">
                   <select id="super-art-select-p2" class="dropdown">
                     <option value="1">1</option>
                     <option value="2">2</option>
@@ -563,7 +643,7 @@
                     class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
                   >
                     <svg
-                      class="size-4"
+                      class="size-3 lg:size-4"
                       fill="none"
                       stroke="currentColor"
                       stroke-width="2"
@@ -580,12 +660,15 @@
               </div>
             </div>
             <div id="outfit-selection" class="w-full flex flex-col gap-4">
-              <p id="outfit-player-indicator" class="text-lg text-sf-beige">
+              <p
+                id="outfit-player-indicator"
+                class="text-md lg:text-lg text-sf-beige"
+              >
                 Select a character to see outfits
               </p>
               <div
                 id="outfit-grid"
-                class="relative grid grid-cols-6 gap-2"
+                class="relative grid grid-cols-6 gap-2 mx-auto"
               ></div>
             </div>
           </div>
@@ -593,21 +676,22 @@
       </div>
       <div id="game-screen" class="hidden size-full">
         <div class="flex items-center justify-center">
-          <!-- 2x scaled from original 384x224 -->
+          <!-- 2x (768x448) on desktop, 1.5x (576x336) on mobile -->
           <canvas
             id="game-canvas"
             width="768"
             height="448"
-            class="bg-sf-darker border-2 border-sf-green rounded-lg hidden"
+            class="bg-sf-darker border-2 border-sf-green rounded-lg hidden max-w-full h-auto"
+            style="image-rendering: pixelated; image-rendering: crisp-edges"
           ></canvas>
           <div
             id="canvas-loading-overlay"
             class="flex flex-col items-center justify-center gap-8"
           >
-            <div class="spinner size-16"></div>
+            <div class="spinner size-12 lg:size-16"></div>
             <h2
               id="canvas-loading-status"
-              class="text-2xl text-sf-green text-glow animate-pulse"
+              class="text-xl lg:text-2xl text-sf-green text-glow animate-pulse"
               aria-live="polite"
               role="status"
             >
@@ -620,7 +704,7 @@
         id="win-screen"
         class="hidden panel max-w-xs border-2 border-sf-green"
       >
-        <h1 id="winner-text" class="text-2xl text-glow"></h1>
+        <h1 id="winner-text" class="text-xl lg:text-2xl text-glow"></h1>
         <button
           id="play-again-btn"
           class="btn-rect border-sf-green text-sf-green text-glow hover:border-sf-green-dark hover:text-sf-green-dark"

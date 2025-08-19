@@ -5,6 +5,7 @@ import { WebSocketManager } from "./webSocketManager.js";
 import { AudioManager } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { SOUND_KEYS } from "./constants.js";
+import { setCanvasSize } from "./app.js";
 
 const createGameController = () => {
   const startGame = () => {
@@ -134,6 +135,7 @@ const createGameController = () => {
 
       case "running":
         GameState.update({ loaded: true });
+        setCanvasSize();
         ScreenManager.showScreen(ScreenManager.screens.GAME);
         GamepadManager.setUIActive(!GameState.get().humanVsLlm);
 

@@ -272,7 +272,7 @@ class Web:
                 if self.observation is None:
                     return
 
-                if not self.game_settings.get("humanVsLlm", True):
+                if not self.game_settings["humanVsLlm"]:
                     return
 
                 action = action_data["action"]
@@ -492,7 +492,7 @@ class Web:
                             super_bar=obs_p2["super_bar"][0],
                         )
 
-                        if not session.game_settings.get("humanVsLlm", True):
+                        if not session.game_settings["humanVsLlm"]:
                             messages_p1, available_moves_p1 = create_messages(
                                 game_info,
                                 player2,
@@ -501,7 +501,7 @@ class Web:
                                 session.prev_player2_state,
                                 session.prev_player1_state,
                                 session.player1_recent_move_names,
-                                session.game_settings.get("difficulty", "expert"),
+                                session.game_settings["difficulty"],
                             )
 
                             moves_p1, move_name_p1 = await self.llm.chat.remote.aio(
@@ -535,7 +535,7 @@ class Web:
                             session.prev_player1_state,
                             session.prev_player2_state,
                             session.player2_recent_move_names,
-                            session.game_settings.get("difficulty", "expert"),
+                            session.game_settings["difficulty"],
                         )
 
                         moves, move_name = await self.llm.chat.remote.aio(
@@ -583,12 +583,8 @@ class Web:
                         p1_settings = session.game_settings["player1"]
                         p2_settings = session.game_settings["player2"]
 
-                        disable_keyboard = not session.game_settings.get(
-                            "humanVsLlm", True
-                        )
-                        disable_joystick = not session.game_settings.get(
-                            "gamepadConnected", False
-                        )
+                        disable_keyboard = not session.game_settings["humanVsLlm"]
+                        disable_joystick = not session.game_settings["gamepadConnected"]
 
                         settings = EnvironmentSettingsMultiAgent(
                             step_ratio=1,
@@ -672,7 +668,7 @@ class Web:
                                     if session.player1_next_buttons
                                     else (
                                         session.player1_current_action
-                                        if session.game_settings.get("humanVsLlm", True)
+                                        if session.game_settings["humanVsLlm"]
                                         else 0
                                     ),
                                     "agent_1": session.player2_next_buttons.pop(0)
@@ -756,7 +752,7 @@ class Web:
                                         f"Game finished - P1: {p1_wins}, P2: {p2_wins}"
                                     )
 
-                                    if session.game_settings.get("humanVsLlm", True):
+                                    if session.game_settings["humanVsLlm"]:
                                         if p1_wins > p2_wins:
                                             session.game_state["scores"][0] += 1
                                             winner = "YOU"

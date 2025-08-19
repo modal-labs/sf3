@@ -16,6 +16,18 @@ export const AudioManager = {
   },
 
   async preloadSounds(soundFiles, gameplayMusicMap) {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const skipAudio =
+      isMobile || localStorage.getItem("skipAudioPreload") === "true";
+
+    if (skipAudio) {
+      this.deferredSounds = {
+        soundFiles,
+        gameplayMusicMap,
+      };
+      return;
+    }
+
     const promises = [];
 
     Object.entries(soundFiles).forEach(([, filename]) => {
@@ -55,11 +67,37 @@ export const AudioManager = {
       onEnd = null,
     } = options;
 
-    const sound = this.sounds[soundName];
+    let sound = this.sounds[soundName];
+
+    if (!sound && this.deferredSounds) {
+      const { soundFiles, gameplayMusicMap } = this.deferredSounds;
+
+      for (const [, filename] of Object.entries(soundFiles)) {
+        if (filename === soundName) {
+          sound = new Audio(`/sounds/${filename}.mp3`);
+          sound.volume = this.volume;
+          this.sounds[soundName] = sound;
+          break;
+        }
+      }
+
+      if (!sound && gameplayMusicMap[soundName]) {
+        sound = new Audio(
+          `/sounds/gameplay/${gameplayMusicMap[soundName]}.mp3`
+        );
+        sound.volume = this.volume;
+        this.sounds[soundName] = sound;
+      }
+    }
+
     if (!sound) {
       console.warn(`No sound found for: ${soundName}`);
       return;
     }
+
+    if (sound.readyState === 0) {
+      sound.load();
+    } // on mobile, load audio on first user interaction
 
     if (trackAs === "select") this.stopTrack("select");
     else if (trackAs === "transition") this.stopTrack("transition");
@@ -97,7 +135,8 @@ export const AudioManager = {
       sound.addEventListener("ended", onEndHandler);
     }
 
-    sound.play().catch(() => {
+    sound.play().catch((error) => {
+      console.warn(`Failed to play sound: ${soundName}`, error);
       if (trackAs === "effect") {
         const index = this.currentEffects.indexOf(sound);
         if (index > -1) this.currentEffects.splice(index, 1);

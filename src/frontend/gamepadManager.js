@@ -85,6 +85,13 @@ export const GamepadManager = {
     AudioManager.playSound(SOUND_KEYS.GAMEPAD_CONNECT);
     this.onStatusChange(true);
     this.startPolling();
+
+    // dispatch custom event for mobile requirements check
+    window.dispatchEvent(
+      new CustomEvent("gamepadStatusChange", {
+        detail: { connected: true },
+      })
+    );
   },
 
   handleDisconnect(e) {
@@ -117,6 +124,12 @@ export const GamepadManager = {
     AudioManager.playSound(SOUND_KEYS.GAMEPAD_DISCONNECT);
     this.onStatusChange(false);
     this.stopPolling();
+
+    window.dispatchEvent(
+      new CustomEvent("gamepadStatusChange", {
+        detail: { connected: false },
+      })
+    );
   },
 
   startPolling() {

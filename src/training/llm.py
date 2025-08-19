@@ -1337,10 +1337,10 @@ async def evaluate_model(
 async def local(
     # scale
     n_rounds: int = 100,
-    n_train_episodes_per_round: int = 90,  # ~32k samples
+    n_train_episodes_per_round: int = 90,  # ~64k samples
     n_val_episodes_per_round: int = 10,
     # training
-    max_steps: int = 1000,  # bs = 32 -> 32k samples
+    max_steps: int = 1000,  # bs = 128 -> 128k samples
     # evaluation
     n_eval_episodes: int = 100,
 ):
@@ -1435,7 +1435,7 @@ async def local(
             current_ckpt_path = status["final_checkpoint"]
 
     # final_status = get_round_status.remote(n_rounds - 1, max_steps, project_name)
-    # if not final_status.get("has_final_eval", False):
+    # if not final_status["has_final_eval"]:
     #     await evaluate_model.remote.aio(
     #         final_status["run_name"],
     #         project_name,
