@@ -198,6 +198,12 @@
         .loading-placeholder {
           @apply bg-gradient-to-r from-sf-dark via-sf-beige to-sf-dark bg-[length:200%_100%] animate-skeleton-loading;
         }
+        .slider::-webkit-slider-thumb {
+          @apply appearance-none size-5 bg-sf-beige rounded-full shadow-lg cursor-pointer hover:bg-sf-beige-dark transition-all duration-200;
+        }
+        .slider::-moz-range-thumb {
+          @apply size-5 bg-sf-beige rounded-full shadow-lg cursor-pointer hover:bg-sf-beige-dark transition-all duration-200 border-0;
+        }
       }
     </style>
   </head>
@@ -496,6 +502,27 @@
           class="hidden panel max-w-3xl border-2 border-sf-green"
         >
           <div class="w-full flex flex-col gap-8">
+            <div class="flex flex-col justify-center items-center gap-4">
+              <div class="relative w-full max-w-md">
+                <input
+                  type="range"
+                  id="difficulty-slider"
+                  min="0"
+                  max="2"
+                  value="2"
+                  step="1"
+                  class="w-full h-2 bg-sf-dark rounded-lg appearance-none cursor-pointer slider"
+                />
+                <div class="flex justify-between mt-2">
+                  <span class="text-sf-green">Basic</span>
+                  <span class="text-sf-blue">Advanced</span>
+                  <span class="text-sf-red">Expert</span>
+                </div>
+              </div>
+              <p id="difficulty-description" class="text-sf-beige text-center">
+                All moves available
+              </p>
+            </div>
             <div class="flex justify-center items-center gap-12">
               <div class="flex items-center gap-4">
                 <label class="text-sf-gold text-lg">P1 Super Art</label>

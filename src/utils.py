@@ -1703,13 +1703,14 @@ BASE_META_INSTRUCTIONS = {
 
 
 def get_available_instructions_for_character(
-    character: str, super_art: int, super_count: int
+    character: str, super_art: int, super_count: int, difficulty: str
 ) -> list[str]:
     instructions = []
     instructions.extend(BASE_META_INSTRUCTIONS.keys())
-    instructions.extend(COMBOS[character].keys())
+    if difficulty in ["advanced", "expert"]:
+        instructions.extend(COMBOS[character].keys())
 
-    if super_count > 0:
+    if difficulty == "expert" and super_count > 0:
         for special_move in SPECIAL_MOVES[character].keys():
             if special_move.startswith(f"{super_art}"):
                 instructions.append(str(special_move))
@@ -1757,7 +1758,7 @@ def assign_boxes(
     p2_char: str,
     boxes: list[list[int]],
     class_ids: list[int],
-) -> tuple[list[int] | None, list[int] | None]:
+) -> tuple:
     p1_box = None
     p2_box = None
 
@@ -1820,10 +1821,11 @@ def create_messages(
     game_info: GameInfo,
     player1: PlayerState,
     player2: PlayerState,
-    prev_game_info: GameInfo | None = None,
-    prev_player1: PlayerState | None = None,
-    prev_player2: PlayerState | None = None,
-    recent_moves: list[str] | None = None,
+    prev_game_info=None,
+    prev_player1=None,
+    prev_player2=None,
+    recent_moves=None,
+    difficulty: str = "expert",
 ) -> tuple[list[dict[str, str]], list[str]]:
     past_info_available = (
         prev_game_info is not None
@@ -1926,7 +1928,7 @@ def create_messages(
 
     # moves
     available_moves = get_available_instructions_for_character(
-        player2.character, player2.super_art, player2.super_count
+        player2.character, player2.super_art, player2.super_count, difficulty
     )
     if past_info_available:
         # encourage close-in moves to avoid spamming + distancing
@@ -2036,7 +2038,11 @@ def create_random_messages() -> tuple[
         super_bar=player2_super_bar,
     )
 
-    messages, available_moves = create_messages(game_info, player1, player2)
+    random_difficulty = random.choice(["basic", "advanced", "expert"])
+
+    messages, available_moves = create_messages(
+        game_info, player1, player2, difficulty=random_difficulty
+    )
 
     return (
         messages,

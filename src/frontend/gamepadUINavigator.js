@@ -147,6 +147,7 @@ const createGamepadUINavigator = () => {
 
         const optionsPanel = byId("options-panel");
         if (optionsPanel && !optionsPanel.classList.contains("hidden")) {
+          settingsElements.push("#difficulty-slider");
           settingsElements.push("#super-art-select-p1");
           settingsElements.push("#super-art-select-p2");
 
@@ -314,6 +315,7 @@ const createGamepadUINavigator = () => {
     const controlsHelpIdx = section.elements.indexOf("#controls-help");
     const playerToggleIdx = section.elements.indexOf("#player-toggle");
     const muteToggleIdx = section.elements.indexOf("#mute-toggle");
+    const difficultyIdx = section.elements.indexOf("#difficulty-slider");
     const superArtP1Idx = section.elements.indexOf("#super-art-select-p1");
     const superArtP2Idx = section.elements.indexOf("#super-art-select-p2");
 
@@ -328,6 +330,7 @@ const createGamepadUINavigator = () => {
       currentEl === "#controls-help" ||
       currentEl === "#player-toggle" ||
       currentEl === "#mute-toggle";
+    const onDifficulty = state.currentElement === difficultyIdx;
     const onSuperArt =
       state.currentElement === superArtP1Idx ||
       state.currentElement === superArtP2Idx;
@@ -388,7 +391,9 @@ const createGamepadUINavigator = () => {
       if (inputY < 0) {
         moveCursor(characterEndIdx - 5);
       } else if (inputY > 0) {
-        if (superArtP1Idx >= 0) {
+        if (difficultyIdx >= 0) {
+          moveCursor(difficultyIdx);
+        } else if (superArtP1Idx >= 0) {
           moveCursor(superArtP1Idx);
         } else {
           moveCursor(startBtnIdx);
@@ -437,11 +442,28 @@ const createGamepadUINavigator = () => {
           });
         }
       }
+    } else if (onDifficulty) {
+      if (inputY < 0) {
+        moveCursor(toggleOptionsIdx);
+      } else if (inputY > 0) {
+        moveCursor(superArtP1Idx);
+      } else if (inputX !== 0) {
+        const slider = $("#difficulty-slider");
+        if (slider) {
+          const currentValue = parseInt(slider.value);
+          const newValue = Math.max(0, Math.min(2, currentValue + inputX));
+          if (newValue !== currentValue) {
+            slider.value = newValue;
+            slider.dispatchEvent(new Event("input"));
+            slider.dispatchEvent(new Event("change"));
+          }
+        }
+      }
     } else if (onSuperArt) {
       if (inputX !== 0) {
         moveCursor(inputX > 0 ? superArtP2Idx : superArtP1Idx);
       } else if (inputY < 0) {
-        moveCursor(toggleOptionsIdx);
+        moveCursor(difficultyIdx);
       } else if (inputY > 0) {
         const firstOutfitIdx = section.elements.findIndex((el) =>
           el.includes("outfit-")
@@ -616,11 +638,22 @@ const createGamepadUINavigator = () => {
     GamepadManager.onUIAction = handleGamepadUIAction;
   };
 
+  const restoreNavPosition = (position) => {
+    if (position && position.element !== undefined) {
+      GameState.updateGamepadUIState({
+        currentSection: position.section || 0,
+        currentElement: position.element,
+      });
+      updateGamepadHover();
+    }
+  };
+
   return {
     init,
     updateGamepadSections,
     updateGamepadHover,
     handleGamepadUIAction,
+    restoreNavPosition,
   };
 };
 

@@ -223,6 +223,7 @@ class Web:
                     },
                     "humanVsLlm": True,
                     "gamepadConnected": False,
+                    "difficulty": "expert",
                 }
                 self.game_state = create_initial_game_state()
 
@@ -500,6 +501,7 @@ class Web:
                                 session.prev_player2_state,
                                 session.prev_player1_state,
                                 session.player1_recent_move_names,
+                                session.game_settings.get("difficulty", "expert"),
                             )
 
                             moves_p1, move_name_p1 = await self.llm.chat.remote.aio(
@@ -533,6 +535,7 @@ class Web:
                             session.prev_player1_state,
                             session.prev_player2_state,
                             session.player2_recent_move_names,
+                            session.game_settings.get("difficulty", "expert"),
                         )
 
                         moves, move_name = await self.llm.chat.remote.aio(
