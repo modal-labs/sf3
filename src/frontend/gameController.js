@@ -171,14 +171,10 @@ const createGameController = () => {
   };
 
   const handleTransition = (data) => {
-    let message = "";
     if (data.transition_type === "round") {
-      message = "Loading next round...";
-    } else if (data.transition_type === "game") {
-      message = "Determining winner...";
+      const message = "Loading next round...";
+      ScreenManager.showTransition(message);
     }
-
-    ScreenManager.showTransition(message);
   };
 
   const init = () => {
