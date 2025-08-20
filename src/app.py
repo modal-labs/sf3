@@ -13,7 +13,6 @@ from .utils import (
     GameInfo,
     PlayerState,
     create_messages,
-    gb,
     minutes,
     region,
 )
@@ -106,14 +105,10 @@ image = (
 # inference
 
 max_inputs = 1
-cpu = 2
-memory = 2 * gb
 
 
 @app.cls(
     image=image,
-    cpu=cpu,
-    memory=memory,
     region=region,
     scaledown_window=60 * minutes,
     timeout=24 * 60 * minutes,

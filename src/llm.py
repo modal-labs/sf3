@@ -5,9 +5,7 @@ import modal
 
 from .utils import (
     create_random_messages,
-    gb,
     get_available_instructions_for_character,
-    # region,
     minutes,
     parse_move,
 )
@@ -48,8 +46,6 @@ cache_volume = modal.Volume.from_name("sf3-llm-train-cache", create_if_missing=T
 model_name = "Qwen/Qwen3-8B"  # pretrained hf model or cache_path/<run_name>/checkpoint-<max_steps>
 max_inputs = max_num_seqs = 8
 gpu = "b200"
-cpu = 16
-memory = 32 * gb
 
 
 @app.cls(
@@ -60,9 +56,6 @@ memory = 32 * gb
         cache_path: cache_volume,
     },
     gpu=gpu,
-    cpu=cpu,
-    memory=memory,
-    # region=region,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * minutes,

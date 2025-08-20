@@ -6,7 +6,6 @@ from .utils import (
     CHARACTER_MAPPING,
     X_SIZE,
     Y_SIZE,
-    gb,
     minutes,
     seed,
     # region,
@@ -53,17 +52,12 @@ cache_path = Path("/root/yolo")
 model_name = cache_path / "runs" / "2025-07-18" / "weights" / "best.onnx"
 max_inputs = 512
 gpu = "b200"
-cpu = 4
-memory = 4 * gb
 
 
 @app.cls(
     image=onnx_image,
     volumes={cache_path: cache_volume},
     gpu=gpu,
-    cpu=cpu,
-    memory=memory,
-    # region=region,
     scaledown_window=60 * minutes,
     timeout=24 * 60 * minutes,
     enable_memory_snapshot=True,
