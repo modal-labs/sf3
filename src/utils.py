@@ -1703,7 +1703,10 @@ BASE_META_INSTRUCTIONS = {
 
 
 def get_available_instructions_for_character(
-    character: str, super_art: int, super_count: int, difficulty: str
+    character: str,
+    super_art: int,
+    super_count: int,
+    difficulty: str = "expert",
 ) -> list[str]:
     instructions = []
     instructions.extend(BASE_META_INSTRUCTIONS.keys())
