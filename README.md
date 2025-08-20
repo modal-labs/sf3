@@ -50,6 +50,11 @@ modal run -m src.training.yolo --prepare --train --export
 modal run -m src.training.llm
 ```
 
+Some initial training results:
+
+- [Qwen3-8B, 25/100 rounds, bs=128](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-100-1000/workspace?nw=nwuserandrewhinh)
+- [Qwen3-8B-Base, 25/100 rounds, bs=128](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-base-100-1000/workspace?nw=nwuserandrewhinh)
+
 ## Credit
 
 ### Icons
