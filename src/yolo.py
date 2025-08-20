@@ -59,7 +59,7 @@ gpu = "b200"
     volumes={cache_path: cache_volume},
     gpu=gpu,
     scaledown_window=60 * minutes,
-    timeout=24 * 60 * minutes,
+    timeout=60 * minutes,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
 )
