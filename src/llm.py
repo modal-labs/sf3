@@ -59,7 +59,7 @@ gpu = "b200"
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * minutes,
-    timeout=24 * 60 * minutes,
+    timeout=60 * minutes,
 )
 @modal.concurrent(max_inputs=max_inputs)
 class LLMServer:
