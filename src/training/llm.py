@@ -100,7 +100,7 @@ cache_volume = modal.Volume.from_name("sf3-llm-train-cache", create_if_missing=T
 # helper fns
 
 
-async def create_llm(ckpt_path: str = ""):
+async def create_llm(ckpt_path: str):
     try:
         print("Creating LLM...")
         llm = LLMServer(ckpt_path=ckpt_path)
@@ -705,8 +705,8 @@ cpu = n_gpu * 4
 memory = n_gpu * 8 * gb
 
 # batch size: https://huggingface.co/docs/trl/main/en/kto_trainer#batch-size-recommendations
-global_bs = 128
-bs_per_device = 8
+global_bs = 32  # to limit noise in training
+bs_per_device = 4
 grad_accum_steps = global_bs // (n_gpu * bs_per_device)
 
 # beta/lr: https://huggingface.co/docs/trl/main/en/kto_trainer#learning-rate-recommendations
@@ -900,10 +900,10 @@ initial_rating = 1200.0
 )
 async def run_episode_eval(
     idx: int,
-    run_name: str,
     project_name: str,
     save_video: bool,
-    current_ckpt_path: str = "",
+    eval_suffix: str,
+    current_ckpt_path: str,
 ):
     import asyncio
 
@@ -960,6 +960,7 @@ async def run_episode_eval(
         return None
 
     step_idx = 0
+    steps_without_reward = 0
     winner = None
 
     prev_game_info = None
@@ -1011,7 +1012,7 @@ async def run_episode_eval(
         )
 
         # run trained policy
-        p1_messages = create_messages(
+        p1_messages, p1_available_moves = create_messages(
             game_info,
             player2,
             player1,
@@ -1030,6 +1031,7 @@ async def run_episode_eval(
                 super_arts[0],
                 obs_p1["super_count"][0],
                 p1_side,
+                p1_available_moves,
             )
         except Exception as e:
             print(f"trained_llm.chat failed: {e}", file=sys.stderr)
@@ -1037,7 +1039,7 @@ async def run_episode_eval(
             return None
 
         # run opponent policy
-        p2_messages = create_messages(
+        p2_messages, p2_available_moves = create_messages(
             game_info,
             player1,
             player2,
@@ -1055,7 +1057,7 @@ async def run_episode_eval(
             )
             p2_move_name = response.output_text
             p2_buttons = parse_move(character, p2_move_name, obs_p2["side"])
-            if p2_buttons is None:
+            if p2_buttons is None or p2_move_name not in p2_available_moves:
                 raise Exception(f"Invalid move from OpenAI: {p2_move_name}")
         except Exception as e:
             print(f"openai_client.responses.create failed: {e}", file=sys.stderr)
@@ -1069,6 +1071,7 @@ async def run_episode_eval(
             p1_buttons = p1_buttons + [0] * (len(p2_buttons) - len(p1_buttons))
 
         # step env
+        total_reward = 0
         for p1_button, p2_button in zip(p1_buttons, p2_buttons):
             try:
                 (
@@ -1088,6 +1091,8 @@ async def run_episode_eval(
                 sandbox.terminate()
                 return None
 
+            total_reward += reward
+
             if save_video:
                 boxes, class_ids = await yolo.detect_characters.remote.aio(
                     [CHARACTER_TO_ID[character], CHARACTER_TO_ID[character]],
@@ -1106,6 +1111,16 @@ async def run_episode_eval(
         prev_player1_state = player1
         prev_player2_state = player2
 
+        if total_reward == 0:
+            steps_without_reward += 1
+            if steps_without_reward >= max_steps_without_reward:
+                warnings.warn(
+                    f"Terminating episode early: {steps_without_reward} steps without reward"
+                )
+                break
+        else:
+            steps_without_reward = 0
+
         if terminated or truncated:
             break
 
@@ -1122,7 +1137,7 @@ async def run_episode_eval(
 
         print("Saving video...")
 
-        out_path = cache_path / project_name / run_name / f"eval_{idx}.mp4"
+        out_path = cache_path / project_name / f"eval_{idx}{eval_suffix}.mp4"
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         scale_factor = 3  # 384x224 -> 1152x672
@@ -1158,7 +1173,7 @@ async def run_episode_eval(
     p1_wins = observation["P1"]["wins"][0]
     p2_wins = observation["P2"]["wins"][0]
     if p1_wins > p2_wins:
-        winner = current_ckpt_path or "pretrained"
+        winner = current_ckpt_path
     elif p2_wins > p1_wins:
         winner = opponent
     else:
@@ -1279,11 +1294,10 @@ def create_elo_prog_viz(
     timeout=2 * 60 * minutes,
 )
 async def evaluate_model(
-    run_name: str,
     project_name: str,
     n_episodes: int,
     eval_suffix: str,
-    current_ckpt_path: str = "",
+    current_ckpt_path: str,
 ):
     import json
     import random
@@ -1297,9 +1311,9 @@ async def evaluate_model(
         [
             (
                 idx,
-                run_name,
                 project_name,
                 idx in video_idxs,
+                eval_suffix,
                 current_ckpt_path,
             )
             for idx in range(n_episodes)
@@ -1309,9 +1323,6 @@ async def evaluate_model(
 
     if len(data) == 0:
         raise Exception("No data collected")
-
-    if not current_ckpt_path:
-        current_ckpt_path = "pretrained"
 
     models = [current_ckpt_path, opponent]
 
@@ -1336,13 +1347,13 @@ async def evaluate_model(
 @app.local_entrypoint()
 async def local(
     # scale
-    n_rounds: int = 100,
-    n_train_episodes_per_round: int = 90,  # ~64k samples
-    n_val_episodes_per_round: int = 10,
+    n_rounds: int = 10,
+    n_train_episodes_per_round: int = 40,  # ~32k samples
+    n_val_episodes_per_round: int = 5,
     # training
-    max_steps: int = 1000,  # bs = 128 -> 128k samples
+    max_steps: int = 1000,  # bs = 32 -> 32k samples
     # evaluation
-    n_eval_episodes: int = 100,
+    n_eval_episodes: int = 20,
 ):
     import asyncio
 
@@ -1353,20 +1364,19 @@ async def local(
     current_ckpt_path = ""
     all_prior_models = []
 
-    # # baseline evaluation before any training
-    # status = get_round_status.remote(0, max_steps, project_name)
-    # project_name = status["project_name"]
-    # baseline_run_name = status["run_name"]
+    # baseline evaluation
 
-    # if not status["has_baseline_eval"]:
-    #     await evaluate_model.remote.aio(
-    #         baseline_run_name,
-    #         project_name,
-    #         n_eval_episodes,
-    #         "_baseline",
-    #     )
+    status = get_round_status.remote(0, max_steps, project_name)
+    if not status["has_baseline_eval"]:
+        await evaluate_model.remote.aio(
+            project_name,
+            n_eval_episodes,
+            "_baseline",
+            model_name,
+        )
 
     # training loop
+
     for round_idx in range(n_rounds):
         status = get_round_status.remote(round_idx, max_steps, project_name)
         project_name = status["project_name"]
@@ -1434,12 +1444,13 @@ async def local(
                 all_prior_models.append(current_ckpt_path)
             current_ckpt_path = status["final_checkpoint"]
 
-    # final_status = get_round_status.remote(n_rounds - 1, max_steps, project_name)
-    # if not final_status["has_final_eval"]:
-    #     await evaluate_model.remote.aio(
-    #         final_status["run_name"],
-    #         project_name,
-    #         n_eval_episodes,
-    #         "_final",
-    #         current_ckpt_path,
-    #     )
+    # final evaluation
+
+    final_status = get_round_status.remote(n_rounds - 1, max_steps, project_name)
+    if not final_status["has_final_eval"]:
+        await evaluate_model.remote.aio(
+            project_name,
+            n_eval_episodes,
+            f"_{final_status['run_name']}",
+            current_ckpt_path,
+        )
