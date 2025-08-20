@@ -232,8 +232,6 @@ class Web:
                 self.in_transition = False
                 self.transition_start_time = None
                 self.transition_duration = 3.0  # seconds, matches frontend
-                self.pending_game_end = False
-                self.game_end_data = None
 
                 # game duration state
 
@@ -347,8 +345,6 @@ class Web:
                 self.actions = {"agent_0": 0, "agent_1": 0}
                 self.in_transition = False
                 self.transition_start_time = None
-                self.pending_game_end = False
-                self.game_end_data = None
 
             async def cleanup(self):
                 print("Cleaning up resources...")
@@ -689,21 +685,39 @@ class Web:
                                     continue
 
                                 if session.info.get("game_done", False):
-                                    session.in_transition = True
-                                    session.transition_start_time = (
-                                        asyncio.get_event_loop().time()
-                                    )
-                                    session.pending_game_end = True
-                                    session.game_end_data = {
-                                        "terminated": terminated,
-                                        "truncated": truncated,
-                                    }
-                                    await session.outbound_message_queue.put(
-                                        {
-                                            "type": "transition",
-                                            "data": {"transition_type": "game"},
-                                        }
-                                    )
+                                    if terminated or truncated:
+                                        p1_wins = session.observation["P1"]["wins"][0]
+                                        p2_wins = session.observation["P2"]["wins"][0]
+                                        print(
+                                            f"Game finished - P1: {p1_wins}, P2: {p2_wins}"
+                                        )
+
+                                        if session.game_settings["humanVsLlm"]:
+                                            if p1_wins > p2_wins:
+                                                session.game_state["scores"][0] += 1
+                                                winner = "YOU"
+                                            elif p2_wins > p1_wins:
+                                                session.game_state["scores"][1] += 1
+                                                winner = "LLM"
+                                            else:
+                                                winner = "Draw"
+                                        else:
+                                            if p1_wins > p2_wins:
+                                                session.game_state["scores"][0] += 1
+                                                winner = "LLM 1"
+                                            elif p2_wins > p1_wins:
+                                                session.game_state["scores"][1] += 1
+                                                winner = "LLM 2"
+                                            else:
+                                                winner = "Draw"
+
+                                        session.game_state["status"] = "finished"
+                                        session.game_state["winner"] = winner
+                                        await session.send_game_state()
+
+                                        await session.prepare_for_next_game()
+                                        await session.send_game_state()
+                                        continue
                                 elif session.info.get("round_done", False):
                                     session.in_transition = True
                                     session.transition_start_time = (
@@ -726,52 +740,6 @@ class Web:
                                         [cv2.IMWRITE_JPEG_QUALITY, 85],
                                     )
                                     await websocket.send_bytes(buffer.tobytes())
-
-                            if not session.in_transition and (
-                                (terminated or truncated) or session.pending_game_end
-                            ):
-                                if session.pending_game_end:
-                                    terminated = session.game_end_data.get(
-                                        "terminated", False
-                                    )
-                                    truncated = session.game_end_data.get(
-                                        "truncated", False
-                                    )
-                                    session.pending_game_end = False
-                                    session.game_end_data = None
-
-                                if terminated or truncated:
-                                    p1_wins = session.observation["P1"]["wins"][0]
-                                    p2_wins = session.observation["P2"]["wins"][0]
-                                    print(
-                                        f"Game finished - P1: {p1_wins}, P2: {p2_wins}"
-                                    )
-
-                                    if session.game_settings["humanVsLlm"]:
-                                        if p1_wins > p2_wins:
-                                            session.game_state["scores"][0] += 1
-                                            winner = "YOU"
-                                        elif p2_wins > p1_wins:
-                                            session.game_state["scores"][1] += 1
-                                            winner = "LLM"
-                                        else:
-                                            winner = "Draw"
-                                    else:
-                                        if p1_wins > p2_wins:
-                                            session.game_state["scores"][0] += 1
-                                            winner = "LLM 1"
-                                        elif p2_wins > p1_wins:
-                                            session.game_state["scores"][1] += 1
-                                            winner = "LLM 2"
-                                        else:
-                                            winner = "Draw"
-
-                                    session.game_state["status"] = "finished"
-                                    session.game_state["winner"] = winner
-                                    await session.send_game_state()
-
-                                    await session.prepare_for_next_game()
-                                    await session.send_game_state()
 
                 except WebSocketDisconnect:
                     print("WebSocket disconnected in game loop")

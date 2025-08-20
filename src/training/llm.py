@@ -714,8 +714,8 @@ lr_scheduler_type = "cosine"
 warmup_ratio = 0.1
 start_beta = 0.1
 end_beta = 1
-start_lr = 1e-6  # 5e-7
-end_lr = 5e-6  # 1e-6
+start_lr = 5e-7
+end_lr = 1e-6
 
 
 @app.function(
@@ -1379,7 +1379,6 @@ async def local(
 
     for round_idx in range(n_rounds):
         status = get_round_status.remote(round_idx, max_steps, project_name)
-        project_name = status["project_name"]
         run_name = status["run_name"]
 
         if status["training_complete"] and status["final_checkpoint"]:
