@@ -696,7 +696,7 @@ async def create_dataset(
 
 # training
 
-model_name = "Qwen/Qwen3-8B"  # Qwen/Qwen3-8B-Base
+model_name = "Qwen/Qwen3-8B"
 
 # resources
 n_gpu = 8
