@@ -103,7 +103,9 @@ Below is a diagram explaining how we train the LLM using RL:
 
 We use a self-play temporal-differnce policy-gradient approach (here, the policy is an LLM instead of something like an actor-critic) that is "bootstrapped" by prior knowledge from the LLM, meaning we don't require expert data but instead rely only on given features such as game state. This is inspired by [TD Gammon for the game of Backgammon](https://davidstarsilver.wordpress.com/wp-content/uploads/2025/04/lecture-10-case-study-rl-in-classic-games.pdf), though search was not implemented for sake of time.
 
-Beyond the [results we achieve](#llm-evaluation), this approach also matches standard RL algorithm sample efficiency: for [normal PPO](https://www.youtube.com/watch?v=zs-3qltqa7o&t=558s), getting any improvement takes roughly 10M steps. For our small run, we utilize 10 rounds x 45 episodes/round x ~32k samples/episode x 1 step/sample = 14.5M steps.
+Beyond the [results we achieve](#llm-evaluation), this approach also matches standard RL algorithm sample efficiency: for [normal PPO](https://www.youtube.com/watch?v=zs-3qltqa7o), getting any improvement takes roughly 10M steps. For our small run, we utilize 10 rounds x 45 episodes/round x ~32k samples/episode x 1 step/sample = 14.5M steps.
+
+Looking at the [training curves](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-10-1000/workspace?nw=nwuserandrewhinh), we care most that are eval reward margins are positive and slightly increasing for each round. Intuitively, the LLM faces a pool of increasingly more difficult opponents each round, so we want the LLM to learn at least something about how to beat itself from before, even if it's not substantial.
 
 Some important notes for getting this to work:
 
@@ -129,7 +131,6 @@ https://github.com/user-attachments/assets/9064c7e1-cd07-4592-99f9-243d190654d8
 
 #### After training
 
-- [Training curves](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-10-1000/workspace?nw=nwuserandrewhinh)
 - Qwen3-8B's win rate is 55% with an ELO of 1227.31.
 - GPT-5's win rate is 25% with an ELO of 1172.69.
 
