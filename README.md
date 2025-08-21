@@ -101,7 +101,7 @@ Below is a diagram explaining how we train the LLM using RL:
 
 ![RL diagram](./assets/readme/training_rl.png "RL diagram")
 
-We use a self-play temporal-differnce policy-gradient approach (here, the policy is an LLM instead of something like an actor-critic) that is "bootstrapped" by prior knowledge from the LLM, meaning we don't require expert data but instead rely only on given features such as game state. This is inspired by [TD Gammon for the game of Backgammon](https://davidstarsilver.wordpress.com/wp-content/uploads/2025/04/lecture-10-case-study-rl-in-classic-games.pdf), though search was not implemented for sake of time.
+We use a self-play temporal-difference policy-gradient approach (here, the policy is an LLM instead of something like an actor-critic) that is "bootstrapped" by prior knowledge from the LLM, meaning we don't require expert data but instead rely only on given features such as game state. This is inspired by [TD Gammon for the game of Backgammon](https://davidstarsilver.wordpress.com/wp-content/uploads/2025/04/lecture-10-case-study-rl-in-classic-games.pdf), though search was not implemented for sake of time.
 
 Beyond the [results we achieve](#llm-evaluation), this approach also matches standard RL algorithm sample efficiency: for [normal PPO](https://www.youtube.com/watch?v=zs-3qltqa7o), getting any improvement takes roughly 10M steps. For our small run, we utilize 10 rounds x 45 episodes/round x ~32k samples/episode x 1 step/sample = 14.5M steps.
 
