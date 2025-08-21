@@ -67,9 +67,8 @@ modal run -m src.training.llm
 - GPT-5 win rate=60%, ELO=1232.78
 
 ![ELO](./assets/readme/match_history_baseline.png "ELO")
-<video src="./assets/readme/eval_3_baseline.mp4" controls style="width: 100%;">
-Your browser does not support the video tag.
-</video>
+
+https://github.com/user-attachments/assets/9064c7e1-cd07-4592-99f9-243d190654d8
 
 #### Trained results
 
@@ -78,9 +77,8 @@ Your browser does not support the video tag.
 - GPT-5 win rate=25%, ELO=1172.69
 
 ![ELO](./assets/readme/match_history_9-20250821_000252.png "ELO")
-<video src="./assets/readme/eval_3_9-20250821_000252.mp4" controls style="width: 100%;">
-Your browser does not support the video tag.
-</video>
+
+https://github.com/user-attachments/assets/0d290da3-7e89-4db9-8bac-145e7048c109
 
 ## Credit
 
