@@ -1348,7 +1348,7 @@ async def evaluate_model(
 async def local(
     # scale
     n_rounds: int = 10,
-    n_train_episodes_per_round: int = 40,  # ~32k samples
+    n_train_episodes_per_round: int = 45,  # ~32k samples
     n_val_episodes_per_round: int = 5,
     # training
     max_steps: int = 1000,  # bs = 32 -> 32k samples
