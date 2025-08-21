@@ -42,18 +42,45 @@ modal deploy -m src.app
 
 ## Training
 
+### YOLO
+
 ```bash
 # Prepare the data, train the YOLO model, and export to ONNX
 modal run -m src.training.yolo --prepare --train --export
+```
 
-# Train the LLM
+![Training curves](./assets/readme/results.png "Training curves")
+![Confusion matrix](./assets/readme/confusion_matrix.png "Confusion matrix")
+![Recall curve](./assets/readme/BoxR_curve.png "Recall curve")
+![Validation predictions](./assets/readme/val_batch0_pred.jpg "Validation predictions")
+
+### LLM
+
+```bash
+# Alternate between rounds of collecting data and training the LLM
 modal run -m src.training.llm
 ```
 
-Some initial training results:
+#### Baseline results
 
-- [Qwen3-8B](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-10-1000?nw=nwuserandrewhinh)
-- [Qwen3-8B-Base](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-base-10-1000?nw=nwuserandrewhinh)
+- Qwen3-8B win rate=30%, ELO=1167.22
+- GPT-5 win rate=60%, ELO=1232.78
+
+![ELO](./assets/readme/match_history_baseline.png "ELO")
+<video src="./assets/readme/eval_3_baseline.mp4" controls style="width: 100%;">
+Your browser does not support the video tag.
+</video>
+
+#### Trained results
+
+- [Training curves](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-10-1000/workspace?nw=nwuserandrewhinh)
+- Qwen3-8B win rate=55%, ELO=1227.31
+- GPT-5 win rate=25%, ELO=1172.69
+
+![ELO](./assets/readme/match_history_9-20250821_000252.png "ELO")
+<video src="./assets/readme/eval_3_9-20250821_000252.mp4" controls style="width: 100%;">
+Your browser does not support the video tag.
+</video>
 
 ## Credit
 

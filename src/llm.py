@@ -43,7 +43,12 @@ cache_volume = modal.Volume.from_name("sf3-llm-train-cache", create_if_missing=T
 
 # inference
 
-model_name = "Qwen/Qwen3-8B"  # pretrained hf model or cache_path/<run_name>/checkpoint-<max_steps>
+model_name = (
+    cache_path
+    / "sf3-llm-train-qwen3-8b-10-1000"
+    / "9-20250821_000252"
+    / "checkpoint-1000"
+)  # pretrained hf model or cache_path/<project_name>/<run_name>/checkpoint-<max_steps>
 max_inputs = max_num_seqs = 8
 gpu = "b200"
 
