@@ -50,7 +50,7 @@ modal deploy -m src.app
 
 ### Background
 
-The goal of this project was to promote [Modal sandboxes](https://modal.com/docs/guide/sandbox) which are useful for code execution, computer use, and serving long-running services; more specifically, its utility for RL rollouts and LLMs. [LLM Colosseum](https://github.com/OpenGenerativeAI/llm-colosseum/tree/main), a hackathon project made at a Mistral Hackathon in 2024 to benchmark LLMs by fighting in Street Fighter 3, caught my eye since they were using [Diambra](https://docs.diambra.ai/), an collection of environments for RL, to host the gameplay. I noticed that sandboxes are useful here because the Diambra engine is stateful and ephemeral per match! Of course, I also saw the opportunity to run the LLM on Modal.
+The goal of this project was to promote [Modal sandboxes](https://modal.com/docs/guide/sandbox) which are useful for code execution, computer use, and serving long-running services; more specifically, its utility for RL rollouts and LLMs. [LLM Colosseum](https://github.com/OpenGenerativeAI/llm-colosseum/tree/main), a hackathon project made at a Mistral Hackathon in 2024 to benchmark LLMs by fighting in Street Fighter 3, caught my eye since they were using [Diambra](https://docs.diambra.ai/), a collection of environments for RL, to host the gameplay. I noticed that sandboxes are useful here because the Diambra engine is stateful and ephemeral per match! Of course, I also saw the opportunity to run the LLM on Modal.
 
 ### Interactive Demo
 
@@ -70,13 +70,13 @@ Some important notes for how this even works:
 - By colocating the web server and Diambra engine in the [same region closest to Modal's control plane](https://modal.com/docs/guide/geographic-latency#geographic-latency), `us-east-1`, and because they communicate over gRPC via an [unencrypted port](https://modal.com/docs/guide/tunnels#advanced-unencrypted-tcp-tunnels), we can send frames over the websocket at nearly the game's native 164 FPS, as shown in the [RL self-play data collection and gameplay against GPT-5](#llm-evaluation). In fact, to enable real-time play, we have to manually slow it down to 60 FPS!
 - The game loop and robot run in their own asyncio loops so consistent FPS is maintained. To send state between the two loops, we simply store frames/actions in nonlocal variables w.r.t. the loops, so each loop operates on the latest frame/action. The robot contains [`remote.aio`](https://modal.com/docs/guide/async) calls to both the YOLO and LLM so as to not block the [event loop](https://docs.python.org/3/library/asyncio-eventloop.html).
 - Since the LLM is text-only, and position information isn't exposed by Diambra for RL training purposes, we must use a YOLO model fine-tuned on [synthetic scenes of actual character sprites](#yolo-training) to get around these limitations.
-- By enabling [chunked prefill](https://docs.vllm.ai/en/latest/configuration/optimization.html#chunked-prefill_1) for the LLM, we maximize output token throughput, essential for real-time LLM resonsiveness. Since the LLM operates on each frame, we achieve move variety by eliminating eight of the most recent moves from the available move choices (8 was empirically the smallest number that made the gameplay look good).
+- By enabling [chunked prefill](https://docs.vllm.ai/en/latest/configuration/optimization.html#chunked-prefill_1) for the LLM, we maximize output token throughput, essential for real-time LLM responsiveness. Since the LLM operates on each frame, we achieve move variety by eliminating eight of the most recent moves from the available move choices (8 was empirically the smallest number that made the gameplay look good).
 
 Below is a diagram explaining the latency for one action:
 
 ![Latency diagram](./assets/readme/demo_latency.png "Latency diagram")
 
-Note that at 60 FPS, each frame is emitted once every 16ms. Also, since the latency the web server communicates with the Diambra engine and the latency of storing nonlocal variables is much lower than everything else, we treat it as basically instanteanous.
+Note that at 60 FPS, each frame is emitted once every 16ms. Also, since the latency the web server communicates with the Diambra engine and the latency of storing nonlocal variables is much lower than everything else, we treat it as basically instantaneous.
 
 Some napkin math:
 
@@ -105,14 +105,14 @@ We use a self-play temporal-difference policy-gradient approach (here, the polic
 
 Beyond the [results we achieve](#llm-evaluation), this approach also matches standard RL algorithm sample efficiency: for [normal PPO](https://www.youtube.com/watch?v=zs-3qltqa7o), getting any improvement takes roughly 10M steps. For our small run, we utilize 10 rounds x 45 episodes/round x ~32k samples/episode x 1 step/sample = 14.5M steps.
 
-Looking at the [training curves](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-10-1000/workspace?nw=nwuserandrewhinh), we care most that are eval reward margins are positive and slightly increasing for each round. Intuitively, the LLM faces a pool of increasingly more difficult opponents each round, so we want the LLM to learn at least something about how to beat itself from before, even if it's not substantial.
+Looking at the [training curves](https://wandb.ai/andrewhinh/sf3-llm-train-qwen3-8b-10-1000/workspace?nw=nwuserandrewhinh), we care most that the eval reward margins are positive and slightly increasing for each round. Intuitively, the LLM faces a pool of increasingly more difficult opponents each round, so we want the LLM to learn at least something about how to beat itself from before, even if it's not substantial.
 
 Some important notes for getting this to work:
 
 - To reduce the difficulty of the task at hand, we only use the character Ryu with the same outfit and super art so that the LLM doesn't have to learn how to play as all characters and how to use all super arts. We also use the smallest recommended global batch size (32) and learning rates (5e-7 to 1e-6) to limit the amount of noise during training.
 - The discounted lambda returns are set for every 32 moves, since that is roughly the length of a round (best of 3).
 - We use Qwen3-8B as opposed to Qwen3-8B-Base since the bootstrapping and training results seem to depend on a better-aligned model.
-- Since the LLM is relatively small, we use higher beta values to expediate training as recommended by [the paper](https://arxiv.org/pdf/2402.01306).
+- Since the LLM is relatively small, we use higher beta values to expedite training as recommended by [the paper](https://arxiv.org/pdf/2402.01306).
 
 ### LLM Evaluation
 
