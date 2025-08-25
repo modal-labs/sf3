@@ -21,7 +21,7 @@ modal setup
 Sign up for a [Diambra account](https://www.diambra.ai/),
 then store the token in a file named `assets/engine/credentials`.
 
-Download the [ROM file](https://wowroms.com/en/roms/mame-0.139u1/street-fighter-iii-3rd-strike-fight-for-the-future-japan-990608-no-cd/7073.html),
+Obtain a copy of SF3,
 then store it as `assets/engine/sfiii3n.zip`.
 
 ### Commands
