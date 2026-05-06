@@ -1,11 +1,11 @@
-import os
 import sys
 import warnings
 from pathlib import Path
 
 import modal
-import modal.experimental
 
+from ..env import EnvironmentConfig
+from ..env import create_environment as create_local_environment
 from ..llm import LLMServer
 from ..llm import app as llm_app
 from ..utils import (
@@ -28,62 +28,40 @@ from ..yolo import app as yolo_app
 
 app = modal.App("sf3-llm-train").include(llm_app).include(yolo_app)
 
-# diambra engine
-engine_app = modal.App.lookup("sf3-engine-train", create_if_missing=True)
-engine_image = (
-    modal.experimental.raw_registry_image("docker.io/diambra/engine:v2.2.4")
-    .env(
-        {
-            "HOME": "/tmp",
-        }
-    )
-    .entrypoint([])
-    # since sandbox is created in app, files will be in Modal container, not locally
-    # so we need to add them to the web app image as well
-    .add_local_file(
-        "/root/sfiii3n.zip",
-        "/opt/diambraArena/roms/sfiii3n.zip",
-    )
-    .add_local_file(
-        "/root/credentials",
-        "/tmp/.diambra/credentials",
-    )
-)
-
 # training
 local_engine_dir = Path(__file__).parent.parent.parent / "assets" / "engine"
 remote_train_script_path = "/root/trl_train.py"
 train_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg")
+    .env(
+        {
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+            "SDL_VIDEODRIVER": "dummy",
+            "SDL_AUDIODRIVER": "dummy",
+            "XDG_RUNTIME_DIR": "/tmp",
+        }
+    )
     .uv_pip_install(
         "accelerate==1.10.0",
         "datasets==3.6.0",
-        "diambra==0.0.20",
-        "diambra-arena==2.2.7",
         "flashinfer-python==0.2.6.post1",
         "huggingface_hub[hf_transfer]==0.34.4",
+        "MAMEToolkit==1.1.0",
         "matplotlib==3.10.5",
+        "numpy==2.3.1",
         "openai==1.99.9",
+        "opencv-python-headless==4.11.0.86",
         "torch==2.7.1",
         "trl==0.21.0",
         "wandb==0.21.0",
         extra_index_url="https://download.pytorch.org/whl/cu128",
         extra_options="--index-strategy unsafe-best-match",
     )
-    .env(
-        {
-            "HF_HUB_ENABLE_HF_TRANSFER": "1",
-        }
-    )
     # engine
     .add_local_file(
         local_engine_dir / "sfiii3n.zip",
         "/root/sfiii3n.zip",
-    )
-    .add_local_file(
-        local_engine_dir / "credentials",
-        "/root/credentials",
     )
     # training
     .add_local_file(
@@ -124,55 +102,28 @@ async def create_yolo():
         return None
 
 
-async def create_sandbox():
-    try:
-        print("Creating sandbox...")
-        engine_port = 50051
-        sandbox = modal.Sandbox.create(
-            "/bin/diambraEngineServer",
-            app=engine_app,
-            image=engine_image,
-            timeout=2 * 60 * minutes,
-            unencrypted_ports=[engine_port],
-            verbose=True,
-        )
-        tunnels = sandbox.tunnels()
-        tunnel = tunnels[engine_port]
-        host, port = tunnel.tcp_socket
-        os.environ["DIAMBRA_ENVS"] = f"{host}:{port}"
-        print(f"Created sandbox {sandbox.object_id} at {host}:{port}")
-        return sandbox
-    except Exception as e:
-        print(f"Couldn't create sandbox: {e}", file=sys.stderr)
-        return None
-
-
 def create_environment(
     characters: list[str],
     outfits: list[int],
     super_arts: list[int],
 ):
-    import diambra.arena as arena
-    from diambra.arena import EnvironmentSettingsMultiAgent, Roles, SpaceTypes
-
-    print("Creating diambra environment...")
-    settings = EnvironmentSettingsMultiAgent(
+    print("Creating local environment...")
+    config = EnvironmentConfig(
+        characters=tuple(characters),
+        outfits=tuple(outfits),
+        super_arts=tuple(super_arts),
         step_ratio=6,
-        role=(Roles.P1, Roles.P2),
         render_mode="rgb_array",
-        splash_screen=False,
-        grpc_timeout=30,
-        action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
-        characters=characters,
-        outfits=outfits,
-        super_art=super_arts,
+        disable_keyboard=True,
+        disable_joystick=True,
+        roms_path="/root",
     )
     try:
-        env = arena.make("sfiii3n", settings)
+        env = create_local_environment(config)
     except Exception as e:
-        print(f"Couldn't create diambra environment: {e}", file=sys.stderr)
+        print(f"Couldn't create local environment: {e}", file=sys.stderr)
         return None
-    print("diambra environment created successfully!")
+    print("Local environment created successfully!")
     return env
 
 
@@ -229,7 +180,7 @@ async def run_episode_data(
     if len(opponent_ckpt_paths) > 0:
         selected_opponent_path = random.choice(opponent_ckpt_paths)
 
-    tasks = [create_sandbox(), create_yolo()]
+    tasks = [create_yolo()]
 
     # first round: just use random moves to "bootstrap" the model
     if round_idx == 0:
@@ -242,18 +193,13 @@ async def run_episode_data(
     else:
         tasks.append(asyncio.to_thread(lambda: None))
 
-    sandbox, yolo, current_llm, prior_llm = await asyncio.gather(*tasks)
+    yolo, current_llm, prior_llm = await asyncio.gather(*tasks)
 
-    if sandbox is None:
-        return []
     if yolo is None:
-        sandbox.terminate()
         return []
     if round_idx > 0 and current_llm is None:
-        sandbox.terminate()
         return []
     if selected_opponent_path and prior_llm is None:
-        sandbox.terminate()
         return []
 
     try:
@@ -268,10 +214,8 @@ async def run_episode_data(
         )
     except asyncio.TimeoutError:
         print("Timeout while creating environment", file=sys.stderr)
-        sandbox.terminate()
         return []
     if env is None:
-        sandbox.terminate()
         return []
 
     # init episode
@@ -280,7 +224,7 @@ async def run_episode_data(
         observation, info = env.reset()
     except Exception as e:
         print(f"env.reset() failed: {e}", file=sys.stderr)
-        sandbox.terminate()
+        env.close()
         return []
 
     step_idx = 0
@@ -363,7 +307,7 @@ async def run_episode_data(
                 )
             except Exception as e:
                 print(f"current_llm.chat failed: {e}", file=sys.stderr)
-                sandbox.terminate()
+                env.close()
                 return []
 
         # run opponent policy
@@ -428,7 +372,7 @@ async def run_episode_data(
                 )
             except Exception as e:
                 print(f"env.step() failed for step {step_idx}: {e}", file=sys.stderr)
-                sandbox.terminate()
+                env.close()
                 return []
 
             total_reward += reward
@@ -501,8 +445,7 @@ async def run_episode_data(
 
     dataset = []
 
-    # https://docs.diambra.ai/envs/#reward-function
-    # map health difference and timer to reward in range [-20, 20]
+    # Map local health difference and timer to reward in range [-20, 20].
     # at extreme health advantage (p1=160, p2=0) and high urgency (timer=0): 25 (capped at 20)
     # at extreme health disadvantage (p1=0, p2=160) and any timer: -20
     # at equal health (p1=160, p2=160) and no urgency (timer=100): 0
@@ -636,7 +579,6 @@ async def run_episode_data(
         env.close()
     except Exception as e:
         warnings.warn(f"Couldn't close environment: {e}")
-    sandbox.terminate()
     print("Done.")
 
     return dataset
@@ -916,20 +858,15 @@ async def run_episode_eval(
     super_arts = [super_art, super_art]
 
     tasks = [
-        create_sandbox(),
         create_yolo(),
         create_llm(current_ckpt_path),
         create_openai_client(),
     ]
-    sandbox, yolo, trained_llm, openai_client = await asyncio.gather(*tasks)
+    yolo, trained_llm, openai_client = await asyncio.gather(*tasks)
 
-    if sandbox is None:
-        return None
     if yolo is None:
-        sandbox.terminate()
         return None
     if trained_llm is None:
-        sandbox.terminate()
         return None
 
     try:
@@ -944,10 +881,8 @@ async def run_episode_eval(
         )
     except asyncio.TimeoutError:
         print("Timeout while creating environment", file=sys.stderr)
-        sandbox.terminate()
         return None
     if env is None:
-        sandbox.terminate()
         return None
 
     # init episode
@@ -956,7 +891,7 @@ async def run_episode_eval(
         observation, info = env.reset()
     except Exception as e:
         print(f"env.reset() failed: {e}", file=sys.stderr)
-        sandbox.terminate()
+        env.close()
         return None
 
     step_idx = 0
@@ -1035,7 +970,7 @@ async def run_episode_eval(
             )
         except Exception as e:
             print(f"trained_llm.chat failed: {e}", file=sys.stderr)
-            sandbox.terminate()
+            env.close()
             return None
 
         # run opponent policy
@@ -1061,7 +996,7 @@ async def run_episode_eval(
                 raise Exception(f"Invalid move from OpenAI: {p2_move_name}")
         except Exception as e:
             print(f"openai_client.responses.create failed: {e}", file=sys.stderr)
-            sandbox.terminate()
+            env.close()
             return None
 
         # pad shorter move sequence to match longer one
@@ -1088,7 +1023,7 @@ async def run_episode_eval(
                 )
             except Exception as e:
                 print(f"env.step() failed for step {step_idx}: {e}", file=sys.stderr)
-                sandbox.terminate()
+                env.close()
                 return None
 
             total_reward += reward
@@ -1167,7 +1102,6 @@ async def run_episode_eval(
         env.close()
     except Exception as e:
         warnings.warn(f"Couldn't close environment: {e}")
-    sandbox.terminate()
     print("Done.")
 
     p1_wins = observation["P1"]["wins"][0]

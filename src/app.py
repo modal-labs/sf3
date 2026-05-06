@@ -1,9 +1,8 @@
-import os
 from pathlib import Path
 
 import modal
-import modal.experimental
 
+from .env import EnvironmentConfig, create_environment
 from .llm import LLMServer
 from .llm import app as llm_app
 from .utils import (
@@ -20,29 +19,6 @@ from .yolo import YOLOServer
 from .yolo import app as yolo_app
 
 # Modal setup
-
-# diambra engine
-engine_app = modal.App.lookup("sf3-engine", create_if_missing=True)
-
-engine_image = (
-    modal.experimental.raw_registry_image("docker.io/diambra/engine:v2.2.4")
-    .env(
-        {
-            "HOME": "/tmp",
-        }
-    )
-    .entrypoint([])
-    # since sandbox is created in app, files will be in Modal container, not locally
-    # so we need to add them to the web app image as well
-    .add_local_file(
-        "/root/sfiii3n.zip",
-        "/opt/diambraArena/roms/sfiii3n.zip",
-    )
-    .add_local_file(
-        "/root/credentials",
-        "/tmp/.diambra/credentials",
-    )
-)
 
 # web app
 app = modal.App(name="sf3").include(llm_app).include(yolo_app)
@@ -62,21 +38,24 @@ image = (
     .apt_install(
         "ffmpeg",
     )
+    .env(
+        {
+            "SDL_VIDEODRIVER": "dummy",
+            "SDL_AUDIODRIVER": "dummy",
+            "XDG_RUNTIME_DIR": "/tmp",
+        }
+    )
     .uv_pip_install(
-        "diambra==0.0.20",
-        "diambra-arena==2.2.7",
         "fastapi[standard]==0.116.1",
+        "MAMEToolkit==1.1.0",
         "numpy==2.3.1",
+        "opencv-python-headless==4.11.0.86",
         "websockets==15.0.1",
     )
     # engine
     .add_local_file(
         local_engine_dir / "sfiii3n.zip",
         "/root/sfiii3n.zip",
-    )
-    .add_local_file(
-        local_engine_dir / "credentials",
-        "/root/credentials",
     )
     # frontend
     .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)
@@ -145,9 +124,7 @@ class Web:
         import traceback
 
         import cv2
-        import diambra.arena as arena
         import numpy as np
-        from diambra.arena import EnvironmentSettingsMultiAgent, Roles, SpaceTypes
         from fastapi import FastAPI, WebSocket, WebSocketDisconnect
         from fastapi.responses import FileResponse
         from fastapi.staticfiles import StaticFiles
@@ -155,25 +132,6 @@ class Web:
         web_app = FastAPI()
 
         # helper fns
-
-        async def create_sandbox() -> modal.Sandbox:
-            print("Creating sandbox...")
-            engine_port = 50051
-            sandbox = modal.Sandbox.create(
-                "/bin/diambraEngineServer",
-                app=engine_app,
-                image=engine_image,
-                timeout=60 * minutes,
-                region=region,
-                unencrypted_ports=[engine_port],
-                verbose=True,
-            )
-            tunnels = sandbox.tunnels()
-            tunnel = tunnels[engine_port]
-            host, port = tunnel.tcp_socket
-            os.environ["DIAMBRA_ENVS"] = f"{host}:{port}"
-            print(f"Created sandbox {sandbox.object_id} at {host}:{port}")
-            return sandbox
 
         class NumpyJSONEncoder(json.JSONEncoder):
             def default(self, obj):
@@ -203,7 +161,6 @@ class Web:
                 # game state
 
                 self.env = None
-                self.sandbox = None
                 self.game_running = False
                 self.game_settings = {
                     "player1": {
@@ -328,11 +285,6 @@ class Web:
             async def prepare_for_next_game(self):
                 await self.cleanup_environment()
 
-                if self.sandbox:
-                    print(f"Terminating sandbox {self.sandbox.object_id}")
-                    self.sandbox.terminate()
-                    self.sandbox = await create_sandbox()
-
                 self.game_running = False
                 self.game_state = create_initial_game_state()
                 self.observation = None
@@ -349,10 +301,6 @@ class Web:
             async def cleanup(self):
                 print("Cleaning up resources...")
                 await self.cleanup_environment()
-                if self.sandbox:
-                    print(f"Terminating sandbox {self.sandbox.object_id}")
-                    self.sandbox.terminate()
-                    self.sandbox = None
 
         # routes
 
@@ -362,12 +310,6 @@ class Web:
             print("Client connected")
 
             session = GameSession(websocket)
-
-            _, _, session.sandbox = await asyncio.gather(
-                self.create_llm(),
-                self.create_yolo(),
-                create_sandbox(),
-            )
 
             async def process_inbound_messages():
                 try:
@@ -408,6 +350,31 @@ class Web:
                     session.stop_event.set()
                 except Exception:
                     print(f"Error in outgoing processor: {traceback.format_exc()}")
+                    session.stop_event.set()
+
+            async def keepalive():
+                try:
+                    while not session.stop_event.is_set():
+                        await session.outbound_message_queue.put(
+                            {"type": "heartbeat", "data": {}}
+                        )
+                        await asyncio.sleep(15)
+                except Exception:
+                    print(f"Error in keepalive: {traceback.format_exc()}")
+                    session.stop_event.set()
+
+            async def prefetch_servers():
+                try:
+                    await asyncio.gather(
+                        self.create_llm(),
+                        self.create_yolo(),
+                    )
+                    await session.send_game_state()
+                except Exception as e:
+                    print(f"Error creating model servers: {traceback.format_exc()}")
+                    session.game_state["status"] = "error"
+                    session.game_state["error"] = str(e)
+                    await session.send_game_state()
                     session.stop_event.set()
 
             async def run_robot_background():
@@ -570,55 +537,54 @@ class Web:
                             await asyncio.sleep(0.001)
                             continue
 
-                        print("Creating DIAMBRA environment...")
+                        print("Creating local environment...")
                         p1_settings = session.game_settings["player1"]
                         p2_settings = session.game_settings["player2"]
 
                         disable_keyboard = not session.game_settings["humanVsLlm"]
                         disable_joystick = not session.game_settings["gamepadConnected"]
 
-                        settings = EnvironmentSettingsMultiAgent(
+                        env_config = EnvironmentConfig(
+                            characters=(
+                                p1_settings["character"],
+                                p2_settings["character"],
+                            ),
+                            outfits=(
+                                p1_settings["outfit"],
+                                p2_settings["outfit"],
+                            ),
+                            super_arts=(
+                                p1_settings["superArt"],
+                                p2_settings["superArt"],
+                            ),
                             step_ratio=1,
-                            role=(Roles.P1, Roles.P2),
                             disable_keyboard=disable_keyboard,
                             disable_joystick=disable_joystick,
                             render_mode="rgb_array",
-                            splash_screen=False,
-                            grpc_timeout=30,
-                            action_space=(SpaceTypes.DISCRETE, SpaceTypes.DISCRETE),
-                            characters=[
-                                p1_settings["character"],
-                                p2_settings["character"],
-                            ],
-                            outfits=[
-                                p1_settings["outfit"],
-                                p2_settings["outfit"],
-                            ],
-                            super_art=[
-                                p1_settings["superArt"],
-                                p2_settings["superArt"],
-                            ],
                         )
                         try:
                             session.env = await asyncio.wait_for(
-                                asyncio.to_thread(arena.make, "sfiii3n", settings),
+                                asyncio.to_thread(create_environment, env_config),
                                 timeout=30,
                             )
                         except Exception as e:
-                            print(f"Error creating DIAMBRA environment: {e}")
+                            print(f"Error creating local environment: {e}")
                             session.game_state["status"] = "error"
                             session.game_state["error"] = str(e)
                             await session.send_game_state()
                             await session.prepare_for_next_game()
                             await session.send_game_state()
                             continue
-                        print("DIAMBRA environment created successfully!")
+                        print("Local environment created successfully!")
 
                         session.game_state["status"] = "running"
                         await session.send_game_state()
 
                         try:
-                            session.observation, session.info = session.env.reset()
+                            (
+                                session.observation,
+                                session.info,
+                            ) = await asyncio.to_thread(session.env.reset)
                         except Exception as e:
                             print(f"Error during env.reset: {e}")
                             session.game_state["status"] = "error"
@@ -628,8 +594,7 @@ class Web:
                             await session.send_game_state()
                             continue
 
-                        # according to https://docs.diambra.ai/envs/games/
-                        # SF3 runs at 164 FPS natively, but we want 60 FPS output
+                        # SF3 runs faster than our target output rate.
                         target_fps = 60.0
                         frame_interval = 1.0 / target_fps
                         next_frame_time = asyncio.get_event_loop().time()
@@ -674,7 +639,9 @@ class Web:
                                         terminated,
                                         truncated,
                                         session.info,
-                                    ) = session.env.step(session.actions)
+                                    ) = await asyncio.to_thread(
+                                        session.env.step, session.actions
+                                    )
                                 except Exception as e:
                                     print(f"Error during env.step: {e}")
                                     session.game_state["status"] = "error"
@@ -748,11 +715,11 @@ class Web:
                     print(f"Error in game loop: {traceback.format_exc()}")
                     session.stop_event.set()
 
-            await session.send_game_state()
-
             tasks = [
                 asyncio.create_task(process_inbound_messages()),
                 asyncio.create_task(process_outbound_messages()),
+                asyncio.create_task(keepalive()),
+                asyncio.create_task(prefetch_servers()),
                 asyncio.create_task(run_robot_background()),
                 asyncio.create_task(run_game_loop()),
             ]

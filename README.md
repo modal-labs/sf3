@@ -1,6 +1,10 @@
 # sf3
 
-An interactive Street Fighter 3 demo against an RL-trained LLM in a sandboxed game engine.
+An interactive Street Fighter 3 demo against an RL-trained LLM.
+
+## Update - 5/6/2026
+
+Since the diambra engine no longer works, this project now runs the game through a local MAME runtime. Therefore, disregard any mention of sandboxing or Diambra below.
 
 ## Quickstart
 
