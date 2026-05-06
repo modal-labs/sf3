@@ -4,7 +4,8 @@ An interactive Street Fighter 3 demo against an RL-trained LLM.
 
 ## Update - 5/6/2026
 
-Since the diambra engine no longer works, this project now runs the game through a local MAME runtime. Therefore, disregard any mention of sandboxing or Diambra below.
+- Since the diambra engine no longer works, this project now runs the game through a local MAME runtime. Therefore, disregard any mention of sandboxing or Diambra below.
+- To improve reliability, video is streamed over WebRTC instead of websockets.
 
 ## Quickstart
 
@@ -27,6 +28,14 @@ then store the token in a file named `assets/engine/credentials`.
 
 Obtain a copy of SF3,
 then store it as `assets/engine/sfiii3n.zip`.
+
+Create an [Open Relay TURN server](https://www.metered.ca/tools/openrelay/) account [here](https://dashboard.metered.ca/login?tool=turnserver).
+Then, create a `.env` with:
+
+```bash
+TURN_USERNAME=
+TURN_CREDENTIAL=
+```
 
 ### Commands
 

@@ -8,7 +8,7 @@ import { GameController } from "./gameController.js";
 import { UIController } from "./uiController.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { GamepadUINavigator } from "./gamepadUINavigator.js";
-import { WebSocketManager } from "./webSocketManager.js";
+import { WebRtcManager } from "./webRtcManager.js";
 import { byId } from "./utils.js";
 
 export const setCanvasSize = () => {
@@ -29,6 +29,8 @@ export const setCanvasSize = () => {
 };
 
 const initApp = async () => {
+  WebRtcManager.init();
+
   await AssetLoader.loadAllAssets();
 
   AudioManager.init();
@@ -45,7 +47,7 @@ const initApp = async () => {
 
   GamepadManager.init({
     onStatusChange: (connected) => {
-      WebSocketManager.send("gamepad_status", { connected });
+      WebRtcManager.send("gamepad_status", { connected });
       UIController.updateControlsDisplay();
       UIController.updateCombosDisplay(GameState.get().currentCharacter);
       UIController.updateSuperArtsDisplay(GameState.get().currentCharacter);
@@ -61,8 +63,8 @@ const initApp = async () => {
         }
       }
     },
-    onInput: () => {}, // will be set by InputController
-    onUIAction: () => {}, // will be set by GamepadUINavigator
+    onInput: () => { }, // will be set by InputController
+    onUIAction: () => { }, // will be set by GamepadUINavigator
   });
 
   GamepadManager.setUIActive(true);

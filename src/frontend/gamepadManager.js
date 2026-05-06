@@ -51,9 +51,9 @@ export const GamepadManager = {
   onUIAction: null,
 
   init(callbacks = {}) {
-    this.onStatusChange = callbacks.onStatusChange || (() => {});
-    this.onInput = callbacks.onInput || (() => {});
-    this.onUIAction = callbacks.onUIAction || (() => {});
+    this.onStatusChange = callbacks.onStatusChange || (() => { });
+    this.onInput = callbacks.onInput || (() => { });
+    this.onUIAction = callbacks.onUIAction || (() => { });
 
     window.addEventListener("gamepadconnected", (e) => this.handleConnect(e));
     window.addEventListener("gamepaddisconnected", (e) =>
@@ -62,9 +62,6 @@ export const GamepadManager = {
   },
 
   handleConnect(e) {
-    console.log(
-      `Gamepad connected at index ${e.gamepad.index}: ${e.gamepad.id}`
-    );
     this.connected = true;
     this.index = e.gamepad.index;
 
@@ -97,9 +94,6 @@ export const GamepadManager = {
   handleDisconnect(e) {
     if (e.gamepad.index !== this.index) return;
 
-    console.log(
-      `Gamepad disconnected from index ${e.gamepad.index}: ${e.gamepad.id}`
-    );
     this.connected = false;
     this.index = null;
 

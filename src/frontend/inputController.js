@@ -1,6 +1,6 @@
 import { GameState } from "./gameState.js";
 import { GamepadManager } from "./gamepadManager.js";
-import { WebSocketManager } from "./webSocketManager.js";
+import { WebRtcManager } from "./webRtcManager.js";
 import { MovesEngine } from "./movesEngine.js";
 
 const createInputController = () => {
@@ -174,7 +174,7 @@ const createInputController = () => {
   };
 
   const handleActionFromInput = (action) => {
-    WebSocketManager.send("player_action", { action });
+    WebRtcManager.send("player_action", { action });
 
     if (action !== actions.NO_MOVE) {
       const input = { action, time: Date.now() };
@@ -191,7 +191,7 @@ const createInputController = () => {
       history.forEach((h) => GameState.addInputToHistory(h));
 
       if (match) {
-        WebSocketManager.send("player_action", {
+        WebRtcManager.send("player_action", {
           action:
             match.type === "super_art" ? actions.SUPER_ART : actions.COMBO,
           [match.type === "super_art" ? "super_art" : "combo"]: match.name,
