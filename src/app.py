@@ -3,6 +3,7 @@ import base64
 import os
 from fractions import Fraction
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import modal
 
@@ -88,34 +89,11 @@ remote_outfits_dir = "/root/outfits"
 remote_portraits_dir = "/root/portraits"
 remote_sounds_dir = "/root/sounds"
 
-image = (
+static_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install(
-        "ffmpeg",
-        "libturbojpeg-dev",
-    )
-    .env(
-        {
-            "SDL_VIDEODRIVER": "dummy",
-            "SDL_AUDIODRIVER": "dummy",
-            "XDG_RUNTIME_DIR": "/tmp",
-        }
-    )
     .uv_pip_install(
-        "aiortc",
-        "av",
         "fastapi[standard]==0.116.1",
-        "MAMEToolkit==1.1.0",
-        "numpy==2.3.1",
-        "PyTurboJPEG==1.8.2",
-        "websockets==15.0.1",
     )
-    # engine
-    .add_local_file(
-        local_engine_dir / "sfiii3n.zip",
-        "/root/sfiii3n.zip",
-    )
-    # frontend
     .add_local_dir(Path(__file__).parent / "frontend", remote_frontend_dir)
     .add_local_dir(
         local_assets_dir / "icons",
@@ -139,9 +117,35 @@ image = (
     )
 )
 
-# inference
+gameplay_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install(
+        "ffmpeg",
+        "libturbojpeg-dev",
+    )
+    .env(
+        {
+            "SDL_VIDEODRIVER": "dummy",
+            "SDL_AUDIODRIVER": "dummy",
+            "XDG_RUNTIME_DIR": "/tmp",
+        }
+    )
+    .uv_pip_install(
+        "aiortc",
+        "av",
+        "fastapi[standard]==0.116.1",
+        "MAMEToolkit==1.1.0",
+        "numpy==2.3.1",
+        "PyTurboJPEG==1.8.2",
+        "websockets==15.0.1",
+    )
+    .add_local_file(
+        local_engine_dir / "sfiii3n.zip",
+        "/root/sfiii3n.zip",
+    )
+)
 
-max_inputs = 1
+endpoint_timeout = 24 * 60 * minutes
 
 
 def normalize_participant(participant: str, *, allow_human: bool) -> str:
@@ -185,13 +189,17 @@ def participants_require_yolo(
 
 
 @app.cls(
-    image=image,
+    image=gameplay_image,
     region=region,
-    scaledown_window=60 * minutes,
+    min_containers=1,
+    buffer_containers=1,
     secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent)],
-    timeout=24 * 60 * minutes,
+    timeout=endpoint_timeout,
 )
-@modal.concurrent(max_inputs=max_inputs)
+@modal.concurrent(
+    max_inputs=3,
+    target_inputs=2,
+)
 class Web:
     @modal.enter()
     def enter(
@@ -253,7 +261,7 @@ class Web:
                     self.yolo_boot_task = None
         return self.yolo
 
-    @modal.asgi_app(custom_domains=["sf3.modal.dev"])
+    @modal.asgi_app(label="gameplay")
     def app(self):
         import json
         import traceback
@@ -268,22 +276,21 @@ class Web:
         )
         from aiortc.sdp import candidate_from_sdp
         from av import VideoFrame
-        from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-        from fastapi.responses import FileResponse
-        from fastapi.staticfiles import StaticFiles
+        from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+        from fastapi.middleware.cors import CORSMiddleware
+        from fastapi.middleware.gzip import GZipMiddleware
+        from fastapi.responses import JSONResponse
         from starlette.websockets import WebSocketState
         from turbojpeg import TJPF_RGB, TJSAMP_420, TurboJPEG
 
         web_app = FastAPI()
-
-        @web_app.middleware("http")
-        async def add_static_cache_headers(request: Request, call_next):
-            response = await call_next(request)
-            if request.url.path == "/" or request.url.path.endswith(
-                (".html", ".js", ".css")
-            ):
-                response.headers["Cache-Control"] = "no-store"
-            return response
+        web_app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        web_app.add_middleware(GZipMiddleware, minimum_size=1024)
 
         # helper fns
 
@@ -1237,50 +1244,156 @@ class Web:
         async def websocket_missing_peer_id(websocket: WebSocket):
             await websocket.close(code=1008)
 
-        @web_app.get("/")
-        async def index():
-            return FileResponse(f"{remote_frontend_dir}/index.html")
-
-        @web_app.get("/icons/{icon}.png")
-        async def icon_png(icon: str):
-            return FileResponse(f"{remote_icons_dir}/{icon}.png")
-
-        @web_app.get("/icons/{icon}.svg")
-        async def icon_svg(icon: str):
-            return FileResponse(f"{remote_icons_dir}/{icon}.svg")
-
-        @web_app.get("/capcom.svg")
-        async def capcom_logo():
-            return FileResponse(f"{remote_logos_dir}/capcom.svg")
-
-        @web_app.get("/favicon.ico")
-        async def favicon():
-            return FileResponse(f"{remote_logos_dir}/favicon.ico")
-
-        @web_app.get("/modal.svg")
-        async def modal_logo():
-            return FileResponse(f"{remote_logos_dir}/modal.svg")
-
-        @web_app.get("/outfits/{character}/{outfit}.png")
-        async def outfit(character: str, outfit: int):
-            return FileResponse(f"{remote_outfits_dir}/{character}/{outfit}.png")
-
-        @web_app.get("/portraits/{character}.png")
-        async def portrait(character: str):
-            return FileResponse(f"{remote_portraits_dir}/{character}.png")
-
-        @web_app.get("/sounds/{sound}.mp3")
-        async def sound(sound: str):
-            return FileResponse(f"{remote_sounds_dir}/{sound}.mp3")
-
-        @web_app.get("/sounds/gameplay/{sound}.mp3")
-        async def gameplay_sound(sound: str):
-            return FileResponse(f"{remote_sounds_dir}/gameplay/{sound}.mp3")
+        @web_app.get("/warm/default-participant")
+        async def warm_default_participant():
+            await self.create_participant_server(DEFAULT_PLAYER2_PARTICIPANT)
+            return JSONResponse({"ok": True})
 
         @web_app.get("/api/extra-moves")
         async def get_extra_moves():
-            return make_json_safe({"combos": COMBOS, "special_moves": SPECIAL_MOVES})
-
-        web_app.mount("/", StaticFiles(directory=remote_frontend_dir), name="static")
+            return JSONResponse(
+                make_json_safe({"combos": COMBOS, "special_moves": SPECIAL_MOVES}),
+                headers={"Cache-Control": "public, max-age=300"},
+            )
 
         return web_app
+
+
+def get_configured_gameplay_base_url() -> str:
+    override = os.environ.get("SF3_GAMEPLAY_BASE_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    return ""
+
+
+def derive_gameplay_base_url(static_base_url: str) -> str:
+    static_base_url = static_base_url.rstrip("/")
+    if not static_base_url:
+        return ""
+
+    try:
+        parsed = urlsplit(static_base_url)
+    except ValueError:
+        return ""
+
+    netloc = parsed.netloc
+    for static_suffix, gameplay_suffix in (
+        ("--sf3-dev.modal.run", "--gameplay-dev.modal.run"),
+        ("--sf3.modal.run", "--gameplay.modal.run"),
+    ):
+        if netloc.endswith(static_suffix):
+            return urlunsplit(
+                (
+                    parsed.scheme,
+                    netloc[: -len(static_suffix)] + gameplay_suffix,
+                    "",
+                    "",
+                    "",
+                )
+            )
+
+    return ""
+
+
+@app.function(
+    image=static_image,
+    region=region,
+    scaledown_window=5 * minutes,
+    min_containers=1,
+    buffer_containers=2,
+    timeout=endpoint_timeout,
+)
+@modal.concurrent(max_inputs=96, target_inputs=64)
+@modal.asgi_app(label="sf3")
+def sf3():
+    import json
+
+    from fastapi import FastAPI, Request, WebSocket
+    from fastapi.responses import FileResponse, Response
+    from fastapi.staticfiles import StaticFiles
+
+    web_app = FastAPI()
+    no_cache_header = "no-store, max-age=0"
+    no_cache_suffixes = (".html", ".js", ".css")
+    frontend_root = Path(remote_frontend_dir).resolve()
+
+    def is_no_cache_path(path: str) -> bool:
+        return (
+            path == "/"
+            or path == "/runtime-config.js"
+            or path.endswith(no_cache_suffixes)
+        )
+
+    @web_app.middleware("http")
+    async def add_static_cache_headers(request: Request, call_next):
+        response = await call_next(request)
+        if is_no_cache_path(request.url.path):
+            response.headers["Cache-Control"] = no_cache_header
+        return response
+
+    @web_app.get("/runtime-config.js")
+    async def runtime_config(request: Request):
+        gameplay_base_url = (
+            get_configured_gameplay_base_url()
+            or derive_gameplay_base_url(str(request.base_url))
+        )
+        body = (
+            "window.__SF3_CONFIG__ = "
+            + json.dumps({"gameplayBaseUrl": gameplay_base_url})
+            + ";"
+        )
+        return Response(
+            body,
+            media_type="application/javascript",
+            headers={"Cache-Control": no_cache_header},
+        )
+
+    @web_app.websocket("/ws")
+    async def wrong_websocket_host(websocket: WebSocket):
+        await websocket.close(code=1013, reason="Connect to gameplay host")
+
+    @web_app.websocket("/ws/{path:path}")
+    async def wrong_websocket_host_path(websocket: WebSocket, path: str):
+        await websocket.close(code=1013, reason="Connect to gameplay host")
+
+    @web_app.get("/capcom.svg")
+    async def capcom_logo():
+        return FileResponse(f"{remote_logos_dir}/capcom.svg")
+
+    @web_app.get("/favicon.ico")
+    async def favicon():
+        return FileResponse(f"{remote_logos_dir}/favicon.ico")
+
+    @web_app.get("/modal.svg")
+    async def modal_logo():
+        return FileResponse(f"{remote_logos_dir}/modal.svg")
+
+    web_app.mount("/icons", StaticFiles(directory=remote_icons_dir), name="icons")
+    web_app.mount("/outfits", StaticFiles(directory=remote_outfits_dir), name="outfits")
+    web_app.mount(
+        "/portraits", StaticFiles(directory=remote_portraits_dir), name="portraits"
+    )
+    web_app.mount("/sounds", StaticFiles(directory=remote_sounds_dir), name="sounds")
+
+    def frontend_file_response(frontend_path: str):
+        path = (frontend_root / frontend_path).resolve()
+        if not path.is_relative_to(frontend_root):
+            return Response(status_code=404)
+        if not path.is_file():
+            return Response(status_code=404)
+        cache_header = (
+            no_cache_header
+            if path.suffix.lower() in no_cache_suffixes
+            else "public, max-age=31536000, immutable"
+        )
+        return FileResponse(path, headers={"Cache-Control": cache_header})
+
+    @web_app.get("/")
+    async def index():
+        return frontend_file_response("index.html")
+
+    @web_app.get("/{frontend_path:path}")
+    async def frontend_file(frontend_path: str):
+        return frontend_file_response(frontend_path)
+
+    return web_app

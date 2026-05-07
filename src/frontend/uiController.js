@@ -1,6 +1,7 @@
 import { byId } from "./utils.js";
 import { GameState } from "./gameState.js";
 import { AudioManager } from "./audioManager.js";
+import { AssetLoader } from "./assetLoader.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { InputController } from "./inputController.js";
 import { MovesDisplay } from "./movesEngine.js";
@@ -355,10 +356,9 @@ const createUIController = () => {
     if (!elements.combosLoading || !elements.superArtsLoading) return;
 
     try {
-      const response = await fetch("/api/extra-moves");
-      const data = await response.json();
+      const data = await AssetLoader.loadExtraMoves();
 
-      InputController.setExtraMoves(data.combos, data.special_moves);
+      InputController.setExtraMoves(data.combos, data.specialMoves);
 
       const state = GameState.get();
       InputController.updateMovesList(
