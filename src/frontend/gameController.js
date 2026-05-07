@@ -4,6 +4,7 @@ import { ScreenManager } from "./screenManager.js";
 import { WebRtcManager } from "./webRtcManager.js";
 import { AudioManager } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
+import { isHumanParticipant } from "./participantOptions.js";
 import { SOUND_KEYS } from "./constants.js";
 import { setCanvasSize } from "./app.js";
 
@@ -25,7 +26,8 @@ const createGameController = () => {
     const difficultyMap = ["basic", "advanced", "expert"];
 
     const gameConfig = {
-      humanVsLlm: state.humanVsLlm,
+      player1Participant: state.player1Participant,
+      player2Participant: state.player2Participant,
       player1: {
         character: state.characterGrid.p1.character,
         outfit: state.characterGrid.p1.outfit,
@@ -190,7 +192,9 @@ const createGameController = () => {
         setCanvasSize();
         ScreenManager.showScreen(ScreenManager.screens.GAME);
         restartVideoRendering();
-        GamepadManager.setUIActive(!GameState.get().humanVsLlm);
+        GamepadManager.setUIActive(
+          !isHumanParticipant(GameState.get().player1Participant)
+        );
 
         const character = GameState.get().player1.character;
         if (character) {

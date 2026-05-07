@@ -1,4 +1,5 @@
 import random
+import subprocess
 from dataclasses import dataclass
 from textwrap import dedent
 
@@ -12,6 +13,14 @@ random.seed(seed)
 region = "us-east-1"
 minutes = 60
 gb = 1024
+
+
+def _exec_subprocess(cmd: list[str]) -> None:
+    process = subprocess.Popen(cmd)
+    return_code = process.wait()
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, cmd)
+
 
 # sf3
 X_SIZE = 384
@@ -1829,13 +1838,59 @@ def create_messages(
     prev_player2=None,
     recent_moves=None,
     difficulty: str = "expert",
-) -> tuple[list[dict[str, str]], list[str]]:
+    frames: list[str] | None = None,
+) -> tuple[list[dict], list[str]]:
     past_info_available = (
         prev_game_info is not None
         and prev_player1 is not None
         and prev_player2 is not None
         and recent_moves is not None
     )
+
+    available_moves = get_available_instructions_for_character(
+        player2.character, player2.super_art, player2.super_count, difficulty
+    )
+    if past_info_available:
+        # encourage close-in moves to avoid spamming + distancing
+        filtered_recent_moves = list(set(recent_moves) - set(CLOSE_IN_MOVES.keys()))
+        available_moves = [m for m in available_moves if m not in filtered_recent_moves]
+        if not available_moves:
+            available_moves = list(CLOSE_IN_MOVES.keys())
+    moves_prompt = "You may only use the following moves:\n"
+    moves_prompt += chr(10).join("- " + move for move in available_moves)
+
+    if frames:
+        return [
+            {
+                "role": "system",
+                "content": dedent(
+                    f"""
+                    You are the most aggressive Street Fighter III 3rd strike player in the world.
+
+                    Your character: {player2.character}, opponent character: {player1.character}, best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds
+                    {moves_prompt}
+
+                    Simply respond with ONLY the EXACT name of the best move without any surrounding formatting or additional text.
+                    """
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    *[
+                        {
+                            "type": "image",
+                            "image": frame,
+                        }
+                        for frame in frames
+                    ],
+                    {
+                        "type": "text",
+                        "text": "Your next move is:",
+                    },
+                ],
+            },
+        ], available_moves
 
     # game info
     game_info_prompt = f"Timer: {game_info.timer}, your character: {player2.character}, opponent character: {player1.character}, best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds"
@@ -1929,20 +1984,7 @@ def create_messages(
         if p1_super_change > 0:
             power_prompt += f" Opponent's super bar increased by {p1_super_change / SUPER_BAR_MAX * 100}%."
 
-    # moves
-    available_moves = get_available_instructions_for_character(
-        player2.character, player2.super_art, player2.super_count, difficulty
-    )
-    if past_info_available:
-        # encourage close-in moves to avoid spamming + distancing
-        filtered_recent_moves = list(set(recent_moves) - set(CLOSE_IN_MOVES.keys()))
-        available_moves = [m for m in available_moves if m not in filtered_recent_moves]
-        if not available_moves:
-            available_moves = list(CLOSE_IN_MOVES.keys())
-    moves_prompt = "You may only use the following moves:\n"
-    moves_prompt += chr(10).join("- " + move for move in available_moves)
-
-    messages = [  # OpenAI chat format
+    messages = [
         {
             "role": "system",
             "content": dedent(
@@ -1956,7 +1998,7 @@ def create_messages(
                 {power_prompt}
                 {moves_prompt}
 
-                Simply respond with just the entire name of the best move.
+                Simply respond with ONLY the EXACT name of the best move without any surrounding formatting or additional text.
                 """
             ),
         },
@@ -1976,9 +2018,9 @@ def est_super_ct(super_bar: int) -> int:
         return 0
 
 
-def create_random_messages() -> tuple[
-    list[dict[str, str]], str, int, int, int, list[str]
-]:  # for warmup, testing
+def create_random_messages(
+    n_frame: int = 0,
+) -> tuple[list[dict], str, int, int, int, list[str]]:
     import random
 
     n_detected_characters = random.randint(1, 2)
@@ -2044,7 +2086,11 @@ def create_random_messages() -> tuple[
     random_difficulty = random.choice(["basic", "advanced", "expert"])
 
     messages, available_moves = create_messages(
-        game_info, player1, player2, difficulty=random_difficulty
+        game_info,
+        player1,
+        player2,
+        difficulty=random_difficulty,
+        frames=["/root/example.png"] * n_frame if n_frame else None,
     )
 
     return (

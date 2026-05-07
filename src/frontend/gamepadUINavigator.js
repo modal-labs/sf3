@@ -2,6 +2,7 @@ import { byId, $, $$ } from "./utils.js";
 import { GameState } from "./gameState.js";
 import { AudioManager } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
+import { isHumanParticipant } from "./participantOptions.js";
 import { SOUND_KEYS, GRID } from "./constants.js";
 
 const createGamepadUINavigator = () => {
@@ -68,11 +69,6 @@ const createGamepadUINavigator = () => {
       elements.push("#controls-help");
     }
 
-    const playerToggle = byId("player-toggle");
-    if (playerToggle && !playerToggle.classList.contains("hidden")) {
-      elements.push("#player-toggle");
-    }
-
     const muteToggle = byId("mute-toggle");
     if (muteToggle && !muteToggle.classList.contains("hidden")) {
       elements.push("#mute-toggle");
@@ -135,7 +131,9 @@ const createGamepadUINavigator = () => {
 
         settingsElements.push("#start-game-btn");
         settingsElements.push("#p1-selected-portrait");
+        settingsElements.push("#participant-select-p1");
         settingsElements.push("#p2-selected-portrait");
+        settingsElements.push("#participant-select-p2");
 
         const characterGridElements = getCharacterGridElements();
         settingsElements.push(...characterGridElements);
@@ -145,11 +143,6 @@ const createGamepadUINavigator = () => {
         const controlsHelp = byId("controls-help");
         if (controlsHelp && !controlsHelp.classList.contains("hidden")) {
           settingsElements.push("#controls-help");
-        }
-
-        const playerToggle = byId("player-toggle");
-        if (playerToggle && !playerToggle.classList.contains("hidden")) {
-          settingsElements.push("#player-toggle");
         }
 
         const muteToggle = byId("mute-toggle");
@@ -177,7 +170,7 @@ const createGamepadUINavigator = () => {
         break;
       case "win":
         const gameState = GameState.get();
-        if (!gameState.humanVsLlm) {
+        if (!isHumanParticipant(gameState.player1Participant)) {
           const winElements = ["#play-again-btn"];
           const muteToggle = byId("mute-toggle");
           if (muteToggle && !muteToggle.classList.contains("hidden")) {
@@ -197,7 +190,7 @@ const createGamepadUINavigator = () => {
         break;
       case "error":
         const errorState = GameState.get();
-        if (!errorState.humanVsLlm) {
+        if (!isHumanParticipant(errorState.player1Participant)) {
           const errorElements = ["#error-back-btn"];
           const muteToggle = byId("mute-toggle");
           if (muteToggle && !muteToggle.classList.contains("hidden")) {
@@ -217,7 +210,7 @@ const createGamepadUINavigator = () => {
         break;
       case "loading":
         const loadingState = GameState.get();
-        if (!loadingState.humanVsLlm) {
+        if (!isHumanParticipant(loadingState.player1Participant)) {
           const loadingElements = [];
           const muteToggle = byId("mute-toggle");
           if (muteToggle && !muteToggle.classList.contains("hidden")) {
@@ -233,7 +226,7 @@ const createGamepadUINavigator = () => {
         break;
       case "game":
         const gameplayState = GameState.get();
-        if (!gameplayState.humanVsLlm) {
+        if (!isHumanParticipant(gameplayState.player1Participant)) {
           const gameElements = [];
           const muteToggle = byId("mute-toggle");
           if (muteToggle && !muteToggle.classList.contains("hidden")) {
@@ -357,14 +350,15 @@ const createGamepadUINavigator = () => {
     const state = GameState.getGamepadUIState();
     const currentEl = section.elements[state.currentElement];
 
-    const startBtnIdx = 0;
-    const p1BoxIdx = 1;
-    const p2BoxIdx = 2;
-    const characterStartIdx = 3;
-    const characterEndIdx = characterStartIdx + 19;
+    const startBtnIdx = section.elements.indexOf("#start-game-btn");
+    const p1BoxIdx = section.elements.indexOf("#p1-selected-portrait");
+    const p1ParticipantIdx = section.elements.indexOf("#participant-select-p1");
+    const p2BoxIdx = section.elements.indexOf("#p2-selected-portrait");
+    const p2ParticipantIdx = section.elements.indexOf("#participant-select-p2");
     const toggleOptionsIdx = section.elements.indexOf("#toggle-options-btn");
+    const characterStartIdx = p2ParticipantIdx + 1;
+    const characterEndIdx = toggleOptionsIdx;
     const controlsHelpIdx = section.elements.indexOf("#controls-help");
-    const playerToggleIdx = section.elements.indexOf("#player-toggle");
     const muteToggleIdx = section.elements.indexOf("#mute-toggle");
     const difficultyIdx = section.elements.indexOf("#difficulty-slider");
     const superArtP1Idx = section.elements.indexOf("#super-art-select-p1");
@@ -373,14 +367,15 @@ const createGamepadUINavigator = () => {
     const onStartBtn = state.currentElement === startBtnIdx;
     const onPlayerBox =
       state.currentElement === p1BoxIdx || state.currentElement === p2BoxIdx;
+    const onParticipantSelect =
+      currentEl === "#participant-select-p1" ||
+      currentEl === "#participant-select-p2";
     const onCharacterGrid =
       state.currentElement >= characterStartIdx &&
       state.currentElement < characterEndIdx;
     const onToggleOptions = state.currentElement === toggleOptionsIdx;
     const onSidePanel =
-      currentEl === "#controls-help" ||
-      currentEl === "#player-toggle" ||
-      currentEl === "#mute-toggle";
+      currentEl === "#controls-help" || currentEl === "#mute-toggle";
     const onDifficulty = state.currentElement === difficultyIdx;
     const onSuperArt =
       state.currentElement === superArtP1Idx ||
@@ -403,10 +398,20 @@ const createGamepadUINavigator = () => {
       if (inputX !== 0) {
         moveCursor(inputX > 0 ? p2BoxIdx : p1BoxIdx);
       } else if (inputY > 0) {
-        const targetCol = state.currentElement === p2BoxIdx ? 5 : 4;
-        moveCursor(characterStartIdx + targetCol);
+        moveCursor(
+          state.currentElement === p2BoxIdx ? p2ParticipantIdx : p1ParticipantIdx
+        );
       } else if (inputY < 0) {
         moveCursor(startBtnIdx);
+      }
+    } else if (onParticipantSelect) {
+      if (inputX !== 0) {
+        moveCursor(inputX > 0 ? p2ParticipantIdx : p1ParticipantIdx);
+      } else if (inputY > 0) {
+        const targetCol = currentEl === "#participant-select-p2" ? 5 : 4;
+        moveCursor(characterStartIdx + targetCol);
+      } else if (inputY < 0) {
+        moveCursor(currentEl === "#participant-select-p2" ? p2BoxIdx : p1BoxIdx);
       }
     } else if (onCharacterGrid) {
       const gridIndex = state.currentElement - characterStartIdx;
@@ -416,7 +421,7 @@ const createGamepadUINavigator = () => {
 
       if (inputY < 0) {
         if (currentRow === 0) {
-          moveCursor(currentCol < 5 ? p1BoxIdx : p2BoxIdx);
+          moveCursor(currentCol < 5 ? p1ParticipantIdx : p2ParticipantIdx);
         } else {
           const newIndex =
             characterStartIdx + (currentRow - 1) * cols + currentCol;
@@ -452,7 +457,6 @@ const createGamepadUINavigator = () => {
       } else if (inputX !== 0) {
         const sidePanelElements = [
           controlsHelpIdx,
-          playerToggleIdx,
           muteToggleIdx,
         ].filter((idx) => idx >= 0);
 
@@ -460,8 +464,6 @@ const createGamepadUINavigator = () => {
           const lastIndex = state.lastSidePanelIndex;
           if (lastIndex >= 0 && sidePanelElements.includes(lastIndex)) {
             moveCursor(lastIndex);
-          } else if (playerToggleIdx >= 0) {
-            moveCursor(playerToggleIdx);
           } else {
             moveCursor(sidePanelElements[0]);
           }
@@ -477,7 +479,6 @@ const createGamepadUINavigator = () => {
       } else if (inputY !== 0) {
         const sidePanelElements = [
           controlsHelpIdx,
-          playerToggleIdx,
           muteToggleIdx,
         ].filter((idx) => idx >= 0);
         const currentSidePanelIdx = sidePanelElements.indexOf(

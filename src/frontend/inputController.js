@@ -2,6 +2,7 @@ import { GameState } from "./gameState.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { WebRtcManager } from "./webRtcManager.js";
 import { MovesEngine } from "./movesEngine.js";
+import { isHumanParticipant } from "./participantOptions.js";
 
 const createInputController = () => {
   const actions = {
@@ -202,7 +203,7 @@ const createInputController = () => {
 
   const handleKeyboardEvent = (e, isDown) => {
     const state = GameState.get();
-    if (!state.loaded || !state.humanVsLlm) return;
+    if (!state.loaded || !isHumanParticipant(state.player1Participant)) return;
 
     GameState.setKeyState(e.code, isDown);
     const action = getActionFromKeys();
@@ -234,7 +235,10 @@ const createInputController = () => {
     const originalOnInput = GamepadManager.onInput;
     GamepadManager.onInput = (state) => {
       const gameState = GameState.get();
-      if (gameState.loaded && gameState.humanVsLlm) {
+      if (
+        gameState.loaded &&
+        isHumanParticipant(gameState.player1Participant)
+      ) {
         processGamepadInput(state);
       } else if (originalOnInput) {
         originalOnInput(state);
