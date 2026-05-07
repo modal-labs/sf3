@@ -1,43 +1,63 @@
-import { byId, $ } from "./utils.js";
+import { byId } from "./utils.js";
 import { GameState } from "./gameState.js";
 import { AudioManager } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { InputController } from "./inputController.js";
 import { MovesDisplay } from "./movesEngine.js";
 import { GamepadUINavigator } from "./gamepadUINavigator.js";
+import {
+  PARTICIPANT_LABELS,
+  getParticipantLabel,
+  isHumanParticipant,
+} from "./participantOptions.js";
 import { SOUND_KEYS } from "./constants.js";
 
 const createUIController = () => {
-  const setupPlayerToggle = () => {
-    const playerToggle = byId("player-toggle");
-    if (!playerToggle) return;
+  const populateParticipantSelect = (select, { allowHuman }) => {
+    select.innerHTML = "";
+    Object.entries(PARTICIPANT_LABELS).forEach(([participant, label]) => {
+      if (!allowHuman && isHumanParticipant(participant)) return;
+      const option = document.createElement("option");
+      option.value = participant;
+      option.textContent = label;
+      select.appendChild(option);
+    });
+  };
 
-    playerToggle.addEventListener("click", () => {
-      const isHumanVsLlm = GameState.toggleGameMode();
+  const syncParticipantUI = () => {
+    const state = GameState.get();
+    const p1Select = byId("participant-select-p1");
+    const p2Select = byId("participant-select-p2");
+    const p1Label = byId("participant-label-p1");
+    const p2Label = byId("participant-label-p2");
 
-      const playerIcon = byId("player-icon");
-      if (playerIcon) {
-        playerIcon.src = isHumanVsLlm ? "/icons/human.png" : "/icons/llm.png";
-      }
+    if (p1Select) p1Select.value = state.player1Participant;
+    if (p2Select) p2Select.value = state.player2Participant;
+    if (p1Label) p1Label.textContent = getParticipantLabel(state.player1Participant);
+    if (p2Label) p2Label.textContent = getParticipantLabel(state.player2Participant);
+  };
 
-      const p1Label = $("#p1-selection-box h2");
-      const p2Label = $("#p2-selection-box h2");
+  const setupParticipantSelectors = () => {
+    const p1Select = byId("participant-select-p1");
+    const p2Select = byId("participant-select-p2");
+    if (!p1Select || !p2Select) return;
 
-      if (p1Label) {
-        p1Label.textContent = isHumanVsLlm ? "YOU" : "LLM 1";
-      }
-      if (p2Label) {
-        p2Label.textContent = isHumanVsLlm ? "LLM" : "LLM 2";
-      }
+    populateParticipantSelect(p1Select, { allowHuman: true });
+    populateParticipantSelect(p2Select, { allowHuman: false });
 
+    p1Select.addEventListener("change", () => {
+      GameState.setPlayer1Participant(p1Select.value);
       updateHelpIconVisibility();
       AudioManager.playSound(SOUND_KEYS.CLICK);
       GamepadUINavigator.updateGamepadSections(true);
     });
-
-    playerToggle.addEventListener("mouseenter", () => {
-      AudioManager.playSound(SOUND_KEYS.HOVER);
+    p2Select.addEventListener("change", () => {
+      GameState.setPlayer2Participant(p2Select.value);
+      AudioManager.playSound(SOUND_KEYS.CLICK);
+      GamepadUINavigator.updateGamepadSections(true);
     });
+
+    syncParticipantUI();
   };
 
   const setupDifficultySlider = () => {
@@ -294,7 +314,7 @@ const createUIController = () => {
     if (!controlsHelp) return;
 
     const state = GameState.get();
-    if (!state.humanVsLlm) {
+    if (!isHumanParticipant(state.player1Participant)) {
       controlsHelp.classList.add("hidden");
       return;
     }
@@ -370,6 +390,8 @@ const createUIController = () => {
       "error-back-btn",
       "p1-selected-portrait",
       "p2-selected-portrait",
+      "participant-select-p1",
+      "participant-select-p2",
       "super-art-select",
       "toggle-options-btn",
       "help-overlay-close",
@@ -388,13 +410,16 @@ const createUIController = () => {
   };
 
   const init = () => {
-    setupPlayerToggle();
+    setupParticipantSelectors();
     setupOptionsPanel();
     setupHelpOverlay();
     setupHoverSounds();
     loadExtraMovesDisplay();
 
     GameState.subscribe((changeType, data) => {
+      if (changeType === "gameModeChange") {
+        syncParticipantUI();
+      }
       if (changeType === "playerCharacterChange" && data.player === "p1") {
         updateCombosDisplay(data.character);
         updateSuperArtsDisplay(data.character);

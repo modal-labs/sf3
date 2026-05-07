@@ -2,6 +2,10 @@ import { byId, show, hide } from "./utils.js";
 import { AudioManager } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { GameState } from "./gameState.js";
+import {
+  getWinnerLabel,
+  isHumanParticipant,
+} from "./participantOptions.js";
 import { SOUND_KEYS } from "./constants.js";
 
 const createScreenManager = () => {
@@ -58,20 +62,15 @@ const createScreenManager = () => {
       screenId === screens.ERROR ||
       (screenId === screens.LOADING && state.assetsLoaded);
 
-    const playerToggle = byId("player-toggle");
-    if (playerToggle) {
-      const showPlayerToggle = screenId === screens.SETTINGS;
-      playerToggle.classList.toggle("hidden", !showPlayerToggle || isGameplay);
-    }
-
     const muteButton = byId("mute-toggle");
     if (muteButton) {
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const player1Human = isHumanParticipant(state.player1Participant);
       const hideMute =
         isMobile ||
         hideAll ||
-        (isGameplay && state.humanVsLlm) ||
-        (isMinimalScreen && state.humanVsLlm) ||
+        (isGameplay && player1Human) ||
+        (isMinimalScreen && player1Human) ||
         (screenId === screens.SPLASH && GamepadManager.isConnected());
       muteButton.classList.toggle("hidden", hideMute);
     }
@@ -89,7 +88,7 @@ const createScreenManager = () => {
     if (!controlsHelp) return;
 
     const state = GameState.get();
-    if (!state.humanVsLlm) {
+    if (!isHumanParticipant(state.player1Participant)) {
       hide(controlsHelp);
       return;
     }
@@ -270,22 +269,35 @@ const createScreenManager = () => {
   };
 
   const showWinScreen = (winner) => {
+    const state = GameState.get();
+    const player1Label = getWinnerLabel(
+      state.player1Participant,
+      "p1",
+      state.player2Participant
+    );
+    const player2Label = getWinnerLabel(
+      state.player2Participant,
+      "p2",
+      state.player1Participant
+    );
     const winnerEl = byId("winner-text");
     if (winnerEl) {
       winnerEl.textContent = `Winner: ${winner}`;
       winnerEl.classList.toggle(
         "text-sf-blue",
-        winner === "YOU" || winner === "LLM 1" || winner === "P1"
+        winner === player1Label
       );
       winnerEl.classList.toggle(
         "text-sf-red",
-        winner === "LLM" || winner === "LLM 2" || winner === "P2"
+        winner === player2Label
       );
     }
 
-    const state = GameState.get();
-    const winSound =
-      !state.humanVsLlm || winner === "YOU" ? SOUND_KEYS.WIN : SOUND_KEYS.LOSE;
+    const winSound = isHumanParticipant(state.player1Participant)
+      ? winner === player1Label
+        ? SOUND_KEYS.WIN
+        : SOUND_KEYS.LOSE
+      : SOUND_KEYS.WIN;
 
     AudioManager.play(winSound, {
       volume: volumes.winLose,

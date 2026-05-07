@@ -1,7 +1,8 @@
 const createGameState = () => {
   let state = {
     // core game status
-    humanVsLlm: true,
+    player1Participant: "human",
+    player2Participant: "qwen35_35ba3b_fp8",
     loaded: false,
     serverReady: false,
     firstFrameReceived: false,
@@ -164,14 +165,20 @@ const createGameState = () => {
       return [...state.inputHistory];
     },
 
-    toggleGameMode() {
-      state.humanVsLlm = !state.humanVsLlm;
-      notifyListeners("gameModeChange", state.humanVsLlm);
-      return state.humanVsLlm;
+    setPlayer1Participant(participant) {
+      state.player1Participant = participant;
+      notifyListeners("gameModeChange", {
+        player1Participant: state.player1Participant,
+        player2Participant: state.player2Participant,
+      });
     },
 
-    isHumanVsLlm() {
-      return state.humanVsLlm;
+    setPlayer2Participant(participant) {
+      state.player2Participant = participant;
+      notifyListeners("gameModeChange", {
+        player1Participant: state.player1Participant,
+        player2Participant: state.player2Participant,
+      });
     },
 
     updateGamepadUIState(updates) {

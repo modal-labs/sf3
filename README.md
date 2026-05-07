@@ -1,11 +1,12 @@
 # sf3
 
-An interactive Street Fighter 3 demo against an RL-trained LLM.
+An interactive Street Fighter 3 demo against RL-trained LLMs.
 
 ## Update - 5/6/2026
 
 - Since the diambra engine no longer works, this project now runs the game through a local MAME runtime. Therefore, disregard any mention of sandboxing or Diambra below.
 - To improve reliability, video is streamed over WebRTC instead of websockets.
+- Multimodal models that consume the current frame directly are now supported.
 
 ## Quickstart
 
@@ -44,13 +45,17 @@ TURN_CREDENTIAL=
 modal run -m src.training.yolo --prepare --train --export
 
 # Test the (trained) YOLO model's latency
-modal run -m src.yolo
+modal run -m src.serve.yolo
 
 # Alternate between rounds of collecting self-play data and training the LLM
-modal run -m src.training.llm
+modal run -m src.training.qwen35_35ba3b
 
-# Test the (pretrained or trained) LLM's latency
-modal run -m src.llm
+# Test model latency
+modal run -m src.serve.qwen35_35ba3b_fp8
+modal run -m src.serve.qwen36_35ba3b_fp8
+modal run -m src.serve.gemma4_31b
+modal run -m src.serve.ministral3_14b
+modal run -m src.serve.nemotron3nano_30ba3b_fp8
 
 # Serve the web app
 modal serve -m src.app

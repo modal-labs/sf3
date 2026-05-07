@@ -3,6 +3,7 @@ import { GameState } from "./gameState.js";
 import { AudioManager } from "./audioManager.js";
 import { UIFactory } from "./uiFactory.js";
 import { GamepadUINavigator } from "./gamepadUINavigator.js";
+import { getParticipantLabel } from "./participantOptions.js";
 import { SOUND_KEYS } from "./constants.js";
 
 const createCharacterSelectionManager = () => {
@@ -213,14 +214,12 @@ const createCharacterSelectionManager = () => {
     const activeColor = getPlayerColor(state.characterGrid.activePlayer);
 
     if (p1Portrait) {
-      p1Portrait.className = `portrait-box border-${
-        state.characterGrid.activePlayer === "p1" ? activeColor : "transparent"
-      }`;
+      p1Portrait.className = `portrait-box border-${state.characterGrid.activePlayer === "p1" ? activeColor : "transparent"
+        }`;
     }
     if (p2Portrait) {
-      p2Portrait.className = `portrait-box border-${
-        state.characterGrid.activePlayer === "p2" ? activeColor : "transparent"
-      }`;
+      p2Portrait.className = `portrait-box border-${state.characterGrid.activePlayer === "p2" ? activeColor : "transparent"
+        }`;
     }
   };
 
@@ -259,12 +258,11 @@ const createCharacterSelectionManager = () => {
     const activePlayer = state.characterGrid.activePlayer;
     const colorClass = `text-${getPlayerColor(activePlayer)}`;
 
-    let playerText = "";
-    if (!state.humanVsLlm) {
-      playerText = activePlayer === "p1" ? "LLM 1" : "LLM 2";
-    } else {
-      playerText = activePlayer === "p1" ? "YOU" : "LLM";
-    }
+    const playerText = getParticipantLabel(
+      activePlayer === "p1"
+        ? state.player1Participant
+        : state.player2Participant
+    );
 
     if (indicator) {
       indicator.innerHTML = `<span class="${colorClass}">${playerText}</span> - ${character} Outfits`;

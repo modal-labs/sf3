@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -295,50 +295,37 @@
         </a>
       </div>
     </header>
-    <button
-      id="controls-help"
-      class="hidden fixed bottom-20 lg:bottom-36 right-4 z-50 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
-      type="button"
-      aria-label="Show help"
-    >
-      <img
-        id="help-icon"
-        src="/icons/help.png"
-        alt=""
-        aria-hidden="true"
-        class="img-icon"
-      />
-    </button>
-    <button
-      id="player-toggle"
-      class="hidden fixed bottom-4 lg:bottom-20 right-4 z-50 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
-      type="button"
-      aria-label="Toggle Player vs LLM"
-      title="Toggle Player vs LLM"
-    >
-      <img
-        id="player-icon"
-        src="/icons/human.png"
-        alt=""
-        aria-hidden="true"
-        class="img-icon"
-      />
-    </button>
-    <button
-      id="mute-toggle"
-      class="hidden fixed bottom-4 right-4 z-50 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
-      type="button"
-      aria-label="Toggle Sound"
-      title="Toggle Sound"
-    >
-      <img
-        id="mute-icon"
-        src="/icons/unmute.svg"
-        alt=""
-        aria-hidden="true"
-        class="img-icon"
-      />
-    </button>
+    <div class="fixed bottom-4 right-4 z-50 flex flex-col gap-3 items-end">
+      <button
+        id="controls-help"
+        class="hidden btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
+        type="button"
+        aria-label="Show help"
+      >
+        <img
+          id="help-icon"
+          src="/icons/help.png"
+          alt=""
+          aria-hidden="true"
+          class="img-icon"
+        />
+      </button>
+      <button
+        id="mute-toggle"
+        class="hidden btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
+        type="button"
+        aria-label="Toggle Sound"
+        title="Toggle Sound"
+      >
+        <img
+          id="mute-icon"
+          src="/icons/unmute.svg"
+          alt=""
+          aria-hidden="true"
+          class="img-icon"
+        />
+      </button>
+    </div>
     <div
       id="gamepad-status"
       class="hidden fixed bottom-4 left-4 z-50 btn-icon bg-sf-darker border-sf-gold-dark"
@@ -530,7 +517,36 @@
               id="p1-selection-box"
               class="flex flex-col justify-center items-center gap-3 lg:gap-4"
             >
-              <h2 class="text-sf-blue text-base lg:text-xl text-glow">YOU</h2>
+              <h2
+                id="participant-label-p1"
+                class="text-sf-blue text-base lg:text-xl text-glow"
+              >
+                YOU
+              </h2>
+              <div class="relative w-full max-w-[11rem]">
+                <select
+                  id="participant-select-p1"
+                  class="dropdown text-xs lg:text-sm"
+                  aria-label="Left participant"
+                ></select>
+                <span
+                  class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
+                >
+                  <svg
+                    class="size-3 lg:size-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                </span>
+              </div>
               <div
                 id="p1-selected-portrait"
                 class="portrait-box border-sf-blue"
@@ -547,7 +563,36 @@
               id="p2-selection-box"
               class="flex flex-col justify-center items-center gap-3 lg:gap-4"
             >
-              <h2 class="text-sf-red text-base lg:text-xl text-glow">LLM</h2>
+              <h2
+                id="participant-label-p2"
+                class="text-sf-red text-base lg:text-xl text-glow"
+              >
+                QWEN3.5-35B
+              </h2>
+              <div class="relative w-full max-w-[11rem]">
+                <select
+                  id="participant-select-p2"
+                  class="dropdown text-xs lg:text-sm"
+                  aria-label="Right participant"
+                ></select>
+                <span
+                  class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
+                >
+                  <svg
+                    class="size-3 lg:size-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                </span>
+              </div>
               <div
                 id="p2-selected-portrait"
                 class="portrait-box border-transparent"
