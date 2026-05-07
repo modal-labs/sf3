@@ -9,6 +9,7 @@ import { UIController } from "./uiController.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { GamepadUINavigator } from "./gamepadUINavigator.js";
 import { WebRtcManager } from "./webRtcManager.js";
+import { gameplayUrl } from "./runtimeConfig.js";
 import { byId } from "./utils.js";
 
 export const setCanvasSize = () => {
@@ -30,6 +31,9 @@ export const setCanvasSize = () => {
 
 const initApp = async () => {
   WebRtcManager.init();
+  void fetch(gameplayUrl("/warm/default-participant"), {
+    mode: "cors",
+  }).catch(() => { });
 
   await AssetLoader.loadAllAssets();
 
