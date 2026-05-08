@@ -10,6 +10,7 @@ export const WebRtcManager = {
   dataChannel: null,
   onMessage: null,
   onRemoteStream: null,
+  onDisconnect: null,
   peerId: "",
   turnResolver: null,
   hasStarted: false,
@@ -20,6 +21,7 @@ export const WebRtcManager = {
   init(callbacks = {}) {
     this.onMessage = callbacks.onMessage || null;
     this.onRemoteStream = callbacks.onRemoteStream || null;
+    this.onDisconnect = callbacks.onDisconnect || null;
 
     if (this.onMessage && this.pendingMessages.length > 0) {
       const messages = [...this.pendingMessages];
@@ -86,7 +88,7 @@ export const WebRtcManager = {
       this.peer.onconnectionstatechange = () => {
         const state = this.peer?.connectionState;
         if (state === "failed" || state === "disconnected" || state === "closed") {
-          this.updateStartButton("Connection Lost");
+          this.handleDisconnect("Game connection lost.");
         }
       };
 
@@ -103,7 +105,7 @@ export const WebRtcManager = {
         this.pendingMessages.push(raw);
       };
       this.dataChannel.onclose = () => {
-        this.updateStartButton("Connection Lost");
+        this.handleDisconnect("Game data channel closed.");
       };
       this.flushPendingOutbound();
 
@@ -116,7 +118,7 @@ export const WebRtcManager = {
       });
     } catch (error) {
       console.error("WebRTC connect error", error);
-      this.updateStartButton("Connection Error");
+      this.handleDisconnect("Connection Error");
       this.hasStarted = false;
     }
   },
@@ -130,11 +132,11 @@ export const WebRtcManager = {
     };
     this.ws.onclose = () => {
       if (!this.peer || this.peer.connectionState !== "connected") {
-        this.updateStartButton("Connection Lost");
+        this.handleDisconnect("Signaling connection lost.");
       }
     };
     this.ws.onerror = () => {
-      this.updateStartButton("Connection Error");
+      this.handleDisconnect("Connection Error");
     };
 
     await new Promise((resolve, reject) => {
@@ -242,6 +244,7 @@ export const WebRtcManager = {
   },
 
   close() {
+    this.onDisconnect = null;
     if (this.dataChannel) {
       this.dataChannel.close();
       this.dataChannel = null;
@@ -259,6 +262,11 @@ export const WebRtcManager = {
     this.pendingMessages = [];
     this.pendingRemoteStream = null;
     this.pendingOutbound = [];
+  },
+
+  handleDisconnect(message) {
+    this.updateStartButton("Connection Lost");
+    this.onDisconnect?.(message);
   },
 
   updateStartButton(text) {

@@ -661,6 +661,11 @@ const createGamepadUINavigator = () => {
     updateGamepadSections();
 
     const currentScreen = GameState.getCurrentScreen();
+    if (currentScreen === "game" && buttons.start) {
+      document.dispatchEvent(new Event("gamePauseToggle"));
+      return;
+    }
+
     if (currentScreen === "splash" && buttons.a) {
       const splashScreen = byId("splash-screen");
       if (splashScreen) {

@@ -4,6 +4,7 @@ const createGameState = () => {
     player1Participant: "human",
     player2Participant: "qwen35_35ba3b_fp8",
     loaded: false,
+    paused: false,
     serverReady: false,
     firstFrameReceived: false,
     assetsLoaded: false,
@@ -92,6 +93,7 @@ const createGameState = () => {
 
     resetGameState() {
       state.loaded = false;
+      state.paused = false;
       state.serverReady = false;
       state.firstFrameReceived = false;
       state.inTransition = false;

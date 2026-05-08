@@ -18,6 +18,56 @@ const createGameController = () => {
   let lastPresentedFrames = 0;
   let nextFreshPresentedFrame = 1;
 
+  const updatePauseUI = (paused) => {
+    const pauseOverlay = byId("pause-overlay");
+    if (pauseOverlay) {
+      pauseOverlay.classList.toggle("hidden", !paused);
+      pauseOverlay.classList.toggle("flex", paused);
+    }
+
+    const controls = byId("pause-overlay-controls");
+    if (controls) {
+      controls.textContent = GamepadManager.isConnected()
+        ? "Press Esc, Start/Menu, or click to continue"
+        : "Press Esc or click to continue";
+    }
+  };
+
+  const playGameplayMusic = () => {
+    const state = GameState.get();
+    const character = state.player1.character;
+    if (!character) return;
+
+    AudioManager.play(character, {
+      volume: 0.2,
+      loop: true,
+      trackAs: "select",
+    });
+  };
+
+  const setPaused = (paused) => {
+    GameState.update({
+      paused,
+      keyState: paused ? {} : GameState.getKeyState(),
+      inputHistory: paused ? [] : GameState.getInputHistory(),
+    });
+    updatePauseUI(paused);
+
+    if (paused) {
+      AudioManager.pauseTrack("select");
+      return;
+    }
+
+    const state = GameState.get();
+    if (
+      state.loaded &&
+      state.currentScreen === ScreenManager.screens.GAME &&
+      !AudioManager.resumeTrack("select")
+    ) {
+      playGameplayMusic();
+    }
+  };
+
   const startGame = () => {
     const state = GameState.get();
 
@@ -54,6 +104,7 @@ const createGameController = () => {
 
     setTimeout(() => {
       resetGameState();
+      updatePauseUI(false);
       ScreenManager.showScreen(ScreenManager.screens.LOADING);
       setText("loading-status", "Starting game...");
       WebRtcManager.send("start_game", gameConfig);
@@ -170,6 +221,17 @@ const createGameController = () => {
     remoteVideo.onloadedmetadata = restartVideoRendering;
   };
 
+  const handleDisconnect = (message) => {
+    const state = GameState.get();
+    if (!state.loaded && state.currentScreen !== ScreenManager.screens.LOADING) {
+      return;
+    }
+    GameState.update({ loaded: false, paused: false });
+    updatePauseUI(false);
+    AudioManager.stopTrack("select");
+    ScreenManager.showError(message);
+  };
+
   const handleGameState = (data) => {
     const startButton = byId("start-game-btn");
 
@@ -188,22 +250,26 @@ const createGameController = () => {
         break;
 
       case "running":
+        const state = GameState.get();
+        const wasInGame =
+          state.loaded && state.currentScreen === ScreenManager.screens.GAME;
         GameState.update({ loaded: true });
+        setPaused(false);
         setCanvasSize();
         ScreenManager.showScreen(ScreenManager.screens.GAME);
         restartVideoRendering();
         GamepadManager.setUIActive(
-          !isHumanParticipant(GameState.get().player1Participant)
+          !isHumanParticipant(state.player1Participant)
         );
 
-        const character = GameState.get().player1.character;
-        if (character) {
-          AudioManager.play(character, {
-            volume: 0.2,
-            loop: true,
-            trackAs: "select",
-          });
+        if (!wasInGame) {
+          playGameplayMusic();
         }
+        break;
+
+      case "paused":
+        GameState.update({ loaded: true });
+        setPaused(true);
         break;
 
       case "finished":
@@ -211,7 +277,8 @@ const createGameController = () => {
         break;
 
       case "error":
-        GameState.update({ loaded: false });
+        GameState.update({ loaded: false, paused: false });
+        updatePauseUI(false);
         AudioManager.stopTrack("select");
         ScreenManager.showError(data.error || "Unknown game error");
         break;
@@ -219,7 +286,8 @@ const createGameController = () => {
   };
 
   const handleGameFinished = (winner) => {
-    GameState.update({ loaded: false });
+    GameState.update({ loaded: false, paused: false });
+    updatePauseUI(false);
     GamepadManager.setUIActive(true);
     AudioManager.stopTrack("select");
 
@@ -234,10 +302,22 @@ const createGameController = () => {
     }
   };
 
+  const togglePause = () => {
+    const state = GameState.get();
+    if (!state.loaded || state.currentScreen !== ScreenManager.screens.GAME) {
+      return;
+    }
+
+    const nextPaused = !state.paused;
+    setPaused(nextPaused);
+    WebRtcManager.send(nextPaused ? "pause_game" : "resume_game", {});
+  };
+
   const init = () => {
     WebRtcManager.init({
       onMessage: handleTransportMessage,
       onRemoteStream: handleRemoteStream,
+      onDisconnect: handleDisconnect,
     });
 
     const startBtn = byId("start-game-btn");
@@ -247,6 +327,45 @@ const createGameController = () => {
         startGame();
       });
     }
+
+    const pauseOverlay = byId("pause-overlay");
+    if (pauseOverlay) {
+      pauseOverlay.addEventListener("click", () => {
+        AudioManager.playSound(SOUND_KEYS.CLICK);
+        togglePause();
+      });
+    }
+
+    const gameCanvas = byId("game-canvas");
+    if (gameCanvas) {
+      gameCanvas.addEventListener("click", () => {
+        const state = GameState.get();
+        if (!state.paused) {
+          AudioManager.playSound(SOUND_KEYS.CLICK);
+          togglePause();
+        }
+      });
+    }
+
+    document.addEventListener("gamePauseToggle", () => {
+      togglePause();
+    });
+
+    window.addEventListener("gamepadStatusChange", () => {
+      updatePauseUI(GameState.get().paused);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.repeat || event.code !== "Escape") {
+        return;
+      }
+      const state = GameState.get();
+      if (!state.loaded || state.currentScreen !== ScreenManager.screens.GAME) {
+        return;
+      }
+      event.preventDefault();
+      togglePause();
+    });
 
     const playAgainBtn = byId("play-again-btn");
     if (playAgainBtn) {
@@ -277,6 +396,7 @@ const createGameController = () => {
   return {
     init,
     startGame,
+    togglePause,
     cleanup,
   };
 };

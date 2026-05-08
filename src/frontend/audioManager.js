@@ -1,6 +1,12 @@
 import { byId } from "./utils.js";
 import { SOUND_KEYS } from "./constants.js";
 
+const trackSlots = {
+  select: "selectSound",
+  winLose: "winLoseSound",
+  transition: "transitionSound",
+};
+
 export const AudioManager = {
   sounds: {},
   enabled: true,
@@ -135,13 +141,7 @@ export const AudioManager = {
 
   stopTrack(trackType) {
     if (this.isMobile) return;
-    const trackMap = {
-      select: "selectSound",
-      winLose: "winLoseSound",
-      transition: "transitionSound",
-    };
-
-    const soundProp = trackMap[trackType];
+    const soundProp = trackSlots[trackType];
     const sound = this[soundProp];
 
     if (sound) {
@@ -150,6 +150,24 @@ export const AudioManager = {
       sound.loop = false;
       this[soundProp] = null;
     }
+  },
+
+  pauseTrack(trackType) {
+    if (this.isMobile) return;
+    const sound = this[trackSlots[trackType]];
+    if (sound) {
+      sound.pause();
+    }
+  },
+
+  resumeTrack(trackType) {
+    if (this.isMobile) return false;
+    const sound = this[trackSlots[trackType]];
+    if (!sound) return false;
+    sound.play().catch((error) => {
+      console.warn(`Failed to resume ${trackType} track`, error);
+    });
+    return true;
   },
 
   stopAll() {

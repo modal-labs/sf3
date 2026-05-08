@@ -38,7 +38,7 @@ export const GamepadManager = {
     currentSection: 0,
     currentElement: 0,
     sections: [],
-    lastInput: { x: 0, y: 0, button: null },
+    lastInput: { x: 0, y: 0, a: false, b: false, lb: false, rb: false, start: false },
     inputCooldown: 200,
     lastInputTime: 0,
     holdStartTime: 0,
@@ -201,10 +201,11 @@ export const GamepadManager = {
     };
 
     const buttons = {
-      a: currentState.buttons[0],
-      b: currentState.buttons[1],
-      lb: currentState.buttons[4],
-      rb: currentState.buttons[5],
+      a: currentState.buttons[0] || false,
+      b: currentState.buttons[1] || false,
+      lb: currentState.buttons[4] || false,
+      rb: currentState.buttons[5] || false,
+      start: currentState.buttons[9] || false,
     };
 
     let inputX = 0,
@@ -220,14 +221,16 @@ export const GamepadManager = {
       buttons.a ||
       buttons.b ||
       buttons.lb ||
-      buttons.rb;
+      buttons.rb ||
+      buttons.start;
     const inputChanged =
       inputX !== this.navState.lastInput.x ||
       inputY !== this.navState.lastInput.y ||
       buttons.a !== this.navState.lastInput.a ||
       buttons.b !== this.navState.lastInput.b ||
       buttons.lb !== this.navState.lastInput.lb ||
-      buttons.rb !== this.navState.lastInput.rb;
+      buttons.rb !== this.navState.lastInput.rb ||
+      buttons.start !== this.navState.lastInput.start;
 
     if (inputChanged) {
       if (hasInput) {
