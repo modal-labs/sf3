@@ -383,7 +383,7 @@ const createGamepadUINavigator = () => {
     const onOutfits = currentEl && currentEl.includes("outfit-");
 
     if (onStartBtn) {
-      if (inputY > 0) moveCursor(p1BoxIdx);
+      if (inputY > 0) moveCursor(p1ParticipantIdx);
       else if (inputY < 0) {
         const firstOutfitIdx = section.elements.findIndex((el) =>
           el.includes("outfit-")
@@ -398,20 +398,20 @@ const createGamepadUINavigator = () => {
       if (inputX !== 0) {
         moveCursor(inputX > 0 ? p2BoxIdx : p1BoxIdx);
       } else if (inputY > 0) {
+        const targetCol = state.currentElement === p2BoxIdx ? 5 : 4;
+        moveCursor(characterStartIdx + targetCol);
+      } else if (inputY < 0) {
         moveCursor(
           state.currentElement === p2BoxIdx ? p2ParticipantIdx : p1ParticipantIdx
         );
-      } else if (inputY < 0) {
-        moveCursor(startBtnIdx);
       }
     } else if (onParticipantSelect) {
       if (inputX !== 0) {
         moveCursor(inputX > 0 ? p2ParticipantIdx : p1ParticipantIdx);
       } else if (inputY > 0) {
-        const targetCol = currentEl === "#participant-select-p2" ? 5 : 4;
-        moveCursor(characterStartIdx + targetCol);
-      } else if (inputY < 0) {
         moveCursor(currentEl === "#participant-select-p2" ? p2BoxIdx : p1BoxIdx);
+      } else if (inputY < 0) {
+        moveCursor(startBtnIdx);
       }
     } else if (onCharacterGrid) {
       const gridIndex = state.currentElement - characterStartIdx;
@@ -421,7 +421,7 @@ const createGamepadUINavigator = () => {
 
       if (inputY < 0) {
         if (currentRow === 0) {
-          moveCursor(currentCol < 5 ? p1ParticipantIdx : p2ParticipantIdx);
+          moveCursor(currentCol < 5 ? p1BoxIdx : p2BoxIdx);
         } else {
           const newIndex =
             characterStartIdx + (currentRow - 1) * cols + currentCol;
