@@ -146,6 +146,9 @@ gameplay_image = (
 )
 
 endpoint_timeout = 24 * 60 * minutes
+container_scaledown_window = 60 * minutes
+container_call_timeout = container_scaledown_window + minutes
+env_create_timeout = 60
 
 
 def normalize_participant(participant: str, *, allow_human: bool) -> str:
@@ -226,7 +229,10 @@ class Web:
                 label = PARTICIPANT_LABELS.get(participant, participant)
                 print(f"Creating {label}...")
                 server = server_cls()
-                await server.boot.remote.aio()
+                await asyncio.wait_for(
+                    server.boot.remote.aio(),
+                    timeout=container_call_timeout,
+                )
                 self.participant_servers[participant] = server
                 print(f"{label} created")
                 return server
@@ -247,7 +253,10 @@ class Web:
                 async def boot():
                     print("Creating YOLO...")
                     yolo = YOLOServer()
-                    await yolo.boot.remote.aio()
+                    await asyncio.wait_for(
+                        yolo.boot.remote.aio(),
+                        timeout=container_call_timeout,
+                    )
                     self.yolo = yolo
                     print("YOLO created")
                     return yolo
@@ -382,6 +391,7 @@ class Web:
         def create_initial_game_state():
             return {
                 "status": "initializing",
+                "paused": False,
                 "scores": [0, 0],
                 "winner": "",
                 "error": "",
@@ -395,6 +405,7 @@ class Web:
 
                 self.env = None
                 self.game_running = False
+                self.paused = False
                 self.game_settings = {
                     "player1": {
                         "character": "Ken",
@@ -461,6 +472,11 @@ class Web:
                         if received_settings:
                             self.game_settings.update(received_settings)
                         self.game_running = True
+                        self.paused = False
+                elif message_type == "pause_game":
+                    await self.pause_game()
+                elif message_type == "resume_game":
+                    await self.resume_game()
                 elif message_type == "player_action":
                     await self.handle_player_action(data["data"])
                 elif message_type == "gamepad_status":
@@ -469,6 +485,8 @@ class Web:
                     )
 
             async def handle_player_action(self, action_data):
+                if self.paused:
+                    return
                 if self.observation is None:
                     return
 
@@ -527,8 +545,8 @@ class Web:
                 if self.env:
                     try:
                         self.env.close()
-                    except Exception:
-                        print("Warning: could not close environment")
+                    except Exception as exc:
+                        print(f"Warning: could not close environment: {exc!r}")
                     finally:
                         self.env = None
 
@@ -536,6 +554,7 @@ class Web:
                 await self.cleanup_environment()
 
                 self.game_running = False
+                self.paused = False
                 self.game_state = create_initial_game_state()
                 self.observation = None
                 self.info = None
@@ -547,6 +566,34 @@ class Web:
                 self.actions = {"agent_0": 0, "agent_1": 0}
                 self.in_transition = False
                 self.transition_start_time = None
+
+            async def pause_game(self):
+                if not self.game_running:
+                    return
+                self.paused = True
+                self.player1_next_buttons = []
+                self.player2_next_buttons = []
+                self.player1_current_action = 0
+                self.actions = {"agent_0": 0, "agent_1": 0}
+                self.game_state["status"] = "paused"
+                self.game_state["paused"] = True
+                await self.send_game_state()
+
+            async def resume_game(self):
+                if not self.game_running:
+                    return
+                self.paused = False
+                self.game_state["status"] = "running"
+                self.game_state["paused"] = False
+                await self.send_game_state()
+
+            async def fail_game(self, message: str):
+                self.game_running = False
+                self.paused = False
+                self.game_state["status"] = "error"
+                self.game_state["error"] = message
+                self.game_state["paused"] = False
+                await self.send_game_state()
 
             async def cleanup(self):
                 await self.cleanup_environment()
@@ -794,14 +841,25 @@ class Web:
                     await session.send_game_state()
                 except Exception as e:
                     print(f"Error creating model servers: {traceback.format_exc()}")
-                    session.game_state["status"] = "error"
-                    session.game_state["error"] = str(e)
-                    await session.send_game_state()
+                    await fail_current_game(format_runtime_error(e))
                     session.stop_event.set()
 
             async def prepare_for_next_game():
                 video_track.reset()
                 await session.prepare_for_next_game()
+
+            async def fail_current_game(message: str):
+                await session.fail_game(message)
+                await prepare_for_next_game()
+                await session.send_game_state()
+
+            def format_runtime_error(exc: BaseException) -> str:
+                if isinstance(exc, asyncio.TimeoutError):
+                    return "A Modal model or YOLO container timed out."
+                message = str(exc)
+                if message:
+                    return message
+                return type(exc).__name__
 
             async def get_participant_move(
                 participant: str,
@@ -828,13 +886,16 @@ class Web:
                 )
 
                 server = await self.create_participant_server(participant)
-                return await server.chat.remote.aio(
-                    messages,
-                    controlled_settings["character"],
-                    controlled_settings["superArt"],
-                    controlled_obs["super_count"][0],
-                    controlled_obs["side"],
-                    available_moves,
+                return await asyncio.wait_for(
+                    server.chat.remote.aio(
+                        messages,
+                        controlled_settings["character"],
+                        controlled_settings["superArt"],
+                        controlled_obs["super_count"][0],
+                        controlled_obs["side"],
+                        available_moves,
+                    ),
+                    timeout=container_call_timeout,
                 )
 
             async def run_robot_background():
@@ -845,6 +906,7 @@ class Web:
                         if (
                             not session.game_running
                             or session.observation is None
+                            or session.paused
                             or session.in_transition
                         ):
                             continue
@@ -883,12 +945,15 @@ class Web:
                             (
                                 boxes,
                                 class_ids,
-                            ) = await yolo.detect_characters.remote.aio(
-                                [
-                                    CHARACTER_TO_ID[p1_character],
-                                    CHARACTER_TO_ID[p2_character],
-                                ],
-                                frame,
+                            ) = await asyncio.wait_for(
+                                yolo.detect_characters.remote.aio(
+                                    [
+                                        CHARACTER_TO_ID[p1_character],
+                                        CHARACTER_TO_ID[p2_character],
+                                    ],
+                                    frame,
+                                ),
+                                timeout=container_call_timeout,
                             )
                         else:
                             boxes, class_ids = [], []
@@ -1001,8 +1066,9 @@ class Web:
 
                 except WebSocketDisconnect:
                     session.stop_event.set()
-                except Exception:
+                except Exception as exc:
                     print(f"Error in robot background: {traceback.format_exc()}")
+                    await fail_current_game(format_runtime_error(exc))
                     session.stop_event.set()
 
             async def run_game_loop():
@@ -1042,15 +1108,11 @@ class Web:
                         try:
                             session.env = await asyncio.wait_for(
                                 asyncio.to_thread(create_environment, env_config),
-                                timeout=30,
+                                timeout=env_create_timeout,
                             )
                         except Exception as e:
                             print(f"Error creating local environment: {e}")
-                            session.game_state["status"] = "error"
-                            session.game_state["error"] = str(e)
-                            await session.send_game_state()
-                            await prepare_for_next_game()
-                            await session.send_game_state()
+                            await fail_current_game(format_runtime_error(e))
                             continue
 
                         session.game_state["status"] = "warming"
@@ -1061,11 +1123,7 @@ class Web:
                             )
                         except Exception as e:
                             print(f"Model/YOLO prefetch failed: {e}")
-                            session.game_state["status"] = "error"
-                            session.game_state["error"] = str(e)
-                            await session.send_game_state()
-                            await prepare_for_next_game()
-                            await session.send_game_state()
+                            await fail_current_game(format_runtime_error(e))
                             continue
 
                         try:
@@ -1075,18 +1133,16 @@ class Web:
                             ) = await asyncio.to_thread(session.env.reset)
                         except Exception as e:
                             print(f"Error during env.reset: {e}")
-                            session.game_state["status"] = "error"
-                            session.game_state["error"] = str(e)
-                            await session.send_game_state()
-                            await prepare_for_next_game()
-                            await session.send_game_state()
+                            await fail_current_game(format_runtime_error(e))
                             continue
 
                         initial_frame = session.observation.get("frame")
                         if initial_frame is not None:
                             video_track.set_frame(np.ascontiguousarray(initial_frame))
 
+                        session.paused = False
                         session.game_state["status"] = "running"
+                        session.game_state["paused"] = False
                         await session.send_game_state()
 
                         # SF3 runs faster than our target output rate.
@@ -1097,6 +1153,13 @@ class Web:
                         # game loop
 
                         while session.game_running and not session.stop_event.is_set():
+                            if session.paused:
+                                next_frame_time = (
+                                    asyncio.get_event_loop().time() + frame_interval
+                                )
+                                await asyncio.sleep(0.05)
+                                continue
+
                             current_time = asyncio.get_event_loop().time()
                             sleep_time = next_frame_time - current_time
                             if sleep_time > 0:
@@ -1139,11 +1202,7 @@ class Web:
                                     )
                                 except Exception as e:
                                     print(f"Error during env.step: {e}")
-                                    session.game_state["status"] = "error"
-                                    session.game_state["error"] = str(e)
-                                    await session.send_game_state()
-                                    await prepare_for_next_game()
-                                    await session.send_game_state()
+                                    await fail_current_game(format_runtime_error(e))
                                     continue
 
                                 if session.info.get("game_done", False):
