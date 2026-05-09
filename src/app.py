@@ -303,11 +303,13 @@ class Web:
 
         # helper fns
 
+        stun_ice_servers = [{"urls": "stun:stun.l.google.com:19302"}]
+
         def build_ice_servers() -> list[dict]:
             username = os.environ.get("TURN_USERNAME")
             credential = os.environ.get("TURN_CREDENTIAL")
             if not username or not credential:
-                return [{"urls": "stun:stun.l.google.com:19302"}]
+                return stun_ice_servers
 
             creds = {"username": username, "credential": credential}
             return [
@@ -326,7 +328,7 @@ class Web:
 
         def build_rtc_configuration() -> RTCConfiguration:
             ice_servers = []
-            for server in build_ice_servers():
+            for server in stun_ice_servers:
                 ice_servers.append(
                     RTCIceServer(
                         urls=server["urls"],
