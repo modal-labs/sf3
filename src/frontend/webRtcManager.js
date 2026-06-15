@@ -1,4 +1,5 @@
 import { byId } from "./utils.js";
+import { gameplayWebSocketUrl } from "./runtimeConfig.js";
 
 const iceServerTimeoutMs = 3000;
 const fallbackIceServers = [{ urls: "stun:stun.l.google.com:19302" }];
@@ -121,8 +122,7 @@ export const WebRtcManager = {
   },
 
   async openSignalingSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/${this.peerId}`;
+    const wsUrl = `${gameplayWebSocketUrl()}/${this.peerId}`;
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onmessage = (event) => {
