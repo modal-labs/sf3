@@ -1,3 +1,5 @@
+import os
+from fractions import Fraction
 from pathlib import Path
 
 import modal
@@ -46,10 +48,11 @@ image = (
         }
     )
     .uv_pip_install(
+        "aiortc",
+        "av",
         "fastapi[standard]==0.116.1",
         "MAMEToolkit==1.1.0",
         "numpy==2.3.1",
-        "opencv-python-headless==4.11.0.86",
         "websockets==15.0.1",
     )
     # engine
@@ -123,15 +126,98 @@ class Web:
         import json
         import traceback
 
-        import cv2
         import numpy as np
+        from aiortc import (
+            RTCConfiguration,
+            RTCIceServer,
+            RTCPeerConnection,
+            RTCSessionDescription,
+            VideoStreamTrack,
+        )
+        from aiortc.sdp import candidate_from_sdp
+        from av import VideoFrame
         from fastapi import FastAPI, WebSocket, WebSocketDisconnect
         from fastapi.responses import FileResponse
         from fastapi.staticfiles import StaticFiles
+        from starlette.websockets import WebSocketState
 
         web_app = FastAPI()
 
         # helper fns
+
+        def build_ice_servers() -> list[dict]:
+            username = os.environ.get("TURN_USERNAME")
+            credential = os.environ.get("TURN_CREDENTIAL")
+            if not username or not credential:
+                return [{"urls": "stun:stun.l.google.com:19302"}]
+
+            creds = {"username": username, "credential": credential}
+            return [
+                {"urls": "stun:stun.relay.metered.ca:80"},
+                {"urls": "turn:standard.relay.metered.ca:80"} | creds,
+                {"urls": "turn:standard.relay.metered.ca:80?transport=tcp"} | creds,
+                {"urls": "turn:standard.relay.metered.ca:443"} | creds,
+                {"urls": "turns:standard.relay.metered.ca:443?transport=tcp"} | creds,
+            ]
+
+        def build_turn_servers() -> dict:
+            return {
+                "type": "turn_servers",
+                "ice_servers": build_ice_servers(),
+            }
+
+        def build_rtc_configuration() -> RTCConfiguration:
+            ice_servers = []
+            for server in build_ice_servers():
+                ice_servers.append(
+                    RTCIceServer(
+                        urls=server["urls"],
+                        username=server.get("username"),
+                        credential=server.get("credential"),
+                    )
+                )
+            return RTCConfiguration(iceServers=ice_servers)
+
+        class GameVideoTrack(VideoStreamTrack):
+            def __init__(self, target_fps: float = 60.0):
+                super().__init__()
+                self.target_fps = target_fps
+                self.latest_frame = None
+                self._start_time = None
+                self._timestamp = 0
+                self._timeline_needs_realign = False
+
+            def set_frame(self, frame):
+                self.latest_frame = frame
+
+            def reset(self):
+                if self.latest_frame is not None:
+                    self.latest_frame = np.zeros_like(self.latest_frame)
+                self._timeline_needs_realign = True
+                self._start_time = None
+
+            async def recv(self) -> VideoFrame:
+                while self.latest_frame is None:
+                    await asyncio.sleep(1 / self.target_fps)
+
+                loop = asyncio.get_event_loop()
+                timestamp_step = int((1 / self.target_fps) * 90000)
+                if self._start_time is None or self._timeline_needs_realign:
+                    if self._timestamp:
+                        self._timestamp += timestamp_step
+                    self._start_time = loop.time() - (self._timestamp / 90000)
+                    self._timeline_needs_realign = False
+                else:
+                    self._timestamp += timestamp_step
+                    deadline = self._start_time + (self._timestamp / 90000)
+                    delay = deadline - loop.time()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+
+                output = VideoFrame.from_ndarray(self.latest_frame, format="rgb24")
+                output.pts = self._timestamp
+                output.time_base = Fraction(1, 90000)
+                return output
 
         class NumpyJSONEncoder(json.JSONEncoder):
             def default(self, obj):
@@ -155,9 +241,7 @@ class Web:
         # manages game state and communication
 
         class GameSession:
-            def __init__(self, websocket: WebSocket):
-                self.websocket = websocket
-
+            def __init__(self):
                 # game state
 
                 self.env = None
@@ -218,6 +302,22 @@ class Web:
                     {"type": "game_state", "data": make_json_safe(self.game_state)}
                 )
 
+            async def handle_inbound_message(self, data):
+                message_type = data.get("type", "unknown")
+
+                if message_type == "start_game":
+                    if not self.game_running:
+                        received_settings = data.get("data", {})
+                        if received_settings:
+                            self.game_settings.update(received_settings)
+                        self.game_running = True
+                elif message_type == "player_action":
+                    await self.handle_player_action(data["data"])
+                elif message_type == "gamepad_status":
+                    self.game_settings["gamepadConnected"] = data.get("data", {}).get(
+                        "connected", False
+                    )
+
             async def handle_player_action(self, action_data):
                 if self.observation is None:
                     return
@@ -273,7 +373,6 @@ class Web:
                         self.player1_next_buttons.append(action)
 
             async def cleanup_environment(self):
-                print("Cleaning up environment...")
                 if self.env:
                     try:
                         self.env.close()
@@ -299,55 +398,189 @@ class Web:
                 self.transition_start_time = None
 
             async def cleanup(self):
-                print("Cleaning up resources...")
                 await self.cleanup_environment()
 
         # routes
 
-        @web_app.websocket("/ws")
-        async def websocket_endpoint(websocket: WebSocket):
+        @web_app.websocket("/ws/{peer_id}")
+        async def websocket_endpoint(websocket: WebSocket, peer_id: str):
             await websocket.accept()
-            print("Client connected")
 
-            session = GameSession(websocket)
+            session = GameSession()
+            video_track = GameVideoTrack()
+            control_channel = None
+            control_channel_ready = asyncio.Event()
+            pc = RTCPeerConnection(configuration=build_rtc_configuration())
 
-            async def process_inbound_messages():
+            @pc.on("connectionstatechange")
+            async def on_connectionstatechange():
+                state = pc.connectionState
+                if state in {"closed", "failed", "disconnected"}:
+                    session.stop_event.set()
+
+            @pc.on("icecandidate")
+            async def on_icecandidate(candidate):
+                try:
+                    if candidate is None:
+                        return
+                    if websocket.client_state == WebSocketState.DISCONNECTED:
+                        return
+                    await websocket.send_json(
+                        {
+                            "type": "ice_candidate",
+                            "candidate": {
+                                "candidate_sdp": candidate.to_sdp(),
+                                "sdpMid": candidate.sdpMid,
+                                "sdpMLineIndex": candidate.sdpMLineIndex,
+                            },
+                        }
+                    )
+                except Exception:
+                    print(f"Error sending ICE candidate: {traceback.format_exc()}")
+
+            @pc.on("datachannel")
+            def on_datachannel(channel):
+                nonlocal control_channel
+
+                if channel.label != "game_control":
+                    return
+                control_channel = channel
+
+                @channel.on("open")
+                def on_channel_open():
+                    control_channel_ready.set()
+
+                if channel.readyState == "open":
+                    control_channel_ready.set()
+
+                @channel.on("close")
+                def on_channel_close():
+                    control_channel_ready.clear()
+                    session.stop_event.set()
+
+                @channel.on("message")
+                def on_channel_message(message):
+                    async def process_message():
+                        try:
+                            if isinstance(message, bytes):
+                                payload = json.loads(message.decode("utf-8"))
+                            else:
+                                payload = json.loads(message)
+                            await session.handle_inbound_message(payload)
+                        except Exception:
+                            print(
+                                f"Error processing datachannel msg: {traceback.format_exc()}"
+                            )
+
+                    asyncio.create_task(process_message())
+
+            async def process_signaling_messages():
                 try:
                     while not session.stop_event.is_set():
-                        data = await websocket.receive_json()
+                        if websocket.client_state == WebSocketState.DISCONNECTED:
+                            break
+                        receive_task = asyncio.create_task(websocket.receive_json())
+                        stop_task = asyncio.create_task(session.stop_event.wait())
+                        done, pending = await asyncio.wait(
+                            {receive_task, stop_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for task in pending:
+                            task.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        if stop_task in done:
+                            break
+                        data = receive_task.result()
                         message_type = data.get("type", "unknown")
 
-                        if message_type == "start_game":
-                            print(f"Received start_game message: {data}")
-                            if not session.game_running:
-                                received_settings = data.get("data", {})
-                                if received_settings:
-                                    session.game_settings.update(received_settings)
-                                session.game_running = True
-                        elif message_type == "player_action":
-                            await session.handle_player_action(data["data"])
-                        elif message_type == "gamepad_status":
-                            session.game_settings["gamepadConnected"] = data.get(
-                                "data", {}
-                            ).get("connected", False)
+                        if message_type == "offer":
+                            offer_sdp = data.get("sdp", "")
+                            if "m=video" in offer_sdp and not any(
+                                sender.track is video_track
+                                for sender in pc.getSenders()
+                            ):
+                                pc.addTrack(video_track)
 
+                            await pc.setRemoteDescription(
+                                RTCSessionDescription(
+                                    sdp=data["sdp"],
+                                    type=data["type"],
+                                )
+                            )
+                            answer = await pc.createAnswer()
+                            await pc.setLocalDescription(answer)
+                            await websocket.send_json(
+                                {
+                                    "type": "answer",
+                                    "sdp": pc.localDescription.sdp,
+                                    "peer_id": "server",
+                                }
+                            )
+                            continue
+
+                        if message_type == "ice_candidate":
+                            candidate = data.get("candidate")
+                            if candidate and candidate.get("candidate_sdp"):
+                                ice_candidate = candidate_from_sdp(
+                                    candidate["candidate_sdp"]
+                                )
+                                ice_candidate.sdpMid = candidate.get("sdpMid")
+                                ice_candidate.sdpMLineIndex = candidate.get(
+                                    "sdpMLineIndex"
+                                )
+                                await pc.addIceCandidate(ice_candidate)
+                            continue
+
+                        if message_type == "get_turn_servers":
+                            await websocket.send_json(build_turn_servers())
+                            continue
                 except WebSocketDisconnect:
-                    print("WebSocket disconnected in message processor")
                     session.stop_event.set()
                 except Exception:
-                    print(f"Error in message processor: {traceback.format_exc()}")
+                    print(f"Error in signaling processor: {traceback.format_exc()}")
                     session.stop_event.set()
 
             async def process_outbound_messages():
                 try:
                     while not session.stop_event.is_set():
-                        message = await session.outbound_message_queue.get()
-                        print(f"Sending game state: {message}")
-                        await websocket.send_json(message)
+                        get_message_task = asyncio.create_task(
+                            session.outbound_message_queue.get()
+                        )
+                        stop_task = asyncio.create_task(session.stop_event.wait())
+                        done, pending = await asyncio.wait(
+                            {get_message_task, stop_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for task in pending:
+                            task.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        if stop_task in done:
+                            break
+                        message = get_message_task.result()
+                        while not session.stop_event.is_set():
+                            if control_channel and control_channel.readyState == "open":
+                                control_channel.send(json.dumps(message))
+                                break
 
-                except WebSocketDisconnect:
-                    print("WebSocket disconnected in outgoing processor")
-                    session.stop_event.set()
+                            channel_ready_task = asyncio.create_task(
+                                control_channel_ready.wait()
+                            )
+                            stop_task = asyncio.create_task(session.stop_event.wait())
+                            done, pending = await asyncio.wait(
+                                {channel_ready_task, stop_task},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            for task in pending:
+                                task.cancel()
+                            if pending:
+                                await asyncio.gather(
+                                    *pending,
+                                    return_exceptions=True,
+                                )
+                            if stop_task in done:
+                                break
                 except Exception:
                     print(f"Error in outgoing processor: {traceback.format_exc()}")
                     session.stop_event.set()
@@ -377,6 +610,10 @@ class Web:
                     await session.send_game_state()
                     session.stop_event.set()
 
+            async def prepare_for_next_game():
+                video_track.reset()
+                await session.prepare_for_next_game()
+
             async def run_robot_background():
                 try:
                     while not session.stop_event.is_set():
@@ -395,8 +632,6 @@ class Web:
                         ):  # in case env was just reset
                             continue
 
-                        # store values to avoid race condition
-                        # TODO: remove since condition above should be enough
                         timer = session.observation["timer"][0]
                         frame = session.observation["frame"]
 
@@ -524,7 +759,6 @@ class Web:
                         session.prev_player2_state = player2
 
                 except WebSocketDisconnect:
-                    print("WebSocket disconnected in robot background")
                     session.stop_event.set()
                 except Exception:
                     print(f"Error in robot background: {traceback.format_exc()}")
@@ -537,7 +771,6 @@ class Web:
                             await asyncio.sleep(0.001)
                             continue
 
-                        print("Creating local environment...")
                         p1_settings = session.game_settings["player1"]
                         p2_settings = session.game_settings["player2"]
 
@@ -572,13 +805,9 @@ class Web:
                             session.game_state["status"] = "error"
                             session.game_state["error"] = str(e)
                             await session.send_game_state()
-                            await session.prepare_for_next_game()
+                            await prepare_for_next_game()
                             await session.send_game_state()
                             continue
-                        print("Local environment created successfully!")
-
-                        session.game_state["status"] = "running"
-                        await session.send_game_state()
 
                         try:
                             (
@@ -590,9 +819,16 @@ class Web:
                             session.game_state["status"] = "error"
                             session.game_state["error"] = str(e)
                             await session.send_game_state()
-                            await session.prepare_for_next_game()
+                            await prepare_for_next_game()
                             await session.send_game_state()
                             continue
+
+                        initial_frame = session.observation.get("frame")
+                        if initial_frame is not None:
+                            video_track.set_frame(np.ascontiguousarray(initial_frame))
+
+                        session.game_state["status"] = "running"
+                        await session.send_game_state()
 
                         # SF3 runs faster than our target output rate.
                         target_fps = 60.0
@@ -647,7 +883,7 @@ class Web:
                                     session.game_state["status"] = "error"
                                     session.game_state["error"] = str(e)
                                     await session.send_game_state()
-                                    await session.prepare_for_next_game()
+                                    await prepare_for_next_game()
                                     await session.send_game_state()
                                     continue
 
@@ -655,9 +891,6 @@ class Web:
                                     if terminated or truncated:
                                         p1_wins = session.observation["P1"]["wins"][0]
                                         p2_wins = session.observation["P2"]["wins"][0]
-                                        print(
-                                            f"Game finished - P1: {p1_wins}, P2: {p2_wins}"
-                                        )
 
                                         if session.game_settings["humanVsLlm"]:
                                             if p1_wins > p2_wins:
@@ -682,7 +915,7 @@ class Web:
                                         session.game_state["winner"] = winner
                                         await session.send_game_state()
 
-                                        await session.prepare_for_next_game()
+                                        await prepare_for_next_game()
                                         await session.send_game_state()
                                         continue
                                 elif session.info.get("round_done", False):
@@ -700,23 +933,14 @@ class Web:
                             if not session.in_transition:
                                 frame = session.observation.get("frame")
                                 if frame is not None:
-                                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                                    _, buffer = cv2.imencode(
-                                        ".jpg",
-                                        frame,
-                                        [cv2.IMWRITE_JPEG_QUALITY, 85],
-                                    )
-                                    await websocket.send_bytes(buffer.tobytes())
+                                    video_track.set_frame(np.ascontiguousarray(frame))
 
-                except WebSocketDisconnect:
-                    print("WebSocket disconnected in game loop")
-                    session.stop_event.set()
                 except Exception:
                     print(f"Error in game loop: {traceback.format_exc()}")
                     session.stop_event.set()
 
             tasks = [
-                asyncio.create_task(process_inbound_messages()),
+                asyncio.create_task(process_signaling_messages()),
                 asyncio.create_task(process_outbound_messages()),
                 asyncio.create_task(keepalive()),
                 asyncio.create_task(prefetch_servers()),
@@ -727,7 +951,6 @@ class Web:
             try:
                 await asyncio.gather(*tasks)
             except WebSocketDisconnect:
-                print("Client disconnected")
                 session.stop_event.set()
                 session.game_running = False
                 for task in tasks:
@@ -749,6 +972,7 @@ class Web:
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
             finally:
+                await pc.close()
                 await session.cleanup()
 
         @web_app.get("/")

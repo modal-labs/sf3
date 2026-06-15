@@ -44,8 +44,14 @@ export const AudioManager = {
     Object.values(this.sounds).forEach((asset) => {
       promises.push(
         new Promise((resolve) => {
-          asset.addEventListener("canplaythrough", resolve, { once: true });
-          asset.addEventListener("error", resolve, { once: true });
+          const resolveOnce = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+          const timeout = setTimeout(resolveOnce, 5000);
+          asset.addEventListener("loadeddata", resolveOnce, { once: true });
+          asset.addEventListener("canplaythrough", resolveOnce, { once: true });
+          asset.addEventListener("error", resolveOnce, { once: true });
         })
       );
     });

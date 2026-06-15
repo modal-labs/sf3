@@ -1,13 +1,22 @@
 import { byId, setText } from "./utils.js";
 import { GameState } from "./gameState.js";
 import { ScreenManager } from "./screenManager.js";
-import { WebSocketManager } from "./webSocketManager.js";
+import { WebRtcManager } from "./webRtcManager.js";
 import { AudioManager } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { SOUND_KEYS } from "./constants.js";
 import { setCanvasSize } from "./app.js";
 
 const createGameController = () => {
+  const remoteVideo = document.createElement("video");
+  remoteVideo.autoplay = true;
+  remoteVideo.muted = true;
+  remoteVideo.playsInline = true;
+  let renderFrameHandle = null;
+  let videoFrameHandle = null;
+  let lastPresentedFrames = 0;
+  let nextFreshPresentedFrame = 1;
+
   const startGame = () => {
     const state = GameState.get();
 
@@ -45,12 +54,13 @@ const createGameController = () => {
       resetGameState();
       ScreenManager.showScreen(ScreenManager.screens.LOADING);
       setText("loading-status", "Starting game...");
-      WebSocketManager.send("start_game", gameConfig);
+      WebRtcManager.send("start_game", gameConfig);
     }, 10);
   };
 
   const resetGameState = () => {
     GameState.resetGameState();
+    nextFreshPresentedFrame = lastPresentedFrames + 1;
 
     const status = byId("canvas-loading-status");
     if (status) status.textContent = "Loading game...";
@@ -66,13 +76,32 @@ const createGameController = () => {
     }
   };
 
-  const handleWebSocketMessage = async (event) => {
-    if (event.data instanceof Blob) {
-      handleFrameData(event.data);
+  const cancelVideoFrameObserver = () => {
+    if (
+      videoFrameHandle !== null &&
+      typeof remoteVideo.cancelVideoFrameCallback === "function"
+    ) {
+      remoteVideo.cancelVideoFrameCallback(videoFrameHandle);
+      videoFrameHandle = null;
+    }
+  };
+
+  const scheduleVideoFrameObserver = () => {
+    if (typeof remoteVideo.requestVideoFrameCallback !== "function") {
       return;
     }
 
-    const message = JSON.parse(event.data);
+    videoFrameHandle = remoteVideo.requestVideoFrameCallback((_, metadata) => {
+      lastPresentedFrames = metadata.presentedFrames;
+      if (metadata.presentedFrames >= nextFreshPresentedFrame) {
+        handleFrameData();
+      }
+      scheduleVideoFrameObserver();
+    });
+  };
+
+  const handleTransportMessage = (raw) => {
+    const message = JSON.parse(raw);
     if (message.type === "game_state") {
       handleGameState(message.data);
     } else if (message.type === "transition") {
@@ -80,8 +109,19 @@ const createGameController = () => {
     }
   };
 
-  const handleFrameData = (blob) => {
+  const handleFrameData = () => {
     const state = GameState.get();
+    if (
+      typeof remoteVideo.requestVideoFrameCallback === "function" &&
+      lastPresentedFrames < nextFreshPresentedFrame
+    ) {
+      return;
+    }
+
+    if (!state.loaded) {
+      return;
+    }
+
     const overlay = byId("canvas-loading-overlay");
 
     if (!state.firstFrameReceived) {
@@ -94,28 +134,41 @@ const createGameController = () => {
     if (state.inTransition) {
       ScreenManager.checkTransitionReady();
     }
-
-    renderFrame(blob);
   };
 
-  const renderFrame = (blob) => {
+  const renderVideoFrame = () => {
     const canvas = byId("game-canvas");
     if (!canvas) return;
 
     const ctx = canvas.getContext("2d");
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-
-    img.onload = () => {
+    if (!ctx) return;
+    if (remoteVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-    };
-    img.src = url;
+      ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
+      if (typeof remoteVideo.requestVideoFrameCallback !== "function") {
+        handleFrameData();
+      }
+    }
+    renderFrameHandle = requestAnimationFrame(renderVideoFrame);
+  };
+
+  const restartVideoRendering = () => {
+    if (renderFrameHandle !== null) {
+      cancelAnimationFrame(renderFrameHandle);
+      renderFrameHandle = null;
+    }
+    cancelVideoFrameObserver();
+    remoteVideo.play().catch(() => { });
+    scheduleVideoFrameObserver();
+    renderFrameHandle = requestAnimationFrame(renderVideoFrame);
+  };
+
+  const handleRemoteStream = (stream) => {
+    remoteVideo.srcObject = stream;
+    remoteVideo.onloadedmetadata = restartVideoRendering;
   };
 
   const handleGameState = (data) => {
-    console.log("Game state:", data.status);
     const startButton = byId("start-game-btn");
 
     if (!GameState.get().serverReady) {
@@ -125,7 +178,6 @@ const createGameController = () => {
         startButton.textContent = "START GAME";
         startButton.classList.remove("opacity-50");
       }
-      console.log("Server ready");
     }
 
     switch (data.status) {
@@ -137,6 +189,7 @@ const createGameController = () => {
         GameState.update({ loaded: true });
         setCanvasSize();
         ScreenManager.showScreen(ScreenManager.screens.GAME);
+        restartVideoRendering();
         GamepadManager.setUIActive(!GameState.get().humanVsLlm);
 
         const character = GameState.get().player1.character;
@@ -178,8 +231,9 @@ const createGameController = () => {
   };
 
   const init = () => {
-    WebSocketManager.init({
-      onMessage: handleWebSocketMessage,
+    WebRtcManager.init({
+      onMessage: handleTransportMessage,
+      onRemoteStream: handleRemoteStream,
     });
 
     const startBtn = byId("start-game-btn");
@@ -208,7 +262,12 @@ const createGameController = () => {
   };
 
   const cleanup = () => {
-    WebSocketManager.close();
+    if (renderFrameHandle !== null) {
+      cancelAnimationFrame(renderFrameHandle);
+      renderFrameHandle = null;
+    }
+    cancelVideoFrameObserver();
+    WebRtcManager.close();
   };
 
   return {
