@@ -49,7 +49,7 @@ cache_path = Path("/root/yolo")
 
 # inference
 
-model_name = cache_path / "runs" / "2025-07-18" / "weights" / "best.onnx"
+model_name = cache_path / "runs" / "20251010_235516" / "weights" / "best.onnx"
 max_inputs = 512
 gpu = "b200"
 
