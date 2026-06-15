@@ -1,3 +1,5 @@
+import asyncio
+import base64
 import os
 from fractions import Fraction
 from pathlib import Path
@@ -5,8 +7,18 @@ from pathlib import Path
 import modal
 
 from .env import EnvironmentConfig, create_environment
-from .llm import LLMServer
-from .llm import app as llm_app
+from .serve.gemma4_31b import Gemma4Server
+from .serve.gemma4_31b import app as gemma4_app
+from .serve.ministral3_14b import Ministral3Server
+from .serve.ministral3_14b import app as ministral3_app
+from .serve.nemotron3nano_30ba3b_fp8 import Nemotron3NanoServer
+from .serve.nemotron3nano_30ba3b_fp8 import app as nemotron3nano_app
+from .serve.qwen35_35ba3b_fp8 import Qwen35Server
+from .serve.qwen35_35ba3b_fp8 import app as qwen35_app
+from .serve.qwen36_35ba3b_fp8 import Qwen36Server
+from .serve.qwen36_35ba3b_fp8 import app as qwen36_app
+from .serve.yolo import YOLOServer
+from .serve.yolo import app as yolo_app
 from .utils import (
     CHARACTER_TO_ID,
     COMBOS,
@@ -17,13 +29,54 @@ from .utils import (
     minutes,
     region,
 )
-from .yolo import YOLOServer
-from .yolo import app as yolo_app
 
 # Modal setup
 
 # web app
-app = modal.App(name="sf3").include(llm_app).include(yolo_app)
+app = (
+    modal.App(name="sf3")
+    .include(gemma4_app)
+    .include(ministral3_app)
+    .include(nemotron3nano_app)
+    .include(qwen35_app)
+    .include(qwen36_app)
+    .include(yolo_app)
+)
+
+PARTICIPANT_SPECS = {
+    "human": {"label": "YOU", "server_cls": None, "uses_frames": False},
+    "qwen35_35ba3b_fp8": {
+        "label": "QWEN3.5-35B",
+        "server_cls": Qwen35Server,
+        "uses_frames": True,
+    },
+    "qwen36_35ba3b_fp8": {
+        "label": "QWEN3.6-35B",
+        "server_cls": Qwen36Server,
+        "uses_frames": True,
+    },
+    "gemma4_31b": {
+        "label": "GEMMA4-31B",
+        "server_cls": Gemma4Server,
+        "uses_frames": True,
+    },
+    "ministral3_14b": {
+        "label": "MINISTRAL3-14B",
+        "server_cls": Ministral3Server,
+        "uses_frames": True,
+    },
+    "nemotron3nano_30ba3b_fp8": {
+        "label": "NEMOTRON3-NANO-30B",
+        "server_cls": Nemotron3NanoServer,
+        "uses_frames": False,
+    },
+}
+
+PARTICIPANT_LABELS = {
+    participant: spec["label"] for participant, spec in PARTICIPANT_SPECS.items()
+}
+DEFAULT_PLAYER1_PARTICIPANT = "human"
+DEFAULT_PLAYER2_PARTICIPANT = "qwen35_35ba3b_fp8"
 
 local_assets_dir = Path(__file__).parent.parent / "assets"
 local_engine_dir = local_assets_dir / "engine"
@@ -39,6 +92,7 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install(
         "ffmpeg",
+        "libturbojpeg-dev",
     )
     .env(
         {
@@ -53,6 +107,7 @@ image = (
         "fastapi[standard]==0.116.1",
         "MAMEToolkit==1.1.0",
         "numpy==2.3.1",
+        "PyTurboJPEG==1.8.2",
         "websockets==15.0.1",
     )
     # engine
@@ -89,10 +144,51 @@ image = (
 max_inputs = 1
 
 
+def normalize_participant(participant: str, *, allow_human: bool) -> str:
+    if participant not in PARTICIPANT_LABELS:
+        return (
+            DEFAULT_PLAYER1_PARTICIPANT if allow_human else DEFAULT_PLAYER2_PARTICIPANT
+        )
+    if participant == "human" and not allow_human:
+        return DEFAULT_PLAYER2_PARTICIPANT
+    return participant
+
+
+def normalize_game_participants(game_settings: dict) -> tuple[str, str]:
+    player1_participant = normalize_participant(
+        game_settings.get("player1Participant", DEFAULT_PLAYER1_PARTICIPANT),
+        allow_human=True,
+    )
+    player2_participant = normalize_participant(
+        game_settings.get("player2Participant", DEFAULT_PLAYER2_PARTICIPANT),
+        allow_human=False,
+    )
+    game_settings["player1Participant"] = player1_participant
+    game_settings["player2Participant"] = player2_participant
+    return player1_participant, player2_participant
+
+
+def participant_uses_frames(participant: str) -> bool:
+    return bool(PARTICIPANT_SPECS.get(participant, {}).get("uses_frames", False))
+
+
+def participants_require_yolo(
+    player1_participant: str, player2_participant: str
+) -> bool:
+    return (
+        player1_participant != "human"
+        and not participant_uses_frames(player1_participant)
+    ) or (
+        player2_participant != "human"
+        and not participant_uses_frames(player2_participant)
+    )
+
+
 @app.cls(
     image=image,
     region=region,
     scaledown_window=60 * minutes,
+    secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent)],
     timeout=24 * 60 * minutes,
 )
 @modal.concurrent(max_inputs=max_inputs)
@@ -101,28 +197,64 @@ class Web:
     def enter(
         self,
     ):
-        # assign llm and yolo to self so multiple container inputs can share them
-        # initially set to None so they don't block page load, amortized by user interacting with settings
-        self.llm = None
+        self.participant_servers = {}
+        self.participant_boot_tasks = {}
         self.yolo = None
+        self.yolo_boot_task = None
 
-    async def create_llm(self):  # async to avoid blocking event loop
-        print("Creating LLM...")
-        if self.llm is None:
-            self.llm = LLMServer()
-            await self.llm.boot.remote.aio()
-        print("LLM created")
+    async def create_participant_server(self, participant: str):
+        server_cls = PARTICIPANT_SPECS.get(participant, {}).get("server_cls")
+        if server_cls is None:
+            raise ValueError(f"Unsupported participant: {participant}")
+
+        server = self.participant_servers.get(participant)
+        if server is not None:
+            return server
+
+        boot_task = self.participant_boot_tasks.get(participant)
+        if boot_task is None:
+
+            async def boot():
+                label = PARTICIPANT_LABELS.get(participant, participant)
+                print(f"Creating {label}...")
+                server = server_cls()
+                await server.boot.remote.aio()
+                self.participant_servers[participant] = server
+                print(f"{label} created")
+                return server
+
+            boot_task = asyncio.create_task(boot())
+            self.participant_boot_tasks[participant] = boot_task
+
+        try:
+            return await boot_task
+        finally:
+            if boot_task.done():
+                self.participant_boot_tasks.pop(participant, None)
 
     async def create_yolo(self):
-        print("Creating YOLO...")
         if self.yolo is None:
-            self.yolo = YOLOServer()
-            await self.yolo.boot.remote.aio()
-        print("YOLO created")
+            if self.yolo_boot_task is None:
+
+                async def boot():
+                    print("Creating YOLO...")
+                    yolo = YOLOServer()
+                    await yolo.boot.remote.aio()
+                    self.yolo = yolo
+                    print("YOLO created")
+                    return yolo
+
+                self.yolo_boot_task = asyncio.create_task(boot())
+
+            try:
+                return await self.yolo_boot_task
+            finally:
+                if self.yolo_boot_task and self.yolo_boot_task.done():
+                    self.yolo_boot_task = None
+        return self.yolo
 
     @modal.asgi_app(custom_domains=["sf3.modal.dev"])
     def app(self):
-        import asyncio
         import json
         import traceback
 
@@ -136,12 +268,22 @@ class Web:
         )
         from aiortc.sdp import candidate_from_sdp
         from av import VideoFrame
-        from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+        from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
         from fastapi.responses import FileResponse
         from fastapi.staticfiles import StaticFiles
         from starlette.websockets import WebSocketState
+        from turbojpeg import TJPF_RGB, TJSAMP_420, TurboJPEG
 
         web_app = FastAPI()
+
+        @web_app.middleware("http")
+        async def add_static_cache_headers(request: Request, call_next):
+            response = await call_next(request)
+            if request.url.path == "/" or request.url.path.endswith(
+                (".html", ".js", ".css")
+            ):
+                response.headers["Cache-Control"] = "no-store"
+            return response
 
         # helper fns
 
@@ -257,7 +399,8 @@ class Web:
                         "outfit": 1,
                         "superArt": 1,
                     },
-                    "humanVsLlm": True,
+                    "player1Participant": DEFAULT_PLAYER1_PARTICIPANT,
+                    "player2Participant": DEFAULT_PLAYER2_PARTICIPANT,
                     "gamepadConnected": False,
                     "difficulty": "expert",
                 }
@@ -322,7 +465,8 @@ class Web:
                 if self.observation is None:
                     return
 
-                if not self.game_settings["humanVsLlm"]:
+                player1_participant, _ = normalize_game_participants(self.game_settings)
+                if player1_participant != "human":
                     return
 
                 action = action_data["action"]
@@ -407,10 +551,46 @@ class Web:
             await websocket.accept()
 
             session = GameSession()
+            jpeg_enc = TurboJPEG()
+            frame_cache = {"frame": None, "jpeg_bytes": None, "data_url": None}
             video_track = GameVideoTrack()
             control_channel = None
             control_channel_ready = asyncio.Event()
             pc = RTCPeerConnection(configuration=build_rtc_configuration())
+
+            def get_frame_jpeg_bytes(frame: np.ndarray) -> bytes:
+                if frame_cache["frame"] is not frame:
+                    frame_cache["frame"] = frame
+                    frame_cache["jpeg_bytes"] = jpeg_enc.encode(
+                        np.ascontiguousarray(frame),
+                        quality=85,
+                        pixel_format=TJPF_RGB,
+                        jpeg_subsample=TJSAMP_420,
+                    )
+                    frame_cache["data_url"] = None
+                return frame_cache["jpeg_bytes"]
+
+            def get_frame_data_url(frame: np.ndarray) -> str:
+                if frame_cache["data_url"] is None:
+                    frame_cache["data_url"] = (
+                        "data:image/jpeg;base64,"
+                        + base64.b64encode(get_frame_jpeg_bytes(frame)).decode("utf-8")
+                    )
+                return frame_cache["data_url"]
+
+            async def prefetch_required_servers(
+                player1_participant: str, player2_participant: str
+            ) -> None:
+                tasks = []
+                if participants_require_yolo(player1_participant, player2_participant):
+                    tasks.append(self.create_yolo())
+                tasks.extend(
+                    self.create_participant_server(participant)
+                    for participant in {player1_participant, player2_participant}
+                    if participant != "human"
+                )
+                if tasks:
+                    await asyncio.gather(*tasks)
 
             @pc.on("connectionstatechange")
             async def on_connectionstatechange():
@@ -598,9 +778,11 @@ class Web:
 
             async def prefetch_servers():
                 try:
-                    await asyncio.gather(
-                        self.create_llm(),
-                        self.create_yolo(),
+                    player1_participant, player2_participant = (
+                        normalize_game_participants(session.game_settings)
+                    )
+                    await prefetch_required_servers(
+                        player1_participant, player2_participant
                     )
                     await session.send_game_state()
                 except Exception as e:
@@ -613,6 +795,40 @@ class Web:
             async def prepare_for_next_game():
                 video_track.reset()
                 await session.prepare_for_next_game()
+
+            async def get_participant_move(
+                participant: str,
+                controlled_player: PlayerState,
+                controlled_settings: dict,
+                controlled_obs: dict,
+                opponent_player: PlayerState,
+                prev_controlled_player: PlayerState | None,
+                prev_opponent_player: PlayerState | None,
+                recent_moves,
+                game_info: GameInfo,
+                frames: list[str] | None,
+            ) -> tuple[list[int], str]:
+                messages, available_moves = create_messages(
+                    game_info,
+                    opponent_player,
+                    controlled_player,
+                    session.prev_game_info,
+                    prev_opponent_player,
+                    prev_controlled_player,
+                    recent_moves,
+                    session.game_settings["difficulty"],
+                    frames=frames,
+                )
+
+                server = await self.create_participant_server(participant)
+                return await server.chat.remote.aio(
+                    messages,
+                    controlled_settings["character"],
+                    controlled_settings["superArt"],
+                    controlled_obs["super_count"][0],
+                    controlled_obs["side"],
+                    available_moves,
+                )
 
             async def run_robot_background():
                 try:
@@ -644,16 +860,31 @@ class Web:
                         p1_character = p1_settings["character"]
                         p2_character = p2_settings["character"]
 
-                        (
-                            boxes,
-                            class_ids,
-                        ) = await self.yolo.detect_characters.remote.aio(
-                            [
-                                CHARACTER_TO_ID[p1_character],
-                                CHARACTER_TO_ID[p2_character],
-                            ],
-                            frame,
+                        player1_participant, player2_participant = (
+                            normalize_game_participants(session.game_settings)
                         )
+                        if (
+                            player1_participant == "human"
+                            and player2_participant == "human"
+                        ):
+                            continue
+
+                        if participants_require_yolo(
+                            player1_participant, player2_participant
+                        ):
+                            yolo = await self.create_yolo()
+                            (
+                                boxes,
+                                class_ids,
+                            ) = await yolo.detect_characters.remote.aio(
+                                [
+                                    CHARACTER_TO_ID[p1_character],
+                                    CHARACTER_TO_ID[p2_character],
+                                ],
+                                frame,
+                            )
+                        else:
+                            boxes, class_ids = [], []
 
                         game_info = GameInfo(
                             timer=timer,
@@ -685,25 +916,30 @@ class Web:
                             super_bar=obs_p2["super_bar"][0],
                         )
 
-                        if not session.game_settings["humanVsLlm"]:
-                            messages_p1, available_moves_p1 = create_messages(
-                                game_info,
-                                player2,
-                                player1,
-                                session.prev_game_info,
-                                session.prev_player2_state,
-                                session.prev_player1_state,
-                                session.player1_recent_move_names,
-                                session.game_settings["difficulty"],
-                            )
+                        need_llm_frame = participant_uses_frames(
+                            player1_participant
+                        ) or participant_uses_frames(player2_participant)
+                        frame_data_url = (
+                            get_frame_data_url(frame) if need_llm_frame else None
+                        )
 
-                            moves_p1, move_name_p1 = await self.llm.chat.remote.aio(
-                                messages_p1,
-                                p1_character,
-                                p1_settings["superArt"],
-                                obs_p1["super_count"][0],
-                                obs_p1["side"],
-                                available_moves_p1,
+                        if player1_participant != "human":
+                            p1_frames = (
+                                [frame_data_url]
+                                if participant_uses_frames(player1_participant)
+                                else None
+                            )
+                            moves_p1, move_name_p1 = await get_participant_move(
+                                player1_participant,
+                                player1,
+                                p1_settings,
+                                obs_p1,
+                                player2,
+                                session.prev_player1_state,
+                                session.prev_player2_state,
+                                session.player1_recent_move_names,
+                                game_info,
+                                p1_frames,
                             )
                             session.player1_next_buttons.extend(moves_p1)
                             session.player1_recent_move_names.append(move_name_p1)
@@ -720,24 +956,22 @@ class Web:
                             ):
                                 session.player1_recent_move_names.pop(0)
 
-                        messages, available_moves = create_messages(
-                            game_info,
-                            player1,
-                            player2,
-                            session.prev_game_info,
-                            session.prev_player1_state,
-                            session.prev_player2_state,
-                            session.player2_recent_move_names,
-                            session.game_settings["difficulty"],
+                        p2_frames = (
+                            [frame_data_url]
+                            if participant_uses_frames(player2_participant)
+                            else None
                         )
-
-                        moves, move_name = await self.llm.chat.remote.aio(
-                            messages,
-                            p2_character,
-                            p2_settings["superArt"],
-                            obs_p2["super_count"][0],
-                            obs_p2["side"],
-                            available_moves,
+                        moves, move_name = await get_participant_move(
+                            player2_participant,
+                            player2,
+                            p2_settings,
+                            obs_p2,
+                            player1,
+                            session.prev_player2_state,
+                            session.prev_player1_state,
+                            session.player2_recent_move_names,
+                            game_info,
+                            p2_frames,
                         )
                         session.player2_next_buttons.extend(moves)
                         session.player2_recent_move_names.append(move_name)
@@ -773,8 +1007,11 @@ class Web:
 
                         p1_settings = session.game_settings["player1"]
                         p2_settings = session.game_settings["player2"]
+                        player1_participant, player2_participant = (
+                            normalize_game_participants(session.game_settings)
+                        )
 
-                        disable_keyboard = not session.game_settings["humanVsLlm"]
+                        disable_keyboard = player1_participant != "human"
                         disable_joystick = not session.game_settings["gamepadConnected"]
 
                         env_config = EnvironmentConfig(
@@ -802,6 +1039,21 @@ class Web:
                             )
                         except Exception as e:
                             print(f"Error creating local environment: {e}")
+                            session.game_state["status"] = "error"
+                            session.game_state["error"] = str(e)
+                            await session.send_game_state()
+                            await prepare_for_next_game()
+                            await session.send_game_state()
+                            continue
+
+                        session.game_state["status"] = "warming"
+                        await session.send_game_state()
+                        try:
+                            await prefetch_required_servers(
+                                player1_participant, player2_participant
+                            )
+                        except Exception as e:
+                            print(f"Model/YOLO prefetch failed: {e}")
                             session.game_state["status"] = "error"
                             session.game_state["error"] = str(e)
                             await session.send_game_state()
@@ -860,7 +1112,7 @@ class Web:
                                     if session.player1_next_buttons
                                     else (
                                         session.player1_current_action
-                                        if session.game_settings["humanVsLlm"]
+                                        if player1_participant == "human"
                                         else 0
                                     ),
                                     "agent_1": session.player2_next_buttons.pop(0)
@@ -892,24 +1144,30 @@ class Web:
                                         p1_wins = session.observation["P1"]["wins"][0]
                                         p2_wins = session.observation["P2"]["wins"][0]
 
-                                        if session.game_settings["humanVsLlm"]:
-                                            if p1_wins > p2_wins:
-                                                session.game_state["scores"][0] += 1
-                                                winner = "YOU"
-                                            elif p2_wins > p1_wins:
-                                                session.game_state["scores"][1] += 1
-                                                winner = "LLM"
-                                            else:
-                                                winner = "Draw"
+                                        if p1_wins > p2_wins:
+                                            session.game_state["scores"][0] += 1
+                                            winner = PARTICIPANT_LABELS.get(
+                                                player1_participant,
+                                                player1_participant,
+                                            )
+                                            if (
+                                                player1_participant
+                                                == player2_participant
+                                            ):
+                                                winner = f"{winner} (P1)"
+                                        elif p2_wins > p1_wins:
+                                            session.game_state["scores"][1] += 1
+                                            winner = PARTICIPANT_LABELS.get(
+                                                player2_participant,
+                                                player2_participant,
+                                            )
+                                            if (
+                                                player2_participant
+                                                == player1_participant
+                                            ):
+                                                winner = f"{winner} (P2)"
                                         else:
-                                            if p1_wins > p2_wins:
-                                                session.game_state["scores"][0] += 1
-                                                winner = "LLM 1"
-                                            elif p2_wins > p1_wins:
-                                                session.game_state["scores"][1] += 1
-                                                winner = "LLM 2"
-                                            else:
-                                                winner = "Draw"
+                                            winner = "Draw"
 
                                         session.game_state["status"] = "finished"
                                         session.game_state["winner"] = winner
@@ -974,6 +1232,10 @@ class Web:
             finally:
                 await pc.close()
                 await session.cleanup()
+
+        @web_app.websocket("/ws")
+        async def websocket_missing_peer_id(websocket: WebSocket):
+            await websocket.close(code=1008)
 
         @web_app.get("/")
         async def index():
