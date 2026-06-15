@@ -462,6 +462,14 @@
                   <span class="game-ctrl text-xs" id="hphk-display">L + O</span>
                   <h3 class="text-sf-gold text-xs lg:text-sm">HP + HK</h3>
                 </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl text-xs" id="pause-display"
+                    >Esc / Click</span
+                  >
+                  <h3 class="text-sf-gold text-xs lg:text-sm">
+                    Pause / Resume
+                  </h3>
+                </div>
               </div>
             </div>
           </div>
@@ -721,14 +729,31 @@
       </div>
       <div id="game-screen" class="hidden size-full">
         <div class="flex items-center justify-center">
-          <!-- 2x (768x448) on desktop, 1.5x (576x336) on mobile -->
-          <canvas
-            id="game-canvas"
-            width="768"
-            height="448"
-            class="bg-sf-darker border-2 border-sf-green rounded-lg hidden max-w-full h-auto"
-            style="image-rendering: pixelated; image-rendering: crisp-edges"
-          ></canvas>
+          <div id="game-frame" class="relative inline-flex max-w-full">
+            <!-- 2x (768x448) on desktop, 1.5x (576x336) on mobile -->
+            <canvas
+              id="game-canvas"
+              width="768"
+              height="448"
+              class="bg-sf-darker border-2 border-sf-green rounded-lg hidden max-w-full h-auto"
+              style="image-rendering: pixelated; image-rendering: crisp-edges"
+            ></canvas>
+            <button
+              id="pause-overlay"
+              class="hidden absolute inset-0 z-10 flex-col items-center justify-center gap-4 bg-sf-darker/70 rounded-lg"
+              type="button"
+              aria-label="Resume game"
+            >
+              <h2 class="text-2xl lg:text-4xl text-sf-gold text-glow">
+                PAUSED
+              </h2>
+              <p class="text-sf-beige-dark">
+                <span id="pause-overlay-controls"
+                  >Press Esc or click to continue</span
+                >
+              </p>
+            </button>
+          </div>
           <div
             id="canvas-loading-overlay"
             class="flex flex-col items-center justify-center gap-8"

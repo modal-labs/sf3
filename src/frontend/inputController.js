@@ -60,6 +60,7 @@ const createInputController = () => {
   let movesByLength = {};
   let combos = {};
   let specialMoves = {};
+  let pauseButtonPressed = false;
 
   const comboTimeout = 750;
 
@@ -107,6 +108,18 @@ const createInputController = () => {
   };
 
   const processGamepadInput = (currentState) => {
+    const gameState = GameState.get();
+    const pausePressed = currentState.buttons[9] || false;
+    if (pausePressed && !pauseButtonPressed) {
+      pauseButtonPressed = true;
+      document.dispatchEvent(new Event("gamePauseToggle"));
+      return;
+    }
+    if (!pausePressed) {
+      pauseButtonPressed = false;
+    }
+    if (gameState.paused) return;
+
     const threshold = GamepadManager.gameplayThreshold;
 
     const stickX = currentState.axes.left.x;
@@ -203,7 +216,8 @@ const createInputController = () => {
 
   const handleKeyboardEvent = (e, isDown) => {
     const state = GameState.get();
-    if (!state.loaded || !isHumanParticipant(state.player1Participant)) return;
+    if (!state.loaded || state.paused || !isHumanParticipant(state.player1Participant)) return;
+    if (e.code === "Escape") return;
 
     GameState.setKeyState(e.code, isDown);
     const action = getActionFromKeys();
