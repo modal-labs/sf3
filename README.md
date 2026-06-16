@@ -19,13 +19,14 @@ cd sf3
 
 # Install dependencies
 uv sync
+source .venv/bin/activate
 
 # Set up Modal
 modal setup
 ```
 
-Sign up for a [Diambra account](https://www.diambra.ai/),
-then store the token in a file named `assets/engine/credentials`.
+~~Sign up for a [Diambra account](https://www.diambra.ai/),
+then store the token in a file named `assets/engine/credentials`.~~
 
 Obtain a copy of SF3,
 then store it as `assets/engine/sfiii3n.zip`.
