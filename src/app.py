@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+from contextlib import asynccontextmanager
 from fractions import Fraction
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -1320,40 +1321,60 @@ class Web:
         return web_app
 
 
-def get_configured_gameplay_base_url() -> str:
+_deployed_gameplay_base_url: str | None = None
+
+
+def _warm_deployed_gameplay_base_url() -> str:
+    global _deployed_gameplay_base_url
+    if _deployed_gameplay_base_url is not None:
+        return _deployed_gameplay_base_url
+
+    try:
+        url = modal.Function.from_name("sf3", "Web.app").get_web_url()
+        if url:
+            _deployed_gameplay_base_url = url.rstrip("/")
+            return _deployed_gameplay_base_url
+    except Exception as exc:
+        print(f"resolve_gameplay_base_url: deployed lookup: {exc}")
+
+    return ""
+
+
+def resolve_gameplay_base_url(
+    static_base_url: str,
+    *,
+    deployed_base_url: str | None = None,
+) -> str:
     override = os.environ.get("SF3_GAMEPLAY_BASE_URL", "").strip()
     if override:
         return override.rstrip("/")
-    return ""
 
-
-def derive_gameplay_base_url(static_base_url: str) -> str:
     static_base_url = static_base_url.rstrip("/")
-    if not static_base_url:
-        return ""
+    if static_base_url:
+        try:
+            parsed = urlsplit(static_base_url)
+            netloc = parsed.netloc
+            for static_suffix, gameplay_suffix in (
+                ("--sf3-dev.modal.run", "--gameplay-dev.modal.run"),
+                ("--sf3.modal.run", "--gameplay.modal.run"),
+            ):
+                if netloc.endswith(static_suffix):
+                    return urlunsplit(
+                        (
+                            parsed.scheme,
+                            netloc[: -len(static_suffix)] + gameplay_suffix,
+                            "",
+                            "",
+                            "",
+                        )
+                    )
+        except ValueError:
+            pass
 
-    try:
-        parsed = urlsplit(static_base_url)
-    except ValueError:
-        return ""
+    if deployed_base_url is not None:
+        return deployed_base_url
 
-    netloc = parsed.netloc
-    for static_suffix, gameplay_suffix in (
-        ("--sf3-dev.modal.run", "--gameplay-dev.modal.run"),
-        ("--sf3.modal.run", "--gameplay.modal.run"),
-    ):
-        if netloc.endswith(static_suffix):
-            return urlunsplit(
-                (
-                    parsed.scheme,
-                    netloc[: -len(static_suffix)] + gameplay_suffix,
-                    "",
-                    "",
-                    "",
-                )
-            )
-
-    return ""
+    return _deployed_gameplay_base_url or ""
 
 
 @app.function(
@@ -1365,7 +1386,7 @@ def derive_gameplay_base_url(static_base_url: str) -> str:
     timeout=endpoint_timeout,
 )
 @modal.concurrent(max_inputs=96, target_inputs=64)
-@modal.asgi_app(label="sf3")
+@modal.asgi_app(label="sf3", custom_domains=["sf3.modal.dev"])
 def sf3():
     import json
 
@@ -1373,7 +1394,14 @@ def sf3():
     from fastapi.responses import FileResponse, Response
     from fastapi.staticfiles import StaticFiles
 
-    web_app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(web_app: FastAPI):
+        web_app.state.deployed_gameplay_base_url = await asyncio.to_thread(
+            _warm_deployed_gameplay_base_url
+        )
+        yield
+
+    web_app = FastAPI(lifespan=lifespan)
     no_cache_header = "no-store, max-age=0"
     no_cache_suffixes = (".html", ".js", ".css")
     frontend_root = Path(remote_frontend_dir).resolve()
@@ -1394,9 +1422,9 @@ def sf3():
 
     @web_app.get("/runtime-config.js")
     async def runtime_config(request: Request):
-        gameplay_base_url = (
-            get_configured_gameplay_base_url()
-            or derive_gameplay_base_url(str(request.base_url))
+        gameplay_base_url = resolve_gameplay_base_url(
+            str(request.base_url),
+            deployed_base_url=request.app.state.deployed_gameplay_base_url or "",
         )
         body = (
             "window.__SF3_CONFIG__ = "
