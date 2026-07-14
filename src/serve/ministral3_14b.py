@@ -7,11 +7,11 @@ from pathlib import Path
 
 import modal
 
-from ..inference_postprocess import resolve_move_with_fallback
 from ..utils import (
     create_random_messages,
     get_available_instructions_for_character,
     minutes,
+    resolve_move_with_fallback,
 )
 
 app = modal.App("sf3-llm")
