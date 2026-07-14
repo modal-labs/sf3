@@ -1,12 +1,6 @@
 # sf3
 
-An interactive Street Fighter 3 demo against RL-trained LLMs.
-
-## Update - 5/6/2026
-
-- Since the diambra engine no longer works, this project now runs the game through a local MAME runtime. Therefore, disregard any mention of sandboxing or Diambra below.
-- To improve reliability, video is streamed over WebRTC instead of websockets.
-- Multimodal models that consume the current frame directly are now supported.
+An interactive Street Fighter 3 web game against RL-trained LLMs.
 
 ## Quickstart
 
@@ -25,9 +19,6 @@ source .venv/bin/activate
 modal setup
 ```
 
-~~Sign up for a [Diambra account](https://www.diambra.ai/),
-then store the token in a file named `assets/engine/credentials`.~~
-
 Obtain a copy of SF3,
 then store it as `assets/engine/sfiii3n.zip`.
 
@@ -42,21 +33,13 @@ TURN_CREDENTIAL=
 ### Commands
 
 ```bash
-# Prepare the data, train the YOLO model, and export to ONNX
-modal run -m src.training.yolo --prepare --train --export
-
-# Test the (trained) YOLO model's latency
-modal run -m src.serve.yolo
-
 # Alternate between rounds of collecting self-play data and training the LLM
 modal run -m src.training.qwen35_35ba3b
 
 # Test model latency
-modal run -m src.serve.qwen35_35ba3b_fp8
 modal run -m src.serve.qwen36_35ba3b_fp8
 modal run -m src.serve.gemma4_31b
 modal run -m src.serve.ministral3_14b
-modal run -m src.serve.nemotron3nano_30ba3b_fp8
 
 # Serve the web app
 modal serve -m src.app
@@ -65,7 +48,19 @@ modal serve -m src.app
 modal deploy -m src.app
 ```
 
-## For the interested
+## Changelog
+
+<details>
+<summary>Spring 2026</summary>
+
+- Since the diambra engine no longer works, this project now runs the game through a local MAME runtime.
+- To improve reliability, video is streamed over WebRTC instead of websockets.
+- Multimodal models that consume the current frame directly are now supported.
+
+</details>
+
+<details>
+<summary>Summer 2025</summary>
 
 ### Background
 
@@ -158,6 +153,8 @@ Below are some visualizations:
 ![ELO](./assets/readme/match_history_9-20250821_000252.png "ELO")
 
 https://github.com/user-attachments/assets/0d290da3-7e89-4db9-8bac-145e7048c109
+
+</details>
 
 ## Credit
 

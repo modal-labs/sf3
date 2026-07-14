@@ -100,7 +100,7 @@ def normalize_local_observation(raw: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-# Raw emulator ids used by MAME / sfiii-gym, not YOLO ids.
+# Raw emulator ids used by MAME / sfiii-gym.
 CHARACTER_NAME_TO_LOCAL_ID = {
     "Alex": 1,
     "Ryu": 2,

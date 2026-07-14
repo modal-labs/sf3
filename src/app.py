@@ -13,19 +13,12 @@ from .serve.gemma4_31b import Gemma4Server
 from .serve.gemma4_31b import app as gemma4_app
 from .serve.ministral3_14b import Ministral3Server
 from .serve.ministral3_14b import app as ministral3_app
-from .serve.nemotron3nano_30ba3b_fp8 import Nemotron3NanoServer
-from .serve.nemotron3nano_30ba3b_fp8 import app as nemotron3nano_app
-from .serve.qwen35_35ba3b_fp8 import Qwen35Server
-from .serve.qwen35_35ba3b_fp8 import app as qwen35_app
 from .serve.qwen36_35ba3b_fp8 import Qwen36Server
 from .serve.qwen36_35ba3b_fp8 import app as qwen36_app
-from .serve.yolo import YOLOServer
-from .serve.yolo import app as yolo_app
 from .utils import (
     CHARACTER_TO_ID,
     COMBOS,
     SPECIAL_MOVES,
-    GameInfo,
     PlayerState,
     create_messages,
     minutes,
@@ -39,38 +32,22 @@ app = (
     modal.App(name="sf3")
     .include(gemma4_app)
     .include(ministral3_app)
-    .include(nemotron3nano_app)
-    .include(qwen35_app)
     .include(qwen36_app)
-    .include(yolo_app)
 )
 
 PARTICIPANT_SPECS = {
-    "human": {"label": "YOU", "server_cls": None, "uses_frames": False},
-    "qwen35_35ba3b_fp8": {
-        "label": "QWEN3.5-35B",
-        "server_cls": Qwen35Server,
-        "uses_frames": True,
-    },
+    "human": {"label": "YOU", "server_cls": None},
     "qwen36_35ba3b_fp8": {
         "label": "QWEN3.6-35B",
         "server_cls": Qwen36Server,
-        "uses_frames": True,
     },
     "gemma4_31b": {
         "label": "GEMMA4-31B",
         "server_cls": Gemma4Server,
-        "uses_frames": True,
     },
     "ministral3_14b": {
         "label": "MINISTRAL3-14B",
         "server_cls": Ministral3Server,
-        "uses_frames": True,
-    },
-    "nemotron3nano_30ba3b_fp8": {
-        "label": "NEMOTRON3-NANO-30B",
-        "server_cls": Nemotron3NanoServer,
-        "uses_frames": False,
     },
 }
 
@@ -78,7 +55,7 @@ PARTICIPANT_LABELS = {
     participant: spec["label"] for participant, spec in PARTICIPANT_SPECS.items()
 }
 DEFAULT_PLAYER1_PARTICIPANT = "human"
-DEFAULT_PLAYER2_PARTICIPANT = "qwen35_35ba3b_fp8"
+DEFAULT_PLAYER2_PARTICIPANT = "qwen36_35ba3b_fp8"
 
 local_assets_dir = Path(__file__).parent.parent / "assets"
 local_engine_dir = local_assets_dir / "engine"
@@ -176,22 +153,6 @@ def normalize_game_participants(game_settings: dict) -> tuple[str, str]:
     return player1_participant, player2_participant
 
 
-def participant_uses_frames(participant: str) -> bool:
-    return bool(PARTICIPANT_SPECS.get(participant, {}).get("uses_frames", False))
-
-
-def participants_require_yolo(
-    player1_participant: str, player2_participant: str
-) -> bool:
-    return (
-        player1_participant != "human"
-        and not participant_uses_frames(player1_participant)
-    ) or (
-        player2_participant != "human"
-        and not participant_uses_frames(player2_participant)
-    )
-
-
 @app.cls(
     image=gameplay_image,
     region=region,
@@ -211,8 +172,6 @@ class Web:
     ):
         self.participant_servers = {}
         self.participant_boot_tasks = {}
-        self.yolo = None
-        self.yolo_boot_task = None
 
     async def create_participant_server(self, participant: str):
         server_cls = PARTICIPANT_SPECS.get(participant, {}).get("server_cls")
@@ -246,30 +205,6 @@ class Web:
         finally:
             if boot_task.done():
                 self.participant_boot_tasks.pop(participant, None)
-
-    async def create_yolo(self):
-        if self.yolo is None:
-            if self.yolo_boot_task is None:
-
-                async def boot():
-                    print("Creating YOLO...")
-                    yolo = YOLOServer()
-                    await asyncio.wait_for(
-                        yolo.boot.remote.aio(),
-                        timeout=container_call_timeout,
-                    )
-                    self.yolo = yolo
-                    print("YOLO created")
-                    return yolo
-
-                self.yolo_boot_task = asyncio.create_task(boot())
-
-            try:
-                return await self.yolo_boot_task
-            finally:
-                if self.yolo_boot_task and self.yolo_boot_task.done():
-                    self.yolo_boot_task = None
-        return self.yolo
 
     @modal.asgi_app(label="gameplay")
     def app(self):
@@ -450,7 +385,6 @@ class Web:
 
                 self.prev_player1_state = None
                 self.prev_player2_state = None
-                self.prev_game_info = None
 
                 self.player1_recent_move_names = []
                 self.player2_recent_move_names = []
@@ -638,14 +572,11 @@ class Web:
             async def prefetch_required_servers(
                 player1_participant: str, player2_participant: str
             ) -> None:
-                tasks = []
-                if participants_require_yolo(player1_participant, player2_participant):
-                    tasks.append(self.create_yolo())
-                tasks.extend(
+                tasks = [
                     self.create_participant_server(participant)
                     for participant in {player1_participant, player2_participant}
                     if participant != "human"
-                )
+                ]
                 if tasks:
                     await asyncio.gather(*tasks)
 
@@ -858,7 +789,7 @@ class Web:
 
             def format_runtime_error(exc: BaseException) -> str:
                 if isinstance(exc, asyncio.TimeoutError):
-                    return "A Modal model or YOLO container timed out."
+                    return "A Modal model container timed out."
                 message = str(exc)
                 if message:
                     return message
@@ -873,19 +804,16 @@ class Web:
                 prev_controlled_player: PlayerState | None,
                 prev_opponent_player: PlayerState | None,
                 recent_moves,
-                game_info: GameInfo,
-                frames: list[str] | None,
+                frames: list[str],
             ) -> tuple[list[int], str]:
                 messages, available_moves = create_messages(
-                    game_info,
                     opponent_player,
                     controlled_player,
-                    session.prev_game_info,
+                    frames,
                     prev_opponent_player,
                     prev_controlled_player,
                     recent_moves,
                     session.game_settings["difficulty"],
-                    frames=frames,
                 )
 
                 server = await self.create_participant_server(participant)
@@ -920,7 +848,6 @@ class Web:
                         ):  # in case env was just reset
                             continue
 
-                        timer = session.observation["timer"][0]
                         frame = session.observation["frame"]
 
                         obs_p1 = session.observation["P1"]
@@ -940,32 +867,6 @@ class Web:
                             and player2_participant == "human"
                         ):
                             continue
-
-                        if participants_require_yolo(
-                            player1_participant, player2_participant
-                        ):
-                            yolo = await self.create_yolo()
-                            (
-                                boxes,
-                                class_ids,
-                            ) = await asyncio.wait_for(
-                                yolo.detect_characters.remote.aio(
-                                    [
-                                        CHARACTER_TO_ID[p1_character],
-                                        CHARACTER_TO_ID[p2_character],
-                                    ],
-                                    frame,
-                                ),
-                                timeout=container_call_timeout,
-                            )
-                        else:
-                            boxes, class_ids = [], []
-
-                        game_info = GameInfo(
-                            timer=timer,
-                            boxes=boxes,
-                            class_ids=class_ids,
-                        )
 
                         player1 = PlayerState(
                             character=p1_character,
@@ -991,19 +892,10 @@ class Web:
                             super_bar=obs_p2["super_bar"][0],
                         )
 
-                        need_llm_frame = participant_uses_frames(
-                            player1_participant
-                        ) or participant_uses_frames(player2_participant)
-                        frame_data_url = (
-                            get_frame_data_url(frame) if need_llm_frame else None
-                        )
+                        frame_data_url = get_frame_data_url(frame)
+                        frames = [frame_data_url]
 
                         if player1_participant != "human":
-                            p1_frames = (
-                                [frame_data_url]
-                                if participant_uses_frames(player1_participant)
-                                else None
-                            )
                             moves_p1, move_name_p1 = await get_participant_move(
                                 player1_participant,
                                 player1,
@@ -1013,8 +905,7 @@ class Web:
                                 session.prev_player1_state,
                                 session.prev_player2_state,
                                 session.player1_recent_move_names,
-                                game_info,
-                                p1_frames,
+                                frames,
                             )
                             session.player1_next_buttons.extend(moves_p1)
                             session.player1_recent_move_names.append(move_name_p1)
@@ -1031,39 +922,33 @@ class Web:
                             ):
                                 session.player1_recent_move_names.pop(0)
 
-                        p2_frames = (
-                            [frame_data_url]
-                            if participant_uses_frames(player2_participant)
-                            else None
-                        )
-                        moves, move_name = await get_participant_move(
-                            player2_participant,
-                            player2,
-                            p2_settings,
-                            obs_p2,
-                            player1,
-                            session.prev_player2_state,
-                            session.prev_player1_state,
-                            session.player2_recent_move_names,
-                            game_info,
-                            p2_frames,
-                        )
-                        session.player2_next_buttons.extend(moves)
-                        session.player2_recent_move_names.append(move_name)
+                        if player2_participant != "human":
+                            moves, move_name = await get_participant_move(
+                                player2_participant,
+                                player2,
+                                p2_settings,
+                                obs_p2,
+                                player1,
+                                session.prev_player2_state,
+                                session.prev_player1_state,
+                                session.player2_recent_move_names,
+                                frames,
+                            )
+                            session.player2_next_buttons.extend(moves)
+                            session.player2_recent_move_names.append(move_name)
 
-                        if (
-                            len(session.player2_next_buttons)
-                            > session.next_buttons_limit
-                        ):
-                            session.player2_next_buttons.pop(0)
+                            if (
+                                len(session.player2_next_buttons)
+                                > session.next_buttons_limit
+                            ):
+                                session.player2_next_buttons.pop(0)
 
-                        if (
-                            len(session.player2_recent_move_names)
-                            > session.recent_move_limit
-                        ):
-                            session.player2_recent_move_names.pop(0)
+                            if (
+                                len(session.player2_recent_move_names)
+                                > session.recent_move_limit
+                            ):
+                                session.player2_recent_move_names.pop(0)
 
-                        session.prev_game_info = game_info
                         session.prev_player1_state = player1
                         session.prev_player2_state = player2
 
@@ -1125,7 +1010,7 @@ class Web:
                                 player1_participant, player2_participant
                             )
                         except Exception as e:
-                            print(f"Model/YOLO prefetch failed: {e}")
+                            print(f"Model prefetch failed: {e}")
                             await fail_current_game(format_runtime_error(e))
                             continue
 
