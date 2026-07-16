@@ -1259,13 +1259,12 @@ def resolve_gameplay_base_url(
 @app.function(
     image=static_image,
     region=CONTAINER_REGION,
-    routing_region=ROUTING_REGION,
     min_containers=1,
     timeout=24 * 60 * MINUTES,
 )
 @modal.concurrent(max_inputs=96, target_inputs=64)
 @modal.asgi_app(label="sf3", custom_domains=["sf3.modal.dev"])
-def sf3():
+def static_site():
     import json
 
     from fastapi import FastAPI, Request, WebSocket
