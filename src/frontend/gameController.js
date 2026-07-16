@@ -12,7 +12,15 @@ const createGameController = () => {
   const remoteVideo = document.createElement("video");
   remoteVideo.autoplay = true;
   remoteVideo.muted = true;
+  remoteVideo.defaultMuted = true;
   remoteVideo.playsInline = true;
+  remoteVideo.setAttribute("playsinline", "");
+  remoteVideo.setAttribute("webkit-playsinline", "");
+  remoteVideo.setAttribute("aria-hidden", "true");
+  // Chromium may pause or fail to decode MediaStream video that is not in the
+  // document / viewport, which leaves drawImage() painting a black canvas.
+  remoteVideo.style.cssText =
+    "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;margin:0;padding:0;";
   let renderFrameHandle = null;
   let videoFrameHandle = null;
   let lastPresentedFrames = 0;
@@ -162,6 +170,12 @@ const createGameController = () => {
     }
   };
 
+  const hasRenderableFrame = () =>
+    !remoteVideo.paused &&
+    remoteVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+    remoteVideo.videoWidth > 0 &&
+    remoteVideo.videoHeight > 0;
+
   const handleFrameData = () => {
     const state = GameState.get();
     if (
@@ -172,6 +186,10 @@ const createGameController = () => {
     }
 
     if (!state.loaded) {
+      return;
+    }
+
+    if (!hasRenderableFrame()) {
       return;
     }
 
@@ -195,7 +213,9 @@ const createGameController = () => {
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    if (remoteVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    if (!hasRenderableFrame()) {
+      ensureVideoPlaying();
+    } else {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
       if (typeof remoteVideo.requestVideoFrameCallback !== "function") {
@@ -205,13 +225,25 @@ const createGameController = () => {
     renderFrameHandle = requestAnimationFrame(renderVideoFrame);
   };
 
+  const ensureVideoPlaying = () => {
+    if (!remoteVideo.paused && remoteVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return;
+    }
+    const playResult = remoteVideo.play();
+    if (playResult && typeof playResult.catch === "function") {
+      playResult.catch((error) => {
+        console.warn("Remote video play() failed; will retry on next frame", error);
+      });
+    }
+  };
+
   const restartVideoRendering = () => {
     if (renderFrameHandle !== null) {
       cancelAnimationFrame(renderFrameHandle);
       renderFrameHandle = null;
     }
     cancelVideoFrameObserver();
-    remoteVideo.play().catch(() => { });
+    ensureVideoPlaying();
     scheduleVideoFrameObserver();
     renderFrameHandle = requestAnimationFrame(renderVideoFrame);
   };
@@ -219,6 +251,7 @@ const createGameController = () => {
   const handleRemoteStream = (stream) => {
     remoteVideo.srcObject = stream;
     remoteVideo.onloadedmetadata = restartVideoRendering;
+    ensureVideoPlaying();
   };
 
   const handleDisconnect = (message) => {
@@ -314,6 +347,10 @@ const createGameController = () => {
   };
 
   const init = () => {
+    if (!remoteVideo.isConnected) {
+      document.body.appendChild(remoteVideo);
+    }
+
     WebRtcManager.init({
       onMessage: handleTransportMessage,
       onRemoteStream: handleRemoteStream,
@@ -339,6 +376,7 @@ const createGameController = () => {
     const gameCanvas = byId("game-canvas");
     if (gameCanvas) {
       gameCanvas.addEventListener("click", () => {
+        ensureVideoPlaying();
         const state = GameState.get();
         if (!state.paused) {
           AudioManager.playSound(SOUND_KEYS.CLICK);

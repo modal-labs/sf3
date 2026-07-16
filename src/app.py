@@ -289,8 +289,8 @@ class Web:
                 self.latest_frame = frame
 
             def reset(self):
-                if self.latest_frame is not None:
-                    self.latest_frame = np.zeros_like(self.latest_frame)
+                # Hold the track open without encoding placeholder frames.
+                self.latest_frame = None
                 self._timeline_needs_realign = True
                 self._start_time = None
 
