@@ -10,17 +10,21 @@ from pathlib import Path
 
 import modal
 
-from ..utils import (
+from src.utils import (
+    MAX_CONTEXT_LEN,
+    MAX_TOKENS,
+    MINUTES,
+    ROUTING_REGION,
     create_random_messages,
     get_available_instructions_for_character,
-    minutes,
     resolve_move_with_fallback,
 )
 
 app = modal.App("sf3-llm")
 
 sglang_image = (
-    modal.Image.from_registry("lmsysorg/sglang:v0.5.9-cu129-amd64-runtime")
+    modal.Image
+    .from_registry("lmsysorg/sglang:v0.5.9-cu129-amd64-runtime")
     .entrypoint([])
     .uv_pip_install(
         "huggingface-hub==0.36.0",
@@ -28,13 +32,11 @@ sglang_image = (
         "qwen-vl-utils==0.0.14",
     )
     .run_commands("python -m pip install --no-deps nvidia-cudnn-cu12==9.16.0.29")
-    .env(
-        {
-            "HF_XET_HIGH_PERFORMANCE": "1",
-            "TORCHINDUCTOR_COMPILE_THREADS": "1",
-            "SGLANG_ENABLE_JIT_DEEPGEMM": "1",
-        }
-    )
+    .env({
+        "HF_XET_HIGH_PERFORMANCE": "1",
+        "TORCHINDUCTOR_COMPILE_THREADS": "1",
+        "SGLANG_ENABLE_JIT_DEEPGEMM": "1",
+    })
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
@@ -81,8 +83,8 @@ sglang_image = sglang_image.run_function(
     gpu=gpu,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
-    scaledown_window=60 * minutes,
-    timeout=60 * minutes,
+    scaledown_window=60 * MINUTES,
+    timeout=60 * MINUTES,
 )
 @modal.concurrent(max_inputs=max_inputs)
 class Qwen36Server:
@@ -99,7 +101,7 @@ class Qwen36Server:
         self.llm = sgl.Engine(
             model_path=str(load_path),
             revision=revision,
-            context_length=2048,
+            context_length=MAX_CONTEXT_LEN,
             chunked_prefill_size=8192,
             max_running_requests=max_num_seqs,
             cuda_graph_max_bs=max_inputs * 2,
@@ -120,7 +122,7 @@ class Qwen36Server:
             "min_p": 0.0,
             "presence_penalty": 1.5,
             "repetition_penalty": 1.0,
-            "max_new_tokens": 32,
+            "max_new_tokens": MAX_TOKENS,
         }
 
         messages, _, _, _, _, _ = create_random_messages()
@@ -195,8 +197,8 @@ class Qwen36Server:
         self.llm.shutdown()
 
 
-@app.local_entrypoint()
-async def local(n_samples: int = 100):
+@app.function(routing_region=ROUTING_REGION)
+async def test_qwen36(n_samples: int):
     llm = Qwen36Server()
     await llm.boot.remote.aio()
 
@@ -206,13 +208,12 @@ async def local(n_samples: int = 100):
             create_random_messages()
         )
         start_time = time.perf_counter()
-        _, moves = await llm.chat.remote.aio(
+        buttons, move = await llm.chat.remote.aio(
             messages, character, super_art, super_count, side, available_moves
         )
         elapsed = (time.perf_counter() - start_time) * 1000
-        n_moves = len(moves) if moves else 1
-        ms_per_move.append(elapsed / n_moves)
-        print(f"Sample {sample_idx}: {moves}")
+        ms_per_move.append(elapsed)
+        print(f"Sample {sample_idx}: {move}, {buttons}")
 
     percentiles = [50, 90, 95, 99]
     sorted_ms = sorted(ms_per_move)
@@ -226,3 +227,8 @@ async def local(n_samples: int = 100):
     for p in percentiles:
         print(f"  p{p}: {results[p]:.2f}ms")
     print("--------------------------------")
+
+
+@app.local_entrypoint()
+async def main(n_samples: int = 100):
+    await test_qwen36.remote.aio(n_samples)

@@ -3,16 +3,15 @@ import subprocess
 from dataclasses import dataclass
 from textwrap import dedent
 
-# constants
-
-# seed
-seed = 42
-random.seed(seed)
+SEED = 42
+random.seed(SEED)
 
 # modal
-region = "us-east-1"
-minutes = 60
-gb = 1024
+
+ROUTING_REGION = "us-east"
+CONTAINER_REGION = "us-east"
+MINUTES = 60
+GB = 1024
 
 
 def _exec_subprocess(cmd: list[str]) -> None:
@@ -22,12 +21,12 @@ def _exec_subprocess(cmd: list[str]) -> None:
         raise subprocess.CalledProcessError(return_code, cmd)
 
 
-# sf3
-X_SIZE = 384
-Y_SIZE = 224
+# game constants
+
 STUN_BAR_MAX = 72
 SUPER_BAR_MAX = 128
 HEALTH_MAX = 160
+TIMER_MAX = 100
 
 # characters
 
@@ -112,1587 +111,1273 @@ CLOSE_IN_MOVES = {
 
 COMBOS = {
     "Alex": {
-        "Power Bomb": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Spiral DDT": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Flash Chop": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Air Knee Smash": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Air Stampede": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Up"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Slash Elbow": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Power Bomb": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Spiral DDT": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Flash Chop": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Air Knee Smash": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Low Kick"],
+        ]),
+        "Air Stampede": create_move_dict([
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Up"],
+            MOVES["Low Kick"],
+        ]),
+        "Slash Elbow": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Chun-Li": {
-        "Kikoken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Hazanshu": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Spinning Bird Kick": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Up"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Hyakuretsu Kyaku": create_move_dict(
-            [
-                MOVES["Low Kick"],
-                MOVES["Low Kick"],
-                MOVES["Low Kick"],
-                MOVES["Low Kick"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Kikoken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Medium Punch"],
+        ]),
+        "Hazanshu": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Spinning Bird Kick": create_move_dict([
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Up"],
+            MOVES["Low Kick"],
+        ]),
+        "Hyakuretsu Kyaku": create_move_dict([
+            MOVES["Low Kick"],
+            MOVES["Low Kick"],
+            MOVES["Low Kick"],
+            MOVES["Low Kick"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Dudley": {
-        "Ducking": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Jet Upper": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Machine Gun Blow": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Cross Counter": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Short Swing Blow": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Ducking": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Low Kick"],
+        ]),
+        "Jet Upper": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Medium Punch"],
+        ]),
+        "Machine Gun Blow": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Medium Punch"],
+        ]),
+        "Cross Counter": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Short Swing Blow": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Elena": {
-        "Rhino Horn": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Medium Kick"],
-            ]
-        ),
-        "Mallet Smash": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Spin Scythe": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Scratch Wheel": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Medium Kick"],
-            ]
-        ),
-        "Lynx Tail": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Rhino Horn": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Medium Kick"],
+        ]),
+        "Mallet Smash": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Spin Scythe": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Scratch Wheel": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Medium Kick"],
+        ]),
+        "Lynx Tail": create_move_dict([
+            MOVES["Right"],
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Gouki": {
-        "Hadouken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Shakunetsu-Hadouken": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Go Shoryuken": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["High Punch"],
-            ]
-        ),
-        "Tatsumaki Zankuukyaku": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Ashura Senku": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Low Punch+Low Kick"],
-            ]
-        ),
-        "Hyakkishu": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Hadouken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Shakunetsu-Hadouken": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Go Shoryuken": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["High Punch"],
+        ]),
+        "Tatsumaki Zankuukyaku": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Ashura Senku": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Low Punch+Low Kick"],
+        ]),
+        "Hyakkishu": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Hugo": {
-        "Shootdown Backbreaker": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Ultra Throw": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Moonsault Press": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Right+Up"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Meat Squasher": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Right+Up"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Giant Palm Bomber": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Monster Lariat": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Shootdown Backbreaker": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Low Kick"],
+        ]),
+        "Ultra Throw": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Moonsault Press": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Right+Up"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "Meat Squasher": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Right+Up"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Giant Palm Bomber": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "Monster Lariat": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Ibuki": {
-        "Raida": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Kasumi Gake": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Tsuji Goe": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Kunai": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Kubi Ori": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Kazekiri": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Hien": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Tsumuji": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Raida": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Kasumi Gake": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Tsuji Goe": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Medium Punch"],
+        ]),
+        "Kunai": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Kubi Ori": create_move_dict([
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Kazekiri": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Low Kick"],
+        ]),
+        "Hien": create_move_dict([
+            MOVES["Right"],
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Low Kick"],
+        ]),
+        "Tsumuji": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Ken": {
-        "Hadouken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Shoryuken": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["High Punch"],
-            ]
-        ),
-        "Tatsumaki": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Hadouken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Shoryuken": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["High Punch"],
+        ]),
+        "Tatsumaki": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Makoto": {
-        "Karakusa": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Hayate": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Fukiage": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Oroshi": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "Karakusa": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Hayate": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Fukiage": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Medium Punch"],
+        ]),
+        "Oroshi": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Necro": {
-        "Snake Fang": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Denji Blast": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Flying Viper": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Rising Cobra": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Tornado Hook": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "Snake Fang": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Low Kick"],
+        ]),
+        "Denji Blast": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Medium Punch"],
+        ]),
+        "Flying Viper": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "Rising Cobra": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Tornado Hook": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Oro": {
-        "Niou Riki": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Nichirin Shou": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Oni Yanma": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Up"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Jinchuu Watari": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Niou Riki": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Nichirin Shou": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Oni Yanma": create_move_dict([
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Up"],
+            MOVES["Medium Punch"],
+        ]),
+        "Jinchuu Watari": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Q": {
-        "Capture & Deadly Blow": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Dashing Straight": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Dashing Head Attack": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["High Punch"],
-            ]
-        ),
-        "Dashing Leg Attack": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "High Speed Barrage": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "Capture & Deadly Blow": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Dashing Straight": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Dashing Head Attack": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["High Punch"],
+        ]),
+        "Dashing Leg Attack": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "High Speed Barrage": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Remy": {
-        "Light of Virtue": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Light of Virtue (low)": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Rising Rage Flash": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Up"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Cold Blue Kick": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Light of Virtue": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Light of Virtue (low)": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Rising Rage Flash": create_move_dict([
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Up"],
+            MOVES["Low Kick"],
+        ]),
+        "Cold Blue Kick": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Ryu": {
-        "Hadouken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Shoryuken": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["High Punch"],
-            ]
-        ),
-        "Tatsumaki Senpukyaku": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Air Tatsumaki Senpukyaku": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Joudan Sokutou Geri": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Hadouken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Shoryuken": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["High Punch"],
+        ]),
+        "Tatsumaki Senpukyaku": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Air Tatsumaki Senpukyaku": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Joudan Sokutou Geri": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Sean": {
-        "Zenten": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Sean Tackle": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Dragon Smash": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Tornado": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Ryuubi Kyaku": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Zenten": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "Sean Tackle": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Medium Punch"],
+        ]),
+        "Dragon Smash": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Medium Punch"],
+        ]),
+        "Tornado": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Ryuubi Kyaku": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Twelve": {
-        "Kokuu": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Left"],
-            ]
-        ),
-        "N.D.L.": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "A.X.E.": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "D.R.A.": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Kokuu": create_move_dict([
+            MOVES["Left"],
+            MOVES["Left"],
+        ]),
+        "N.D.L.": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "A.X.E.": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "D.R.A.": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Urien": {
-        "Metallic Sphere": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Chariot Tackle": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Violence Knee Drop": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Up"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Dangerous Headbutt": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Up"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "Metallic Sphere": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Chariot Tackle": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Violence Knee Drop": create_move_dict([
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Up"],
+            MOVES["Low Kick"],
+        ]),
+        "Dangerous Headbutt": create_move_dict([
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Up"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Yang": {
-        "Tourou Zan": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Senkyuutai": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Byakko Soushouda": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Fake Byakko Soushouda": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Punch+Low Kick"],
-            ]
-        ),
-        "Zenpou Tenshin": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Kaihou": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Tourou Zan": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Senkyuutai": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Byakko Soushouda": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "Fake Byakko Soushouda": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Punch+Low Kick"],
+        ]),
+        "Zenpou Tenshin": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Kaihou": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Yun": {
-        "Zenpou Tenshin": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Kobokushi": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Fake Kobokushi": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Punch+Low Kick"],
-            ]
-        ),
-        "Zesshou Hohou": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Tetsuzanko": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Nishoukyaku": create_move_dict(
-            [
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "Zenpou Tenshin": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "Kobokushi": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "Fake Kobokushi": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Punch+Low Kick"],
+        ]),
+        "Zesshou Hohou": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Tetsuzanko": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Medium Punch"],
+        ]),
+        "Nishoukyaku": create_move_dict([
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Low Kick"],
+        ]),
     },
 }
 
 SPECIAL_MOVES = {
     "Alex": {
-        "1 Hyper Bomb": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Right+Up"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Boomerang Raid": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Punch"],
-            ]
-        ),
-        "3 Stun Gun Headbutt": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Hyper Bomb": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Right+Up"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Boomerang Raid": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Punch"],
+        ]),
+        "3 Stun Gun Headbutt": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Chun-Li": {
-        "1 Kikou Shou": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Houyoku Sen": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Kick"],
-            ]
-        ),
-        "3 Tensei Ranka": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "1 Kikou Shou": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Houyoku Sen": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Kick"],
+        ]),
+        "3 Tensei Ranka": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Dudley": {
-        "1 Rocket Upper": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Rolling Thunder": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Corkscrew Blow": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["High Punch"],
-            ]
-        ),
+        "1 Rocket Upper": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Rolling Thunder": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Corkscrew Blow": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["High Punch"],
+        ]),
     },
     "Elena": {
-        "1 Spinning Beat": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "2 Brave Dance": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "3 Healing": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Spinning Beat": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "2 Brave Dance": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "3 Healing": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Gouki": {
-        "1 Messatsu Gou Hadou": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Messatsu Gou Shoryu": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Messatsu-Gourasen": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Down"],
-                MOVES["Right+Down"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "Max Shungokusatsu (2 bars)": create_move_dict(
-            [
-                MOVES["Low Punch"],
-                MOVES["Low Punch"],
-                MOVES["Right"],
-                MOVES["Low Kick"],
-                MOVES["High Punch"],
-            ]
-        ),
-        "Max Kongou Kokuretsuzan (2 bars)": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Down"],
-                MOVES["Low Punch+Low Kick"],
-            ]
-        ),
+        "1 Messatsu Gou Hadou": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Messatsu Gou Shoryu": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Messatsu-Gourasen": create_move_dict([
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Down"],
+            MOVES["Right+Down"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+        ]),
+        "Max Shungokusatsu (2 bars)": create_move_dict([
+            MOVES["Low Punch"],
+            MOVES["Low Punch"],
+            MOVES["Right"],
+            MOVES["Low Kick"],
+            MOVES["High Punch"],
+        ]),
+        "Max Kongou Kokuretsuzan (2 bars)": create_move_dict([
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Down"],
+            MOVES["Low Punch+Low Kick"],
+        ]),
     },
     "Hugo": {
-        "1 Gigas Breaker": create_move_dict(
-            [
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Right+Up"],
-                MOVES["Right"],
-                MOVES["Right+Down"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Left+Up"],
-                MOVES["Up"],
-                MOVES["Right+Up"],
-                MOVES["Right"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Megaton Press": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "3 Hammer Frenzy": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Gigas Breaker": create_move_dict([
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Right+Up"],
+            MOVES["Right"],
+            MOVES["Right+Down"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Left+Up"],
+            MOVES["Up"],
+            MOVES["Right+Up"],
+            MOVES["Right"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Megaton Press": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "3 Hammer Frenzy": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Ibuki": {
-        "1 Kasumi Suzaku": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Yoroi Dooshi": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Yami Shigure": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Kasumi Suzaku": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Yoroi Dooshi": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Yami Shigure": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Ken": {
-        "1 Shoryureppa": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Shinryuken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "3 Shippu Jinraikyaku": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "1 Shoryureppa": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Shinryuken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "3 Shippu Jinraikyaku": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Makoto": {
-        "1 Seichusen Godanzuki": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Punch"],
-            ]
-        ),
-        "2 Abare Tosanami": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "3 Tanden Renki": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Seichusen Godanzuki": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Punch"],
+        ]),
+        "2 Abare Tosanami": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "3 Tanden Renki": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Necro": {
-        "1 Magnetic Storm": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Slam Dance": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Electric Snake": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Magnetic Storm": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Slam Dance": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Electric Snake": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Oro": {
-        "1 Kishin Riki": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Max-1 EX Kishin Riki": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Punch+Low Kick"],
-            ]
-        ),
-        "2 Yagyou Dama": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Max-2 EX Yagyou Dama (3 bars)": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Punch+Low Kick"],
-            ]
-        ),
-        "3 Tengu Stone": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "Max-3 EX Tengu Stone": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Punch+Low Kick"],
-            ]
-        ),
+        "1 Kishin Riki": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Max-1 EX Kishin Riki": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Punch+Low Kick"],
+        ]),
+        "2 Yagyou Dama": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Max-2 EX Yagyou Dama (3 bars)": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Punch+Low Kick"],
+        ]),
+        "3 Tengu Stone": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "Max-3 EX Tengu Stone": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Punch+Low Kick"],
+        ]),
     },
     "Q": {
-        "1 Critical Combo Attack": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Deadly Double Combination": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Total Destruction": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Critical Combo Attack": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Deadly Double Combination": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Total Destruction": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Remy": {
-        "1 Light of Justice": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Supreme Rising Rage Flash": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "3 Blue Nocturne": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
+        "1 Light of Justice": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Supreme Rising Rage Flash": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "3 Blue Nocturne": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
     },
     "Ryu": {
-        "1 Shinkuu-Hadouken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Shin Shoryuken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Denjin Hadouken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Shinkuu-Hadouken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Shin Shoryuken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Denjin Hadouken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Sean": {
-        "1 Hadou Burst": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Shoryuu Cannon": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Hyper Tornado": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Hadou Burst": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Shoryuu Cannon": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Hyper Tornado": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Twelve": {
-        "1 X.N.D.L": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 X.F.L.A.T": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "3 X.C.O.P.Y": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 X.N.D.L": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 X.F.L.A.T": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "3 X.C.O.P.Y": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Urien": {
-        "1 Tyrant Slaughter": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Temporal Thunder": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Aegis Reflector": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Tyrant Slaughter": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Temporal Thunder": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Aegis Reflector": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Yang": {
-        "1 Raishin Mahha Ken": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Tenshin Senkyutai": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Low Kick"],
-            ]
-        ),
-        "3 Sei'ei Enbu": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 Raishin Mahha Ken": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Tenshin Senkyutai": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Low Kick"],
+        ]),
+        "3 Sei'ei Enbu": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
     "Yun": {
-        "1 You-hou": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "2 Sourai Rengeki": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
-        "3 Genei-jin": create_move_dict(
-            [
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Down"],
-                MOVES["Left+Down"],
-                MOVES["Left"],
-                MOVES["Medium Punch"],
-            ]
-        ),
+        "1 You-hou": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "2 Sourai Rengeki": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
+        "3 Genei-jin": create_move_dict([
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Down"],
+            MOVES["Left+Down"],
+            MOVES["Left"],
+            MOVES["Medium Punch"],
+        ]),
     },
 }
 
@@ -1757,92 +1442,20 @@ class PlayerState:
     super_bar: int
 
 
-@dataclass
-class GameInfo:
-    timer: int
-    boxes: list
-    class_ids: list
-
-
-def assign_boxes(
-    p1_char: str,
-    p1_side: int,
-    p2_char: str,
-    boxes: list[list[int]],
-    class_ids: list[int],
-) -> tuple:
-    p1_box = None
-    p2_box = None
-
-    p1_char_id = CHARACTER_TO_ID[p1_char]
-    p2_char_id = CHARACTER_TO_ID[p2_char]
-
-    if p1_char_id != p2_char_id:  # characters are different
-        for i, class_id in enumerate(class_ids):
-            if class_id == -1:
-                continue
-            if class_id == p1_char_id and i < len(boxes):
-                p1_box = boxes[i]
-            elif class_id == p2_char_id and i < len(boxes):
-                p2_box = boxes[i]
-    else:  # characters are the same
-        valid_boxes = [
-            (i, box)
-            for i, (class_id, box) in enumerate(zip(class_ids, boxes))
-            if class_id != -1
-        ]
-        if len(valid_boxes) == 2:  # two characters detected
-            (i0, box0), (i1, box1) = valid_boxes
-            x_center_0 = (box0[0] + box0[2]) / 2
-            x_center_1 = (box1[0] + box1[2]) / 2
-
-            if p1_side == 0:
-                if x_center_0 < x_center_1:
-                    p1_box = box0
-                    p2_box = box1
-                else:
-                    p1_box = box1
-                    p2_box = box0
-            else:
-                if x_center_0 > x_center_1:
-                    p1_box = box0
-                    p2_box = box1
-                else:
-                    p1_box = box1
-                    p2_box = box0
-        elif len(valid_boxes) == 1:  # only one character detected
-            _, box = valid_boxes[0]
-            x_center = (box[0] + box[2]) / 2
-            x_mid = X_SIZE / 2
-
-            if p1_side == 0:
-                if x_center < x_mid:
-                    p1_box = box
-                else:
-                    p2_box = box
-            else:
-                if x_center > x_mid:
-                    p1_box = box
-                else:
-                    p2_box = box
-
-    return p1_box, p2_box
+NEXT_MOVE_PROMPT = "Your next move is:"
 
 
 def create_messages(
-    game_info: GameInfo,
     player1: PlayerState,
     player2: PlayerState,
-    prev_game_info=None,
+    frames: list[str],
     prev_player1=None,
     prev_player2=None,
     recent_moves=None,
     difficulty: str = "expert",
-    frames: list[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     past_info_available = (
-        prev_game_info is not None
-        and prev_player1 is not None
+        prev_player1 is not None
         and prev_player2 is not None
         and recent_moves is not None
     )
@@ -1859,152 +1472,37 @@ def create_messages(
     moves_prompt = "You may only use the following moves:\n"
     moves_prompt += chr(10).join("- " + move for move in available_moves)
 
-    if frames:
-        return [
-            {
-                "role": "system",
-                "content": dedent(
-                    f"""
-                    You are the most aggressive Street Fighter III 3rd strike player in the world.
-
-                    Your character: {player2.character}, opponent character: {player1.character}, best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds
-                    {moves_prompt}
-
-                    Simply respond with ONLY the EXACT name of the best move without any surrounding formatting or additional text.
-                    """
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    *[
-                        {
-                            "type": "image",
-                            "image": frame,
-                        }
-                        for frame in frames
-                    ],
-                    {
-                        "type": "text",
-                        "text": "Your next move is:",
-                    },
-                ],
-            },
-        ], available_moves
-
-    # game info
-    game_info_prompt = f"Timer: {game_info.timer}, your character: {player2.character}, opponent character: {player1.character}, best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds"
-
-    # position
-    p1_box, p2_box = assign_boxes(
-        player1.character,
-        player1.side,
-        player2.character,
-        game_info.boxes,
-        game_info.class_ids,
-    )
-    distance = None
-    position_prompt = ""
-    if p1_box is not None and p2_box is not None:
-        p2_x_center = (p2_box[0] + p2_box[2]) / 2
-        p1_x_center = (p1_box[0] + p1_box[2]) / 2
-        dx = abs(p1_x_center - p2_x_center)
-        distance = dx / float(X_SIZE)
-    if distance is not None:
-        if distance > 0.1:
-            position_prompt = "You are far away from your opponent. Move closer."
-        else:
-            position_prompt = "You are close to your opponent. Attack!"
-    if past_info_available:
-        prev_p1_box, prev_p2_box = assign_boxes(
-            prev_player1.character,
-            prev_player1.side,
-            prev_player2.character,
-            prev_game_info.boxes,
-            prev_game_info.class_ids,
-        )
-
-        if (
-            prev_p2_box is not None
-            and prev_p1_box is not None
-            and p2_box is not None
-            and p1_box is not None
-        ):
-            p2_prev_x = (prev_p2_box[0] + prev_p2_box[2]) / 2
-            p2_curr_x = (p2_box[0] + p2_box[2]) / 2
-            p2_movement = p2_curr_x - p2_prev_x
-
-            p1_prev_x = (prev_p1_box[0] + prev_p1_box[2]) / 2
-            p1_curr_x = (p1_box[0] + p1_box[2]) / 2
-            p1_movement = p1_curr_x - p1_prev_x
-
-            if p2_movement * p1_movement < 0:  # opposite directions
-                if abs(p2_curr_x - p1_curr_x) < abs(p2_prev_x - p1_prev_x):
-                    position_prompt += (
-                        " You are closing distance. Keep going or attack!"
-                    )
-                else:
-                    position_prompt += " Distance is increasing. Move closer."
-
-    # stun
-    stun_prompt = f"Your stun bar is at {player2.stun_bar / STUN_BAR_MAX * 100}% . Your opponent's stun bar is at {player1.stun_bar / STUN_BAR_MAX * 100}%."
-    if player2.stunned:
-        stun_prompt += " You are stunned."
-    if player1.stunned:
-        stun_prompt += " Your opponent is stunned."
-    if past_info_available:
-        p2_stun_change = player2.stun_bar - prev_player2.stun_bar
-        p1_stun_change = player1.stun_bar - prev_player1.stun_bar
-        if p2_stun_change > 0:
-            stun_prompt += (
-                f" Your stun bar increased by {p2_stun_change / STUN_BAR_MAX * 100}%."
-            )
-        if p1_stun_change > 0:
-            stun_prompt += f" You inflicted {p1_stun_change / STUN_BAR_MAX * 100}% stun on your opponent."
-
-    # health
-    health_prompt = f"Your health is at {player2.health / HEALTH_MAX * 100}%. Your opponent's health is at {player1.health / HEALTH_MAX * 100}%."
-    if past_info_available:
-        p2_damage_taken = prev_player2.health - player2.health
-        p1_damage_taken = prev_player1.health - player1.health
-        if p2_damage_taken > 0:
-            health_prompt += (
-                f" You've taken {p2_damage_taken / HEALTH_MAX * 100}% damage."
-            )
-        if p1_damage_taken > 0:
-            health_prompt += f" You inflicted {p1_damage_taken / HEALTH_MAX * 100}% damage on your opponent."
-
-    # super bar
-    power_prompt = f"Your super bar is at {player2.super_bar / SUPER_BAR_MAX * 100}%. Your opponent's super bar is at {player1.super_bar / SUPER_BAR_MAX * 100}%."
-    if past_info_available:
-        p2_super_change = player2.super_bar - prev_player2.super_bar
-        p1_super_change = player1.super_bar - prev_player1.super_bar
-        if p2_super_change > 0:
-            power_prompt += f" Your super bar increased by {p2_super_change / SUPER_BAR_MAX * 100}%."
-        if p1_super_change > 0:
-            power_prompt += f" Opponent's super bar increased by {p1_super_change / SUPER_BAR_MAX * 100}%."
-
-    messages = [
+    return [
         {
             "role": "system",
             "content": dedent(
                 f"""
                 You are the most aggressive Street Fighter III 3rd strike player in the world.
 
-                {game_info_prompt}
-                {position_prompt}
-                {health_prompt}
-                {stun_prompt}
-                {power_prompt}
+                Your character: {player2.character}, opponent character: {player1.character}, best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds
                 {moves_prompt}
 
                 Simply respond with ONLY the EXACT name of the best move without any surrounding formatting or additional text.
                 """
             ),
         },
-        {"role": "user", "content": "Your next move is:"},
-    ]
-    return messages, available_moves
+        {
+            "role": "user",
+            "content": [
+                *[
+                    {
+                        "type": "image",
+                        "image": frame,
+                    }
+                    for frame in frames
+                ],
+                {
+                    "type": "text",
+                    "text": NEXT_MOVE_PROMPT,
+                },
+            ],
+        },
+    ], available_moves
 
 
 def est_super_ct(super_bar: int) -> int:
@@ -2018,13 +1516,7 @@ def est_super_ct(super_bar: int) -> int:
         return 0
 
 
-def create_random_messages(
-    n_frame: int = 0,
-) -> tuple[list[dict], str, int, int, int, list[str]]:
-    import random
-
-    n_detected_characters = random.randint(1, 2)
-
+def create_random_messages() -> tuple[list[dict], str, int, int, int, list[str]]:
     player1_character = random.choice(list(CHARACTER_MAPPING.values()))
     player2_character = random.choice(list(CHARACTER_MAPPING.values()))
 
@@ -2042,23 +1534,6 @@ def create_random_messages(
     player1_super_count = est_super_ct(player1_super_bar)
     player2_super_count = est_super_ct(player2_super_bar)
 
-    game_info = GameInfo(
-        timer=random.randint(0, 100),
-        boxes=[
-            [
-                random.randint(0, X_SIZE),
-                random.randint(0, Y_SIZE),
-                random.randint(0, X_SIZE),
-                random.randint(0, Y_SIZE),
-            ]
-            for _ in range(n_detected_characters)
-        ],
-        class_ids=[
-            CHARACTER_TO_ID[player1_character],
-            CHARACTER_TO_ID[player2_character],
-        ][:n_detected_characters],
-    )
-
     player1 = PlayerState(
         character=player1_character,
         super_art=player1_super_art,
@@ -2070,7 +1545,6 @@ def create_random_messages(
         super_count=player1_super_count,
         super_bar=player1_super_bar,
     )
-
     player2 = PlayerState(
         character=player2_character,
         super_art=player2_super_art,
@@ -2085,12 +1559,15 @@ def create_random_messages(
 
     random_difficulty = random.choice(["basic", "advanced", "expert"])
 
+    warmup_frame_data_url = (
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
     messages, available_moves = create_messages(
-        game_info,
         player1,
         player2,
+        frames=[warmup_frame_data_url],
         difficulty=random_difficulty,
-        frames=["/root/example.png"] * n_frame if n_frame else None,
     )
 
     return (
@@ -2102,6 +1579,9 @@ def create_random_messages(
         available_moves,
     )
 
+
+MAX_CONTEXT_LEN = 2048
+MAX_TOKENS = 32
 
 # llm post-processing
 
@@ -2116,3 +1596,17 @@ def parse_move(character: str, move_name: str, side: int) -> list[int] | None:
     elif move_name in SPECIAL_MOVES[character]:
         return SPECIAL_MOVES[character][move_name][current_direction]
     return None
+
+
+def resolve_move_with_fallback(
+    character: str,
+    move_name: str,
+    side: int,
+) -> tuple[list[int], str]:
+    move_sequence = parse_move(character, move_name, side)
+    if move_sequence is not None:
+        return move_sequence, move_name
+    return [0], "No-Move"
+
+
+RECENT_MOVE_LIMIT = 8

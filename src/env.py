@@ -1,56 +1,43 @@
 from __future__ import annotations
 
 import os
-import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-try:
-    import numpy as np
-except ModuleNotFoundError:  # static host does not need gameplay deps
-    np = None
+from src.utils import STUN_BAR_MAX, SUPER_BAR_MAX, TIMER_MAX
 
-
-def next_env_id(prefix: str = "sf3") -> str:
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
-
-
-@dataclass(frozen=True)
-class EnvironmentConfig:
-    characters: tuple[str, str]
-    outfits: tuple[int, int]
-    super_arts: tuple[int, int]
-    step_ratio: int
-    render_mode: str = "rgb_array"
-    disable_keyboard: bool = False
-    disable_joystick: bool = False
-    roms_path: str = "/root"
-    env_id: str | None = None
-
-    def resolved_env_id(self) -> str:
-        return self.env_id or next_env_id()
-
-
-class GameEnvironment(Protocol):
-    def reset(self) -> tuple[dict[str, Any], dict[str, Any]]: ...
-
-    def step(
-        self,
-        actions: dict[str, int],
-    ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]: ...
-
-    def close(self) -> None: ...
-
-
-SUPER_BAR_MAX = 128
-STUN_BAR_MAX = 72
-TIMER_MAX = 100
+# Raw emulator ids used by MAME / sfiii-gym.
+# Intentionally different than CHARACTER_TO_ID in utils.py
+# since the emulator uses a different numbering scheme.
+CHARACTER_NAME_TO_LOCAL_ID = {
+    "Alex": 1,
+    "Ryu": 2,
+    "Yun": 3,
+    "Dudley": 4,
+    "Necro": 5,
+    "Hugo": 6,
+    "Ibuki": 7,
+    "Elena": 8,
+    "Oro": 9,
+    "Yang": 10,
+    "Ken": 11,
+    "Sean": 12,
+    "Urien": 13,
+    "Gouki": 14,
+    "Chun-Li": 16,
+    "Makoto": 17,
+    "Q": 18,
+    "Twelve": 19,
+    "Remy": 20,
+}
 
 
 def _scalar(value: Any) -> int:
-    if np is not None and isinstance(value, np.ndarray):
+    import numpy as np
+
+    if isinstance(value, np.ndarray):
         return int(value.reshape(-1)[0])
     if isinstance(value, (list, tuple)):
         return int(value[0])
@@ -58,8 +45,8 @@ def _scalar(value: Any) -> int:
 
 
 def _array1(value: int, *, dtype: Any = None) -> Any:
-    if np is None:
-        raise ModuleNotFoundError("numpy is required for gameplay runtime")
+    import numpy as np
+
     return np.array([value], dtype=dtype or np.int16)
 
 
@@ -87,7 +74,7 @@ def _normalize_player(
     }
 
 
-def normalize_local_observation(raw: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_local_observation(raw: Mapping[str, Any]) -> dict[str, Any]:
     timer = max(0, min(TIMER_MAX, _scalar(raw["timer"])))
     wins_p1 = _scalar(raw["winsP1"])
     wins_p2 = _scalar(raw["winsP2"])
@@ -98,30 +85,6 @@ def normalize_local_observation(raw: Mapping[str, Any]) -> dict[str, Any]:
         "P1": _normalize_player(raw, prefix="P1", wins=wins_p1),
         "P2": _normalize_player(raw, prefix="P2", wins=wins_p2),
     }
-
-
-# Raw emulator ids used by MAME / sfiii-gym.
-CHARACTER_NAME_TO_LOCAL_ID = {
-    "Alex": 1,
-    "Ryu": 2,
-    "Yun": 3,
-    "Dudley": 4,
-    "Necro": 5,
-    "Hugo": 6,
-    "Ibuki": 7,
-    "Elena": 8,
-    "Oro": 9,
-    "Yang": 10,
-    "Ken": 11,
-    "Sean": 12,
-    "Urien": 13,
-    "Gouki": 14,
-    "Chun-Li": 16,
-    "Makoto": 17,
-    "Q": 18,
-    "Twelve": 19,
-    "Remy": 20,
-}
 
 
 def _boot_steps(frame_ratio: int):
@@ -167,16 +130,40 @@ def _action_values(player: int, action_id: int):
     return [getattr(Actions, f"{prefix}_{name}").value for name in action_names]
 
 
+@dataclass(frozen=True)
+class EnvironmentConfig:
+    characters: tuple[str, str]
+    outfits: tuple[int, int]
+    super_arts: tuple[int, int]
+    step_ratio: int
+    render_mode: str = "rgb_array"
+    disable_keyboard: bool = False
+    disable_joystick: bool = False
+    roms_path: str = "/root"
+    env_id: str | None = None
+
+    def resolved_env_id(self) -> str:
+        return self.env_id or f"sf3-{uuid.uuid4().hex[:8]}"
+
+
+class GameEnvironment(Protocol):
+    def reset(self) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
+    def step(
+        self,
+        actions: dict[str, int],
+    ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]: ...
+
+    def close(self) -> None: ...
+
+
 class LocalSfiiiAdapter:
     def __init__(self, config: EnvironmentConfig):
-        if sys.platform != "linux":
-            raise EnvironmentError("Local SFIII runtime requires Linux/MAME")
+        from MAMEToolkit.emulator import Address, Emulator
 
         os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
         os.environ.setdefault("XDG_RUNTIME_DIR", "/tmp")
-
-        from MAMEToolkit.emulator import Address, Emulator
 
         rom_path = Path(config.roms_path) / "sfiii3n.zip"
         if not rom_path.is_file():
@@ -227,7 +214,7 @@ class LocalSfiiiAdapter:
 
     def reset(self) -> tuple[dict[str, Any], dict[str, Any]]:
         self._new_game()
-        return normalize_local_observation(self._data), {}
+        return _normalize_local_observation(self._data), {}
 
     def step(
         self,
@@ -254,7 +241,7 @@ class LocalSfiiiAdapter:
         else:
             self._data = raw
 
-        observation = normalize_local_observation(self._data)
+        observation = _normalize_local_observation(self._data)
         info = {
             "game_done": game_done,
             "round_done": round_done,
@@ -300,9 +287,10 @@ class LocalSfiiiAdapter:
             if state_p1 >= 2 and state_p2 >= 2:
                 return
             if state_p1 == 0 or state_p2 == 0:
-                self._data = self.emu.step(
-                    [Actions.P1_START.value, Actions.P2_START.value]
-                )
+                self._data = self.emu.step([
+                    Actions.P1_START.value,
+                    Actions.P2_START.value,
+                ])
         raise TimeoutError("Timed out waiting for 2-player character select")
 
     def _select_characters(self) -> None:
@@ -367,9 +355,10 @@ class LocalSfiiiAdapter:
                 break
             if frame_idx > 0 and frame_idx % 180 == 0:
                 # Skip long intros / continue prompts if they linger.
-                self._data = self.emu.step(
-                    [Actions.P1_START.value, Actions.P2_START.value]
-                )
+                self._data = self.emu.step([
+                    Actions.P1_START.value,
+                    Actions.P2_START.value,
+                ])
             else:
                 self._data = self.emu.step([])
         else:
@@ -429,5 +418,5 @@ class LocalSfiiiAdapter:
         return data
 
 
-def create_environment(config: EnvironmentConfig) -> GameEnvironment | None:
+def create_environment(config: EnvironmentConfig) -> GameEnvironment:
     return LocalSfiiiAdapter(config)
