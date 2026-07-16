@@ -188,7 +188,7 @@ class Web:
                 server = server_cls()
                 await asyncio.wait_for(
                     server.boot.remote.aio(),
-                    timeout=5 * MINUTES,
+                    timeout=60 * MINUTES,
                 )
                 self.participant_servers[participant] = server
                 print(f"{label} created")
@@ -825,7 +825,7 @@ class Web:
                         controlled_obs["side"],
                         available_moves,
                     ),
-                    timeout=5 * MINUTES,
+                    timeout=1 * MINUTES,
                 )
 
             async def run_robot_background():
