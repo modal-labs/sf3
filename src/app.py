@@ -8,28 +8,31 @@ from urllib.parse import urlsplit, urlunsplit
 
 import modal
 
-from .env import EnvironmentConfig, create_environment
-from .serve.gemma4_31b import Gemma4Server
-from .serve.gemma4_31b import app as gemma4_app
-from .serve.ministral3_14b import Ministral3Server
-from .serve.ministral3_14b import app as ministral3_app
-from .serve.qwen36_35ba3b_fp8 import Qwen36Server
-from .serve.qwen36_35ba3b_fp8 import app as qwen36_app
-from .utils import (
+from src.env import EnvironmentConfig, create_environment
+from src.serve.gemma4_31b import Gemma4Server
+from src.serve.gemma4_31b import app as gemma4_app
+from src.serve.ministral3_14b import Ministral3Server
+from src.serve.ministral3_14b import app as ministral3_app
+from src.serve.qwen36_35ba3b_fp8 import Qwen36Server
+from src.serve.qwen36_35ba3b_fp8 import app as qwen36_app
+from src.utils import (
     CHARACTER_TO_ID,
     COMBOS,
+    CONTAINER_REGION,
+    MINUTES,
+    RECENT_MOVE_LIMIT,
+    ROUTING_REGION,
     SPECIAL_MOVES,
     PlayerState,
     create_messages,
-    minutes,
-    region,
 )
 
 # Modal setup
 
 # web app
 app = (
-    modal.App(name="sf3")
+    modal
+    .App(name="sf3")
     .include(gemma4_app)
     .include(ministral3_app)
     .include(qwen36_app)
@@ -50,7 +53,6 @@ PARTICIPANT_SPECS = {
         "server_cls": Ministral3Server,
     },
 }
-
 PARTICIPANT_LABELS = {
     participant: spec["label"] for participant, spec in PARTICIPANT_SPECS.items()
 }
@@ -68,7 +70,8 @@ remote_portraits_dir = "/root/portraits"
 remote_sounds_dir = "/root/sounds"
 
 static_image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image
+    .debian_slim(python_version="3.12")
     .uv_pip_install(
         "fastapi[standard]==0.116.1",
     )
@@ -96,18 +99,17 @@ static_image = (
 )
 
 gameplay_image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image
+    .debian_slim(python_version="3.12")
     .apt_install(
         "ffmpeg",
         "libturbojpeg-dev",
     )
-    .env(
-        {
-            "SDL_VIDEODRIVER": "dummy",
-            "SDL_AUDIODRIVER": "dummy",
-            "XDG_RUNTIME_DIR": "/tmp",
-        }
-    )
+    .env({
+        "SDL_VIDEODRIVER": "dummy",
+        "SDL_AUDIODRIVER": "dummy",
+        "XDG_RUNTIME_DIR": "/tmp",
+    })
     .uv_pip_install(
         "aiortc",
         "av",
@@ -122,11 +124,6 @@ gameplay_image = (
         "/root/sfiii3n.zip",
     )
 )
-
-endpoint_timeout = 24 * 60 * minutes
-container_scaledown_window = 60 * minutes
-container_call_timeout = container_scaledown_window + minutes
-env_create_timeout = 60
 
 
 def normalize_participant(participant: str, *, allow_human: bool) -> str:
@@ -155,11 +152,11 @@ def normalize_game_participants(game_settings: dict) -> tuple[str, str]:
 
 @app.cls(
     image=gameplay_image,
-    region=region,
+    region=CONTAINER_REGION,
+    routing_region=ROUTING_REGION,
     min_containers=1,
-    buffer_containers=1,
     secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent)],
-    timeout=endpoint_timeout,
+    timeout=24 * 60 * MINUTES,
 )
 @modal.concurrent(
     max_inputs=3,
@@ -191,7 +188,7 @@ class Web:
                 server = server_cls()
                 await asyncio.wait_for(
                     server.boot.remote.aio(),
-                    timeout=container_call_timeout,
+                    timeout=5 * MINUTES,
                 )
                 self.participant_servers[participant] = server
                 print(f"{label} created")
@@ -221,7 +218,12 @@ class Web:
         )
         from aiortc.sdp import candidate_from_sdp
         from av import VideoFrame
-        from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+        from fastapi import (
+            BackgroundTasks,
+            FastAPI,
+            WebSocket,
+            WebSocketDisconnect,
+        )
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.middleware.gzip import GZipMiddleware
         from fastapi.responses import JSONResponse
@@ -388,7 +390,6 @@ class Web:
 
                 self.player1_recent_move_names = []
                 self.player2_recent_move_names = []
-                self.recent_move_limit = 8  # memory + min for good move variety
 
                 # communication
 
@@ -396,9 +397,10 @@ class Web:
                 self.stop_event = asyncio.Event()
 
             async def send_game_state(self):
-                await self.outbound_message_queue.put(
-                    {"type": "game_state", "data": make_json_safe(self.game_state)}
-                )
+                await self.outbound_message_queue.put({
+                    "type": "game_state",
+                    "data": make_json_safe(self.game_state),
+                })
 
             async def handle_inbound_message(self, data):
                 message_type = data.get("type", "unknown")
@@ -593,16 +595,14 @@ class Web:
                         return
                     if websocket.client_state == WebSocketState.DISCONNECTED:
                         return
-                    await websocket.send_json(
-                        {
-                            "type": "ice_candidate",
-                            "candidate": {
-                                "candidate_sdp": candidate.to_sdp(),
-                                "sdpMid": candidate.sdpMid,
-                                "sdpMLineIndex": candidate.sdpMLineIndex,
-                            },
-                        }
-                    )
+                    await websocket.send_json({
+                        "type": "ice_candidate",
+                        "candidate": {
+                            "candidate_sdp": candidate.to_sdp(),
+                            "sdpMid": candidate.sdpMid,
+                            "sdpMLineIndex": candidate.sdpMLineIndex,
+                        },
+                    })
                 except Exception:
                     print(f"Error sending ICE candidate: {traceback.format_exc()}")
 
@@ -678,13 +678,11 @@ class Web:
                             )
                             answer = await pc.createAnswer()
                             await pc.setLocalDescription(answer)
-                            await websocket.send_json(
-                                {
-                                    "type": "answer",
-                                    "sdp": pc.localDescription.sdp,
-                                    "peer_id": "server",
-                                }
-                            )
+                            await websocket.send_json({
+                                "type": "answer",
+                                "sdp": pc.localDescription.sdp,
+                                "peer_id": "server",
+                            })
                             continue
 
                         if message_type == "ice_candidate":
@@ -756,9 +754,10 @@ class Web:
             async def keepalive():
                 try:
                     while not session.stop_event.is_set():
-                        await session.outbound_message_queue.put(
-                            {"type": "heartbeat", "data": {}}
-                        )
+                        await session.outbound_message_queue.put({
+                            "type": "heartbeat",
+                            "data": {},
+                        })
                         await asyncio.sleep(15)
                 except Exception:
                     print(f"Error in keepalive: {traceback.format_exc()}")
@@ -826,7 +825,7 @@ class Web:
                         controlled_obs["side"],
                         available_moves,
                     ),
-                    timeout=container_call_timeout,
+                    timeout=5 * MINUTES,
                 )
 
             async def run_robot_background():
@@ -918,7 +917,7 @@ class Web:
 
                             if (
                                 len(session.player1_recent_move_names)
-                                > session.recent_move_limit
+                                > RECENT_MOVE_LIMIT
                             ):
                                 session.player1_recent_move_names.pop(0)
 
@@ -945,7 +944,7 @@ class Web:
 
                             if (
                                 len(session.player2_recent_move_names)
-                                > session.recent_move_limit
+                                > RECENT_MOVE_LIMIT
                             ):
                                 session.player2_recent_move_names.pop(0)
 
@@ -996,7 +995,7 @@ class Web:
                         try:
                             session.env = await asyncio.wait_for(
                                 asyncio.to_thread(create_environment, env_config),
-                                timeout=env_create_timeout,
+                                timeout=1 * MINUTES,
                             )
                         except Exception as e:
                             print(f"Error creating local environment: {e}")
@@ -1135,12 +1134,10 @@ class Web:
                                     session.transition_start_time = (
                                         asyncio.get_event_loop().time()
                                     )
-                                    await session.outbound_message_queue.put(
-                                        {
-                                            "type": "transition",
-                                            "data": {"transition_type": "round"},
-                                        }
-                                    )
+                                    await session.outbound_message_queue.put({
+                                        "type": "transition",
+                                        "data": {"transition_type": "round"},
+                                    })
 
                             if not session.in_transition:
                                 frame = session.observation.get("frame")
@@ -1192,9 +1189,11 @@ class Web:
             await websocket.close(code=1008)
 
         @web_app.get("/warm/default-participant")
-        async def warm_default_participant():
-            await self.create_participant_server(DEFAULT_PLAYER2_PARTICIPANT)
-            return JSONResponse({"ok": True})
+        async def warm_default_participant(background_tasks: BackgroundTasks):
+            background_tasks.add_task(
+                self.create_participant_server, DEFAULT_PLAYER2_PARTICIPANT
+            )
+            return JSONResponse({"ok": True}, status_code=202)
 
         @web_app.get("/api/extra-moves")
         async def get_extra_moves():
@@ -1215,7 +1214,8 @@ def _warm_deployed_gameplay_base_url() -> str:
         return _deployed_gameplay_base_url
 
     try:
-        url = modal.Function.from_name("sf3", "Web.app").get_web_url()
+        web_server_cls = modal.Cls.from_name("sf3", "Web")()
+        url = web_server_cls.app.get_web_url()
         if url:
             _deployed_gameplay_base_url = url.rstrip("/")
             return _deployed_gameplay_base_url
@@ -1230,29 +1230,23 @@ def resolve_gameplay_base_url(
     *,
     deployed_base_url: str | None = None,
 ) -> str:
-    override = os.environ.get("SF3_GAMEPLAY_BASE_URL", "").strip()
-    if override:
-        return override.rstrip("/")
-
     static_base_url = static_base_url.rstrip("/")
     if static_base_url:
         try:
             parsed = urlsplit(static_base_url)
             netloc = parsed.netloc
             for static_suffix, gameplay_suffix in (
-                ("--sf3-dev.modal.run", "--gameplay-dev.modal.run"),
-                ("--sf3.modal.run", "--gameplay.modal.run"),
+                (f"--sf3-dev.{ROUTING_REGION}.modal.run", f"--gameplay-dev.{ROUTING_REGION}.modal.run"),
+                (f"--sf3.{ROUTING_REGION}.modal.run", f"--gameplay.{ROUTING_REGION}.modal.run"),
             ):
                 if netloc.endswith(static_suffix):
-                    return urlunsplit(
-                        (
-                            parsed.scheme,
-                            netloc[: -len(static_suffix)] + gameplay_suffix,
-                            "",
-                            "",
-                            "",
-                        )
-                    )
+                    return urlunsplit((
+                        parsed.scheme,
+                        netloc[: -len(static_suffix)] + gameplay_suffix,
+                        "",
+                        "",
+                        "",
+                    ))
         except ValueError:
             pass
 
@@ -1264,11 +1258,10 @@ def resolve_gameplay_base_url(
 
 @app.function(
     image=static_image,
-    region=region,
-    scaledown_window=5 * minutes,
+    region=CONTAINER_REGION,
+    routing_region=ROUTING_REGION,
     min_containers=1,
-    buffer_containers=2,
-    timeout=endpoint_timeout,
+    timeout=24 * 60 * MINUTES,
 )
 @modal.concurrent(max_inputs=96, target_inputs=64)
 @modal.asgi_app(label="sf3", custom_domains=["sf3.modal.dev"])

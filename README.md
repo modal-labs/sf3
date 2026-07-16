@@ -19,11 +19,9 @@ source .venv/bin/activate
 modal setup
 ```
 
-Obtain a copy of SF3,
-then store it as `assets/engine/sfiii3n.zip`.
+Obtain a copy of SF3, then store it as `assets/engine/sfiii3n.zip`.
 
-Create an [Open Relay TURN server](https://www.metered.ca/tools/openrelay/) account [here](https://dashboard.metered.ca/login?tool=turnserver).
-Then, create a `.env` with:
+Create an [Open Relay TURN server](https://www.metered.ca/tools/openrelay/) account [here](https://dashboard.metered.ca/login?tool=turnserver). Then, create a `.env` with:
 
 ```bash
 TURN_USERNAME=
@@ -51,6 +49,15 @@ modal deploy -m src.app
 ## Changelog
 
 <details>
+<summary>Summer 2026</summary>
+
+- The methodology for measuring LLM latencies in `src/serve/` was fixed, alongside an updated diagram:
+
+![Latency](./assets/readme/latency.png "Latency diagram")
+
+</details>
+
+<details>
 <summary>Spring 2026</summary>
 
 - Since the diambra engine no longer works, this project now runs the game through a local MAME runtime.
@@ -70,7 +77,7 @@ The goal of this project was to promote [Modal sandboxes](https://modal.com/docs
 
 Below is a diagram explaining how the application works:
 
-![Demo diagram](./assets/readme/demo_arch.png "Demo diagram")
+![Architecture](./assets/readme/arch_old.png "Architecture")
 
 We have four important services, each running in their own Modal container:
 
@@ -88,7 +95,7 @@ Some important notes for how this even works:
 
 Below is a diagram explaining the latency for one action:
 
-![Latency diagram](./assets/readme/demo_latency.png "Latency diagram")
+![Latency](./assets/readme/latency_old.png "Latency diagram")
 
 Note that at 60 FPS, each frame is emitted once every 16ms. Also, since the latency the web server communicates with the Diambra engine and the latency of storing nonlocal variables is much lower than everything else, we treat it as basically instantaneous.
 
@@ -102,10 +109,7 @@ Some napkin math:
 
 Below are some results from training the YOLO model:
 
-![Training curves](./assets/readme/results.png "Training curves")
-![Confusion matrix](./assets/readme/confusion_matrix.png "Confusion matrix")
-![Recall curve](./assets/readme/BoxR_curve.png "Recall curve")
-![Validation predictions](./assets/readme/val_batch0_pred.jpg "Validation predictions")
+![Training curves](./assets/readme/results.png "Training curves") ![Confusion matrix](./assets/readme/confusion_matrix.png "Confusion matrix") ![Recall curve](./assets/readme/BoxR_curve.png "Recall curve") ![Validation predictions](./assets/readme/val_batch0_pred.jpg "Validation predictions")
 
 Note that we care most about recall here since we want to make sure all characters are detected.
 

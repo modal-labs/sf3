@@ -7,17 +7,21 @@ from pathlib import Path
 
 import modal
 
-from ..utils import (
+from src.utils import (
+    MAX_CONTEXT_LEN,
+    MAX_TOKENS,
+    MINUTES,
+    ROUTING_REGION,
     create_random_messages,
     get_available_instructions_for_character,
-    minutes,
     resolve_move_with_fallback,
 )
 
 app = modal.App("sf3-llm")
 
 vllm_image = (
-    modal.Image.from_registry("nvidia/cuda:12.9.0-devel-ubuntu22.04", add_python="3.12")
+    modal.Image
+    .from_registry("nvidia/cuda:12.9.0-devel-ubuntu22.04", add_python="3.12")
     .entrypoint([])
     .uv_pip_install(
         "vllm==0.19.0",
@@ -26,13 +30,11 @@ vllm_image = (
         "qwen-vl-utils==0.0.14",
     )
     .uv_pip_install("transformers==5.5.0")
-    .env(
-        {
-            "HF_XET_HIGH_PERFORMANCE": "1",
-            "VLLM_SERVER_DEV_MODE": "1",
-            "TORCHINDUCTOR_COMPILE_THREADS": "1",
-        }
-    )
+    .env({
+        "HF_XET_HIGH_PERFORMANCE": "1",
+        "VLLM_SERVER_DEV_MODE": "1",
+        "TORCHINDUCTOR_COMPILE_THREADS": "1",
+    })
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
@@ -50,17 +52,18 @@ gpu = "b200"
 
 @app.cls(
     image=vllm_image,
+    gpu=gpu,
+    routing_region=ROUTING_REGION,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,
         "/root/.cache/flashinfer": flashinfer_cache_vol,
     },
     secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent.parent)],
-    gpu=gpu,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
-    scaledown_window=60 * minutes,
-    timeout=60 * minutes,
+    scaledown_window=60 * MINUTES,
+    timeout=15 * MINUTES,
 )
 @modal.concurrent(max_inputs=max_inputs)
 class Ministral3Server:
@@ -88,21 +91,20 @@ class Ministral3Server:
             normalized_content = []
             for item in content:
                 if item.get("type") == "image":
-                    normalized_content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": normalize_image_url(item["image"])},
-                        }
-                    )
+                    normalized_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": normalize_image_url(item["image"])},
+                    })
                     continue
                 if item.get("type") == "image_url":
                     image_url = item["image_url"]
                     if isinstance(image_url, str):
                         image_url = {"url": image_url}
                     image_url["url"] = normalize_image_url(image_url["url"])
-                    normalized_content.append(
-                        {"type": "image_url", "image_url": image_url}
-                    )
+                    normalized_content.append({
+                        "type": "image_url",
+                        "image_url": image_url,
+                    })
                     continue
                 normalized_content.append(item)
 
@@ -124,7 +126,7 @@ class Ministral3Server:
         self.llm = LLM(
             model=str(load_path),
             revision=revision,
-            max_model_len=2048,
+            max_model_len=MAX_CONTEXT_LEN,
             max_num_batched_tokens=8192,
             max_num_seqs=max_num_seqs,
             max_cudagraph_capture_size=max_inputs * 2,
@@ -141,7 +143,7 @@ class Ministral3Server:
             load_format="mistral",
         )
 
-        self.sampling_params_kwargs = {"max_tokens": 32}
+        self.sampling_params_kwargs = {"max_tokens": MAX_TOKENS}
 
         messages, _, _, _, _, _ = create_random_messages()
 
@@ -188,8 +190,8 @@ class Ministral3Server:
         return move_sequence, resolved_move_name
 
 
-@app.local_entrypoint()
-async def local(n_samples: int = 100):
+@app.function(routing_region=ROUTING_REGION)
+async def test_ministral(n_samples: int):
     llm = Ministral3Server()
     await llm.boot.remote.aio()
 
@@ -199,13 +201,12 @@ async def local(n_samples: int = 100):
             create_random_messages()
         )
         start_time = time.perf_counter()
-        _, moves = await llm.chat.remote.aio(
+        buttons, move = await llm.chat.remote.aio(
             messages, character, super_art, super_count, side, available_moves
         )
         elapsed = (time.perf_counter() - start_time) * 1000
-        n_moves = len(moves) if moves else 1
-        ms_per_move.append(elapsed / n_moves)
-        print(f"Sample {sample_idx}: {moves}")
+        ms_per_move.append(elapsed)
+        print(f"Sample {sample_idx}: {move}, {buttons}")
 
     percentiles = [50, 90, 95, 99]
     sorted_ms = sorted(ms_per_move)
@@ -214,8 +215,13 @@ async def local(n_samples: int = 100):
         idx = int(len(sorted_ms) * p / 100)
         idx = min(max(idx - 1, 0), len(sorted_ms) - 1)
         results[p] = sorted_ms[idx]
-    print("--------------------------------")
+    print("----------------------------------")
     print("Latency per move percentiles (ms):")
     for p in percentiles:
-        print(f"  p{p}: {results[p]:.2f}ms")
-    print("--------------------------------")
+        print(f"  p{p}: {results[p]:.2f}")
+    print("----------------------------------")
+
+
+@app.local_entrypoint()
+async def main(n_samples: int = 100):
+    await test_ministral.remote.aio(n_samples)
