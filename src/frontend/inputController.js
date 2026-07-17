@@ -1,7 +1,6 @@
 import { GameState } from "./gameState.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { WebRtcManager } from "./webRtcManager.js";
-import { MovesEngine } from "./movesEngine.js";
 import { isHumanParticipant } from "./participantOptions.js";
 
 const createInputController = () => {
@@ -24,8 +23,6 @@ const createInputController = () => {
     LOW_PUNCH_LOW_KICK: 15,
     MEDIUM_PUNCH_MEDIUM_KICK: 16,
     HIGH_PUNCH_HIGH_KICK: 17,
-    SUPER_ART: 18,
-    COMBO: 19,
   };
 
   const idxToMove = [
@@ -57,12 +54,9 @@ const createInputController = () => {
     },
   ];
 
-  let movesByLength = {};
   let combos = {};
   let specialMoves = {};
   let pauseButtonPressed = false;
-
-  const comboTimeout = 750;
 
   const getActionFromKeys = () => {
     const keyState = GameState.getKeyState();
@@ -189,29 +183,6 @@ const createInputController = () => {
 
   const handleActionFromInput = (action) => {
     WebRtcManager.send("player_action", { action });
-
-    if (action !== actions.NO_MOVE) {
-      const input = { action, time: Date.now() };
-      GameState.addInputToHistory(input);
-
-      const inputHistory = GameState.getInputHistory();
-      const { match, history } = MovesEngine.detectExtra(
-        inputHistory,
-        comboTimeout,
-        movesByLength
-      );
-
-      GameState.clearInputHistory();
-      history.forEach((h) => GameState.addInputToHistory(h));
-
-      if (match) {
-        WebRtcManager.send("player_action", {
-          action:
-            match.type === "super_art" ? actions.SUPER_ART : actions.COMBO,
-          [match.type === "super_art" ? "super_art" : "combo"]: match.name,
-        });
-      }
-    }
   };
 
   const handleKeyboardEvent = (e, isDown) => {
@@ -223,16 +194,6 @@ const createInputController = () => {
     const action = getActionFromKeys();
     handleActionFromInput(action);
     e.preventDefault();
-  };
-
-  const updateMovesList = (character, direction, superArt) => {
-    movesByLength = MovesEngine.preprocessMoves(
-      character,
-      specialMoves,
-      combos,
-      direction,
-      superArt
-    );
   };
 
   const setExtraMoves = (extraCombos, extraSpecialMoves) => {
@@ -267,7 +228,6 @@ const createInputController = () => {
     initGamepadInput,
     handleActionFromInput,
     processGamepadInput,
-    updateMovesList,
     setExtraMoves,
     getCombos: () => combos,
     getSpecialMoves: () => specialMoves,

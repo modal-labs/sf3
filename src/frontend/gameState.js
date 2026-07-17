@@ -37,7 +37,6 @@ const createGameState = () => {
 
     // input state
     keyState: {},
-    inputHistory: [],
 
     // gamepad nav
     gamepadUIState: {
@@ -100,7 +99,6 @@ const createGameState = () => {
       state.transitionStartTime = null;
       state.readyToHideTransition = false;
       state.keyState = {};
-      state.inputHistory = [];
       notifyListeners("reset", null);
     },
 
@@ -149,22 +147,6 @@ const createGameState = () => {
 
     getKeyState() {
       return { ...state.keyState };
-    },
-
-    addInputToHistory(input) {
-      state.inputHistory.push(input);
-      if (state.inputHistory.length > 20) {
-        // roughly length of longest combo
-        state.inputHistory.shift();
-      }
-    },
-
-    clearInputHistory() {
-      state.inputHistory = [];
-    },
-
-    getInputHistory() {
-      return [...state.inputHistory];
     },
 
     setPlayer1Participant(participant) {

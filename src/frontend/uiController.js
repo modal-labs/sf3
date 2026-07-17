@@ -126,13 +126,6 @@ const createUIController = () => {
           parseInt(superArtP1.value)
         );
         updateSuperArtsDisplay();
-
-        const state = GameState.get();
-        InputController.updateMovesList(
-          state.currentCharacter,
-          state.playerDirection,
-          parseInt(superArtP1.value)
-        );
         AudioManager.playSound(SOUND_KEYS.CLICK);
       });
     }
@@ -362,12 +355,6 @@ const createUIController = () => {
       InputController.setExtraMoves(data.combos, data.specialMoves);
 
       const state = GameState.get();
-      InputController.updateMovesList(
-        state.currentCharacter,
-        state.playerDirection,
-        state.player1.superArt
-      );
-
       updateCombosDisplay(state.currentCharacter);
       updateSuperArtsDisplay(state.currentCharacter);
 
@@ -425,13 +412,7 @@ const createUIController = () => {
         updateCombosDisplay(data.character);
         updateSuperArtsDisplay(data.character);
 
-        const state = GameState.get();
         GameState.updateProperty("currentCharacter", data.character);
-        InputController.updateMovesList(
-          data.character,
-          state.playerDirection,
-          state.player1.superArt
-        );
       }
     });
   };
