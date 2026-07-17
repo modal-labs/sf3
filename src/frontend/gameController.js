@@ -57,7 +57,6 @@ const createGameController = () => {
     GameState.update({
       paused,
       keyState: paused ? {} : GameState.getKeyState(),
-      inputHistory: paused ? [] : GameState.getInputHistory(),
     });
     updatePauseUI(paused);
 
@@ -96,7 +95,6 @@ const createGameController = () => {
         outfit: state.characterGrid.p2.outfit,
         superArt: parseInt(byId("super-art-select-p2")?.value || 1),
       },
-      gamepadConnected: GamepadManager.isConnected(),
       difficulty: difficultyMap[difficultyValue],
     };
 

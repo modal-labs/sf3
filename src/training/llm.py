@@ -114,8 +114,6 @@ def create_environment(
         super_arts=tuple(super_arts),
         step_ratio=6,
         render_mode="rgb_array",
-        disable_keyboard=True,
-        disable_joystick=True,
         roms_path="/root",
     )
     try:

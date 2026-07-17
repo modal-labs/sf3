@@ -51,7 +51,6 @@ const initApp = async () => {
 
   GamepadManager.init({
     onStatusChange: (connected) => {
-      WebRtcManager.send("gamepad_status", { connected });
       UIController.updateControlsDisplay();
       UIController.updateCombosDisplay(GameState.get().currentCharacter);
       UIController.updateSuperArtsDisplay(GameState.get().currentCharacter);

@@ -16,7 +16,6 @@ from src.serve.ministral3_14b import app as ministral3_app
 from src.serve.qwen36_35ba3b_fp8 import Qwen36Server
 from src.serve.qwen36_35ba3b_fp8 import app as qwen36_app
 from src.utils import (
-    CHARACTER_TO_ID,
     COMBOS,
     CONTAINER_REGION,
     MINUTES,
@@ -359,7 +358,6 @@ class Web:
                     },
                     "player1Participant": DEFAULT_PLAYER1_PARTICIPANT,
                     "player2Participant": DEFAULT_PLAYER2_PARTICIPANT,
-                    "gamepadConnected": False,
                     "difficulty": "expert",
                 }
                 self.game_state = create_initial_game_state()
@@ -384,6 +382,7 @@ class Web:
                 )
                 self.player1_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
+                self.action_generation = 0
 
                 self.prev_player1_state = None
                 self.prev_player2_state = None
@@ -395,6 +394,19 @@ class Web:
 
                 self.outbound_message_queue = asyncio.Queue()
                 self.stop_event = asyncio.Event()
+                self.cleanup_tasks = set()
+
+            def enqueue_buttons(self, queue, buttons):
+                available = self.next_buttons_limit - len(queue)
+                if available > 0:
+                    queue.extend(buttons[:available])
+
+            def invalidate_actions(self):
+                self.action_generation += 1
+                self.player1_next_buttons.clear()
+                self.player2_next_buttons.clear()
+                self.player1_current_action = 0
+                self.actions = {"agent_0": 0, "agent_1": 0}
 
             async def send_game_state(self):
                 await self.outbound_message_queue.put({
@@ -410,6 +422,7 @@ class Web:
                         received_settings = data.get("data", {})
                         if received_settings:
                             self.game_settings.update(received_settings)
+                        self.invalidate_actions()
                         self.game_running = True
                         self.paused = False
                 elif message_type == "pause_game":
@@ -418,10 +431,6 @@ class Web:
                     await self.resume_game()
                 elif message_type == "player_action":
                     await self.handle_player_action(data["data"])
-                elif message_type == "gamepad_status":
-                    self.game_settings["gamepadConnected"] = data.get("data", {}).get(
-                        "connected", False
-                    )
 
             async def handle_player_action(self, action_data):
                 if self.paused:
@@ -443,33 +452,30 @@ class Web:
                         return
 
                     p1_obs = self.observation["P1"]
-                    p1_character = CHARACTER_TO_ID[
-                        self.game_settings["player1"]["character"]
-                    ]
+                    p1_character = self.game_settings["player1"]["character"]
                     p1_direction = "left" if p1_obs["side"] == 0 else "right"
 
-                    if (
-                        p1_character in SPECIAL_MOVES
-                        and super_art_name in SPECIAL_MOVES[p1_character]
-                    ):
-                        self.player1_next_buttons.extend(
-                            SPECIAL_MOVES[p1_character][super_art_name][p1_direction]
+                    move = SPECIAL_MOVES.get(p1_character, {}).get(super_art_name)
+                    if move is not None:
+                        self.enqueue_buttons(
+                            self.player1_next_buttons, move[p1_direction]
                         )
 
                 # combo
 
                 elif action == 19:
-                    combo_name = action_data["combo"]
+                    combo_name = action_data.get("combo")
+                    if not combo_name:
+                        return
 
                     p1_obs = self.observation["P1"]
-                    p1_character = CHARACTER_TO_ID[
-                        self.game_settings["player1"]["character"]
-                    ]
+                    p1_character = self.game_settings["player1"]["character"]
                     p1_direction = "left" if p1_obs["side"] == 0 else "right"
 
-                    if p1_character in COMBOS and combo_name in COMBOS[p1_character]:
-                        self.player1_next_buttons.extend(
-                            COMBOS[p1_character][combo_name][p1_direction]
+                    move = COMBOS.get(p1_character, {}).get(combo_name)
+                    if move is not None:
+                        self.enqueue_buttons(
+                            self.player1_next_buttons, move[p1_direction]
                         )
 
                 # normal move
@@ -478,16 +484,17 @@ class Web:
                     if action <= 8:  # directional, so don't queue
                         self.player1_current_action = action
                     else:  # attack moves (9-17), so queue
-                        self.player1_next_buttons.append(action)
+                        self.enqueue_buttons(self.player1_next_buttons, [action])
 
             async def cleanup_environment(self):
-                if self.env:
-                    try:
-                        self.env.close()
-                    except Exception as exc:
-                        print(f"Warning: could not close environment: {exc!r}")
-                    finally:
-                        self.env = None
+                env = self.env
+                self.env = None
+                if env is None:
+                    return
+                try:
+                    await asyncio.to_thread(env.close)
+                except Exception as exc:
+                    print(f"Warning: could not close environment: {exc!r}")
 
             async def prepare_for_next_game(self):
                 await self.cleanup_environment()
@@ -497,12 +504,9 @@ class Web:
                 self.game_state = create_initial_game_state()
                 self.observation = None
                 self.info = None
-                self.player1_next_buttons = []
-                self.player2_next_buttons = []
                 self.player1_recent_move_names = []
                 self.player2_recent_move_names = []
-                self.player1_current_action = 0
-                self.actions = {"agent_0": 0, "agent_1": 0}
+                self.invalidate_actions()
                 self.in_transition = False
                 self.transition_start_time = None
 
@@ -510,10 +514,7 @@ class Web:
                 if not self.game_running:
                     return
                 self.paused = True
-                self.player1_next_buttons = []
-                self.player2_next_buttons = []
-                self.player1_current_action = 0
-                self.actions = {"agent_0": 0, "agent_1": 0}
+                self.invalidate_actions()
                 self.game_state["status"] = "paused"
                 self.game_state["paused"] = True
                 await self.send_game_state()
@@ -847,6 +848,7 @@ class Web:
                         ):  # in case env was just reset
                             continue
 
+                        action_generation = session.action_generation
                         frame = session.observation["frame"]
 
                         obs_p1 = session.observation["P1"]
@@ -906,14 +908,12 @@ class Web:
                                 session.player1_recent_move_names,
                                 frames,
                             )
-                            session.player1_next_buttons.extend(moves_p1)
+                            if action_generation != session.action_generation:
+                                continue
+                            session.enqueue_buttons(
+                                session.player1_next_buttons, moves_p1
+                            )
                             session.player1_recent_move_names.append(move_name_p1)
-
-                            if (
-                                len(session.player1_next_buttons)
-                                > session.next_buttons_limit
-                            ):
-                                session.player1_next_buttons.pop(0)
 
                             if (
                                 len(session.player1_recent_move_names)
@@ -933,14 +933,10 @@ class Web:
                                 session.player2_recent_move_names,
                                 frames,
                             )
-                            session.player2_next_buttons.extend(moves)
+                            if action_generation != session.action_generation:
+                                continue
+                            session.enqueue_buttons(session.player2_next_buttons, moves)
                             session.player2_recent_move_names.append(move_name)
-
-                            if (
-                                len(session.player2_next_buttons)
-                                > session.next_buttons_limit
-                            ):
-                                session.player2_next_buttons.pop(0)
 
                             if (
                                 len(session.player2_recent_move_names)
@@ -971,9 +967,6 @@ class Web:
                             normalize_game_participants(session.game_settings)
                         )
 
-                        disable_keyboard = player1_participant != "human"
-                        disable_joystick = not session.game_settings["gamepadConnected"]
-
                         env_config = EnvironmentConfig(
                             characters=(
                                 p1_settings["character"],
@@ -988,16 +981,36 @@ class Web:
                                 p2_settings["superArt"],
                             ),
                             step_ratio=1,
-                            disable_keyboard=disable_keyboard,
-                            disable_joystick=disable_joystick,
                             render_mode="rgb_array",
+                        )
+                        environment_task = asyncio.create_task(
+                            asyncio.to_thread(create_environment, env_config)
                         )
                         try:
                             session.env = await asyncio.wait_for(
-                                asyncio.to_thread(create_environment, env_config),
+                                asyncio.shield(environment_task),
                                 timeout=1 * MINUTES,
                             )
                         except Exception as e:
+                            if isinstance(e, asyncio.TimeoutError):
+
+                                async def close_abandoned_environment():
+                                    try:
+                                        env = await environment_task
+                                        await asyncio.to_thread(env.close)
+                                    except Exception as exc:
+                                        print(
+                                            "Warning: could not close abandoned "
+                                            f"environment: {exc!r}"
+                                        )
+
+                                cleanup_task = asyncio.create_task(
+                                    close_abandoned_environment()
+                                )
+                                session.cleanup_tasks.add(cleanup_task)
+                                cleanup_task.add_done_callback(
+                                    session.cleanup_tasks.discard
+                                )
                             print(f"Error creating local environment: {e}")
                             await fail_current_game(format_runtime_error(e))
                             continue
@@ -1130,6 +1143,7 @@ class Web:
                                         await session.send_game_state()
                                         continue
                                 elif session.info.get("round_done", False):
+                                    session.invalidate_actions()
                                     session.in_transition = True
                                     session.transition_start_time = (
                                         asyncio.get_event_loop().time()
