@@ -59,7 +59,7 @@ gpu = "b200"
         "/root/.cache/vllm": vllm_cache_vol,
         "/root/.cache/flashinfer": flashinfer_cache_vol,
     },
-    secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent.parent)],
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * MINUTES,

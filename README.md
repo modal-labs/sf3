@@ -21,11 +21,18 @@ modal setup
 
 Obtain a copy of SF3, then store it as `assets/engine/sfiii3n.zip`.
 
-Create an [Open Relay TURN server](https://www.metered.ca/tools/openrelay/) account [here](https://dashboard.metered.ca/login?tool=turnserver). Then, create a `.env` with:
+Create accounts and get API keys for:
+
+- [Open Relay TURN server](https://dashboard.metered.ca/login?tool=turnserver)
+- [HuggingFace](https://huggingface.co/settings/tokens)
+- [Weights and Biases](https://wandb.ai/authorize)
+
+Then, store then as Modal Secrets:
 
 ```bash
-TURN_USERNAME=
-TURN_CREDENTIAL=
+modal secret create turn-credentials TURN_USERNAME=<...> TURN_CREDENTIAL=<...>
+modal secret create huggingface-secret HF_TOKEN=your-key
+modal secret create wandb-secret WANDB_API_KEY=your-key
 ```
 
 ### Commands
@@ -54,6 +61,8 @@ modal deploy -m src.app
 - The methodology for measuring LLM latencies in `src/serve/` was fixed, alongside an updated diagram:
 
 ![Latency](./assets/readme/latency.png "Latency diagram")
+
+- Training migrated to [Modal Training Gym](https://github.com/modal-projects/training-gym) and `Qwen3-VL-8B-Instruct`. Instead of an offline KTO approach, we use slime GRPO self-play.
 
 </details>
 

@@ -154,7 +154,7 @@ def normalize_game_participants(game_settings: dict) -> tuple[str, str]:
     region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
     min_containers=1,
-    secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent)],
+    secrets=[modal.Secret.from_name("turn-credentials")],
     timeout=24 * 60 * MINUTES,
 )
 @modal.concurrent(
