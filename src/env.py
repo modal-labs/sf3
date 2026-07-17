@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 from dataclasses import dataclass
@@ -7,6 +8,9 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from src.utils import STUN_BAR_MAX, SUPER_BAR_MAX, TIMER_MAX
+
+_ROM_FILENAME = "sfiii3n.zip"
+_ROM_SHA256 = "7239b5eb005488db22ace477501c574e9420c0ab70aeeb0795dfeb474284d416"
 
 # Raw emulator ids used by MAME / sfiii-gym.
 # Intentionally different than CHARACTER_TO_ID in utils.py
@@ -137,8 +141,6 @@ class EnvironmentConfig:
     super_arts: tuple[int, int]
     step_ratio: int
     render_mode: str = "rgb_array"
-    disable_keyboard: bool = False
-    disable_joystick: bool = False
     roms_path: str = "/root"
     env_id: str | None = None
 
@@ -158,16 +160,25 @@ class GameEnvironment(Protocol):
 
 
 class LocalSfiiiAdapter:
-    def __init__(self, config: EnvironmentConfig):
-        from MAMEToolkit.emulator import Address, Emulator
+    """One-game emulator adapter. Create a new instance for each game."""
 
+    def __init__(self, config: EnvironmentConfig):
         os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
         os.environ.setdefault("XDG_RUNTIME_DIR", "/tmp")
 
-        rom_path = Path(config.roms_path) / "sfiii3n.zip"
+        rom_path = Path(config.roms_path) / _ROM_FILENAME
         if not rom_path.is_file():
             raise FileNotFoundError(f"Local SFIII runtime expected ROM at {rom_path}")
+
+        actual_sha256 = hashlib.sha256(rom_path.read_bytes()).hexdigest()
+        if actual_sha256 != _ROM_SHA256:
+            raise ValueError(
+                f"ROM '{_ROM_FILENAME}' failed SHA256 checksum verification. "
+                f"Expected {_ROM_SHA256}, got {actual_sha256}"
+            )
+
+        from MAMEToolkit.emulator import Address, Emulator
 
         self.config = config
         self.memory_addresses = {
@@ -187,6 +198,8 @@ class LocalSfiiiAdapter:
             "stunBarP1": Address("0x020695FD", "u32"),
             "stunTimerP2": Address("0x0206960D", "u8"),
             "stunBarP2": Address("0x02069611", "u32"),
+            "characterP1": Address("0x02011387", "u8"),
+            "characterP2": Address("0x02011388", "u8"),
             "characterSelectStateP1": Address("0x0201553D", "u8"),
             "characterSelectStateP2": Address("0x02015545", "u8"),
             "characterSelectSaP1": Address("0x020154D3", "u8"),
@@ -211,8 +224,18 @@ class LocalSfiiiAdapter:
         self._data: dict[str, Any] = {}
         self.expected_health = {"P1": 0, "P2": 0}
         self.expected_wins = {"P1": 0, "P2": 0}
+        self._reset_called = False
+        self._closed = False
 
     def reset(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self._closed:
+            raise RuntimeError("Cannot reset a closed LocalSfiiiAdapter")
+        if self._reset_called:
+            raise RuntimeError(
+                "LocalSfiiiAdapter supports one reset; create a new environment "
+                "for each game"
+            )
+        self._reset_called = True
         self._new_game()
         return _normalize_local_observation(self._data), {}
 
@@ -250,6 +273,9 @@ class LocalSfiiiAdapter:
         return observation, reward, game_done, False, info
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self.emu.close()
 
     def _run_steps(self, steps: list[dict[str, Any]]) -> None:
@@ -259,10 +285,11 @@ class LocalSfiiiAdapter:
             actions = [action.value for action in step["actions"]]
             self._data = self.emu.step(actions)
 
-    def _write_u8(self, address: int, value: int) -> None:
-        self.emu.console.writeln(f"mem:write_u8({hex(address)}, {int(value)})")
+    def _write_u8(self, address_name: str, value: int) -> None:
+        address = self.memory_addresses[address_name].address
+        self.emu.console.writeln(f"mem:write_u8({address}, {int(value)})")
 
-    def _wait_for_continue(self) -> None:
+    def _wait_for_boot_ready(self) -> None:
         stable_frames = 0
         for _ in range(240):
             self._data = self.emu.step([])
@@ -275,7 +302,9 @@ class LocalSfiiiAdapter:
                     return
             else:
                 stable_frames = 0
-        print("Warning: continue transition did not settle; proceeding anyway")
+        # These bytes are not a reliable readiness signal before service inputs.
+        # This bounded wait is only a warm-up; later transitions enforce readiness.
+        return
 
     def _wait_for_character_select(self) -> None:
         from MAMEToolkit.sf_environment.Actions import Actions
@@ -311,10 +340,10 @@ class LocalSfiiiAdapter:
             state_p1 = int(self._data["characterSelectStateP1"])
             state_p2 = int(self._data["characterSelectStateP2"])
 
-            self._write_u8(0x02011387, p1_char)
-            self._write_u8(0x02011388, p2_char)
-            self._write_u8(0x02015683, p1_color)
-            self._write_u8(0x02015684, p2_color)
+            self._write_u8("characterP1", p1_char)
+            self._write_u8("characterP2", p2_char)
+            self._write_u8("characterSelectColorP1", p1_color)
+            self._write_u8("characterSelectColorP2", p2_color)
 
             pressed = []
             if state_p1 == 2 and not character_locked["P1"]:
@@ -325,9 +354,9 @@ class LocalSfiiiAdapter:
                 character_locked["P2"] = True
 
             if state_p1 >= 3:
-                self._write_u8(0x020154D3, p1_sa)
+                self._write_u8("characterSelectSaP1", p1_sa)
             if state_p2 >= 3:
-                self._write_u8(0x020154D5, p2_sa)
+                self._write_u8("characterSelectSaP2", p2_sa)
 
             if state_p1 == 4 and not sa_locked["P1"]:
                 pressed.append(Actions.P1_JPUNCH.value)
@@ -347,20 +376,11 @@ class LocalSfiiiAdapter:
         raise TimeoutError("Timed out locking characters/super arts")
 
     def _wait_for_fight_start(self) -> dict[str, Any]:
-        from MAMEToolkit.sf_environment.Actions import Actions
-
         self._data = self.emu.step([])
-        for frame_idx in range(900):
+        for _ in range(900):
             if int(self._data["fighting"]) != 0:
                 break
-            if frame_idx > 0 and frame_idx % 180 == 0:
-                # Skip long intros / continue prompts if they linger.
-                self._data = self.emu.step([
-                    Actions.P1_START.value,
-                    Actions.P2_START.value,
-                ])
-            else:
-                self._data = self.emu.step([])
+            self._data = self.emu.step([])
         else:
             raise TimeoutError(
                 "Timed out waiting for fight start "
@@ -380,7 +400,7 @@ class LocalSfiiiAdapter:
         return self._sub_step([])
 
     def _new_game(self) -> None:
-        self._wait_for_continue()
+        self._wait_for_boot_ready()
         self._run_steps(_boot_steps(self.config.step_ratio))
         self._wait_for_character_select()
         self._select_characters()
