@@ -79,7 +79,7 @@ sglang_image = sglang_image.run_function(
         "/root/.cache/flashinfer": flashinfer_cache_vol,
         "/root/.cache/deepgemm": dg_cache_vol,
     },
-    secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent.parent)],
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     gpu=gpu,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
