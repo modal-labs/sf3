@@ -1250,8 +1250,8 @@ def resolve_gameplay_base_url(
             parsed = urlsplit(static_base_url)
             netloc = parsed.netloc
             for static_suffix, gameplay_suffix in (
-                (f"--sf3-dev.{ROUTING_REGION}.modal.run", f"--gameplay-dev.{ROUTING_REGION}.modal.run"),
-                (f"--sf3.{ROUTING_REGION}.modal.run", f"--gameplay.{ROUTING_REGION}.modal.run"),
+                ("--sf3-dev.modal.run", f"--gameplay-dev.{ROUTING_REGION}.modal.run"),
+                ("--sf3.modal.run", f"--gameplay.{ROUTING_REGION}.modal.run"),
             ):
                 if netloc.endswith(static_suffix):
                     return urlunsplit((
