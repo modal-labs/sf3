@@ -197,6 +197,7 @@ CLASS_NAME = "Qwen3VLServer"  # so training code can instantiate this class
 @app.cls(
     image=sglang_image,
     gpu=gpu,
+    region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
     volumes=cache_volumes,
     secrets=[modal.Secret.from_name("huggingface-secret")],
