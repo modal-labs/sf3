@@ -3,11 +3,13 @@
 
 import base64
 import time
+import uuid
 from pathlib import Path
 
 import modal
 
 from src.utils import (
+    CONTAINER_REGION,
     MAX_CONTEXT_LEN,
     MAX_TOKENS,
     MINUTES,
@@ -20,8 +22,7 @@ from src.utils import (
 app = modal.App("sf3-llm")
 
 vllm_image = (
-    modal.Image
-    .from_registry("nvidia/cuda:12.9.0-devel-ubuntu22.04", add_python="3.12")
+    modal.Image.from_registry("nvidia/cuda:12.9.0-devel-ubuntu22.04", add_python="3.12")
     .entrypoint([])
     .uv_pip_install(
         "vllm==0.19.0",
@@ -30,11 +31,13 @@ vllm_image = (
         "qwen-vl-utils==0.0.14",
     )
     .uv_pip_install("transformers==5.5.0")
-    .env({
-        "HF_XET_HIGH_PERFORMANCE": "1",
-        "VLLM_SERVER_DEV_MODE": "1",
-        "TORCHINDUCTOR_COMPILE_THREADS": "1",
-    })
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",
+            "VLLM_SERVER_DEV_MODE": "1",
+            "TORCHINDUCTOR_COMPILE_THREADS": "1",
+        }
+    )
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
@@ -53,6 +56,7 @@ gpu = "b200"
 @app.cls(
     image=vllm_image,
     gpu=gpu,
+    region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
@@ -63,7 +67,7 @@ gpu = "b200"
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * MINUTES,
-    timeout=15 * MINUTES,
+    timeout=60 * MINUTES,
 )
 @modal.concurrent(max_inputs=max_inputs)
 class Ministral3Server:
@@ -91,20 +95,24 @@ class Ministral3Server:
             normalized_content = []
             for item in content:
                 if item.get("type") == "image":
-                    normalized_content.append({
-                        "type": "image_url",
-                        "image_url": {"url": normalize_image_url(item["image"])},
-                    })
+                    normalized_content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": normalize_image_url(item["image"])},
+                        }
+                    )
                     continue
                 if item.get("type") == "image_url":
                     image_url = item["image_url"]
                     if isinstance(image_url, str):
                         image_url = {"url": image_url}
                     image_url["url"] = normalize_image_url(image_url["url"])
-                    normalized_content.append({
-                        "type": "image_url",
-                        "image_url": image_url,
-                    })
+                    normalized_content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": image_url,
+                        }
+                    )
                     continue
                 normalized_content.append(item)
 
@@ -112,10 +120,29 @@ class Ministral3Server:
 
         return normalized
 
-    @modal.enter()
+    async def _generate(self, messages, sampling_params):
+        _, prompts = await self.llm.renderer.render_chat_async(
+            [self.normalize_messages(messages)],
+            self.chat_params,
+        )
+        output = None
+        async for output in self.llm.generate(
+            prompts[0],
+            sampling_params,
+            request_id=uuid.uuid4().hex,
+        ):
+            pass
+        if output is None:
+            raise RuntimeError("vLLM returned no output")
+        return output.outputs[0].text
+
+    @modal.enter(snap=True)
     async def enter(self):
-        from vllm import LLM, SamplingParams
+        from vllm import SamplingParams
+        from vllm.engine.arg_utils import AsyncEngineArgs
+        from vllm.renderers import ChatParams
         from vllm.sampling_params import StructuredOutputsParams
+        from vllm.v1.engine.async_llm import AsyncLLM
 
         load_path = self.ckpt_path or model_name
         revision = None if self.ckpt_path else model_revision
@@ -123,34 +150,56 @@ class Ministral3Server:
 
         self.SamplingParams = SamplingParams
         self.StructuredOutputsParams = StructuredOutputsParams
-        self.llm = LLM(
-            model=str(load_path),
-            revision=revision,
-            max_model_len=MAX_CONTEXT_LEN,
-            max_num_batched_tokens=8192,
-            max_num_seqs=max_num_seqs,
-            max_cudagraph_capture_size=max_inputs * 2,
-            swap_space=0,
-            enable_prefix_caching=True,
-            gpu_memory_utilization=0.9,
-            disable_log_stats=True,
-            limit_mm_per_prompt={"image": 1, "video": 0, "audio": 0},
-            kv_cache_dtype="fp8",
-            async_scheduling=True,
-            enable_sleep_mode=True,
-            tokenizer_mode="mistral",
-            config_format="mistral",
-            load_format="mistral",
+        self.llm = AsyncLLM.from_engine_args(
+            AsyncEngineArgs(
+                model=str(load_path),
+                revision=revision,
+                max_model_len=MAX_CONTEXT_LEN,
+                max_num_batched_tokens=8192,
+                max_num_seqs=max_num_seqs,
+                max_cudagraph_capture_size=max_inputs * 2,
+                enable_prefix_caching=True,
+                gpu_memory_utilization=0.9,
+                disable_log_stats=True,
+                limit_mm_per_prompt={"image": 1, "video": 0, "audio": 0},
+                kv_cache_dtype="fp8",
+                async_scheduling=True,
+                enable_sleep_mode=True,
+                tokenizer_mode="mistral",
+                config_format="mistral",
+                load_format="mistral",
+            )
         )
 
-        self.sampling_params_kwargs = {"max_tokens": MAX_TOKENS}
-
-        messages, _, _, _, _, _ = create_random_messages()
-
-        _ = self.llm.chat(
-            [self.normalize_messages(messages)],
-            self.SamplingParams(**self.sampling_params_kwargs),
+        self.chat_params = ChatParams(
+            chat_template_kwargs={
+                "add_generation_prompt": True,
+                "continue_final_message": False,
+                "tokenize": True,
+            }
         )
+        self.sampling_params_kwargs = {
+            "max_tokens": MAX_TOKENS,
+            "temperature": 0.0,
+        }
+
+        messages, _, _, _, _, available_moves = create_random_messages()
+
+        _ = await self._generate(
+            messages,
+            self.SamplingParams(
+                **self.sampling_params_kwargs,
+                structured_outputs=self.StructuredOutputsParams(
+                    choice=available_moves,
+                ),
+            ),
+        )
+        await self.llm.reset_mm_cache()
+        await self.llm.sleep(level=1)
+
+    @modal.enter(snap=False)
+    async def wake_up(self):
+        await self.llm.wake_up()
 
     @modal.method()
     async def boot(self):
@@ -171,16 +220,18 @@ class Ministral3Server:
                 character, super_art, super_count
             )
 
-        sampling_params = self.SamplingParams(**self.sampling_params_kwargs)
-        sampling_params.guided_decoding = self.StructuredOutputsParams(
-            choice=available_moves,
+        sampling_params = self.SamplingParams(
+            **self.sampling_params_kwargs,
+            structured_outputs=self.StructuredOutputsParams(
+                choice=available_moves,
+            ),
         )
 
-        outputs = self.llm.chat(
-            [self.normalize_messages(messages)],
+        output = await self._generate(
+            messages,
             sampling_params,
         )
-        move_name = outputs[0].outputs[0].text.strip()
+        move_name = output.strip()
 
         move_sequence, resolved_move_name = resolve_move_with_fallback(
             character, move_name, side
@@ -189,8 +240,12 @@ class Ministral3Server:
             print(f"Invalid move: {move_name}")
         return move_sequence, resolved_move_name
 
+    @modal.exit()
+    def exit(self):
+        self.llm.shutdown()
 
-@app.function(routing_region=ROUTING_REGION)
+
+@app.function(routing_region=ROUTING_REGION, timeout=15 * MINUTES)
 async def test_ministral(n_samples: int):
     llm = Ministral3Server()
     await llm.boot.remote.aio()
@@ -206,7 +261,7 @@ async def test_ministral(n_samples: int):
         )
         elapsed = (time.perf_counter() - start_time) * 1000
         ms_per_move.append(elapsed)
-        print(f"Sample {sample_idx}: {move}, {buttons}")
+        print(f"Sample {sample_idx}: {elapsed:.2f}ms, {move}, {buttons}")
 
     percentiles = [50, 90, 95, 99]
     sorted_ms = sorted(ms_per_move)
@@ -215,11 +270,11 @@ async def test_ministral(n_samples: int):
         idx = int(len(sorted_ms) * p / 100)
         idx = min(max(idx - 1, 0), len(sorted_ms) - 1)
         results[p] = sorted_ms[idx]
-    print("----------------------------------")
+    print("--------------------------------")
     print("Latency per move percentiles (ms):")
     for p in percentiles:
-        print(f"  p{p}: {results[p]:.2f}")
-    print("----------------------------------")
+        print(f"  p{p}: {results[p]:.2f}ms")
+    print("--------------------------------")
 
 
 @app.local_entrypoint()

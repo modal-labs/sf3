@@ -2,7 +2,7 @@ const createGameState = () => {
   let state = {
     // core game status
     player1Participant: "human",
-    player2Participant: "qwen36_35ba3b_fp8",
+    player2Participant: "qwen35_9b",
     loaded: false,
     paused: false,
     serverReady: false,

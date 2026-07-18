@@ -1,9 +1,9 @@
 # https://modal.com/docs/examples/sglang_low_latency
-# https://docs.vllm.ai/projects/recipes/en/latest/Google/Gemma4.html
-# https://huggingface.co/google/gemma-4-31B-it#1-sampling-parameters
+# https://huggingface.co/Qwen/Qwen3.5-9B
+# https://cookbook.sglang.io/autoregressive/Qwen/Qwen3.6
 
 import asyncio
-import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -24,16 +24,17 @@ from src.utils import (
 app = modal.App("sf3-llm")
 
 sglang_image = (
-    modal.Image
-    .from_registry("modalresearch/sglang:nightly-dev-cu13-20260619-patched")
+    modal.Image.from_registry("modalresearch/sglang:nightly-dev-cu13-20260619-patched")
     .entrypoint([])
-    .run_commands("rm -rf /root/.cache/huggingface")
-    .env({
-        "HF_XET_HIGH_PERFORMANCE": "1",
-        "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
-        "TORCHINDUCTOR_COMPILE_THREADS": "1",
-        "CUDA_ENABLE_COREDUMP_ON_EXCEPTION": "0",
-    })
+    .run_commands("rm -rf /root/.cache/huggingface /root/.cache/flashinfer")
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",
+            "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
+            "TORCHINDUCTOR_COMPILE_THREADS": "1",
+            "CUDA_ENABLE_COREDUMP_ON_EXCEPTION": "0",
+        }
+    )
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
@@ -41,30 +42,18 @@ flashinfer_cache_vol = modal.Volume.from_name(
     "sf3-flashinfer-cache", create_if_missing=True
 )
 
-model_name = "google/gemma-4-31B-it"
-model_revision = "3548789868c5356dbf307c98e6f609007b82b3eb"
-draft_model_name = "z-lab/gemma-4-31B-it-DFlash"
-draft_model_revision = "eabd648301ce28583cc14757912e5e0f84e152e1"
+model_name = "Qwen/Qwen3.5-9B"
+model_revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 
 max_inputs = max_num_seqs = 16
 gpu = "B200:1"
 
 
-def _unique_move_from_json_prefix(
-    raw: str, available_moves: list[str]
-) -> str | None:
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        try:
-            value = json.loads(raw + '"')
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(value, str):
-            return None
-        matches = [move for move in available_moves if move.startswith(value)]
-        return matches[0] if len(matches) == 1 else None
-    return value if isinstance(value, str) and value in available_moves else None
+def _unique_move_from_prefix(raw: str, available_moves: list[str]) -> str | None:
+    if not raw:
+        return None
+    matches = [move for move in available_moves if move.startswith(raw)]
+    return matches[0] if len(matches) == 1 else None
 
 
 @app.cls(
@@ -83,7 +72,7 @@ def _unique_move_from_json_prefix(
     timeout=60 * MINUTES,
 )
 @modal.concurrent(max_inputs=max_inputs)
-class Gemma4Server:
+class Qwen35Server:
     ckpt_path: str = modal.parameter(default="")
 
     def prepare_request(self, messages: list[dict]) -> tuple[str, list[str]]:
@@ -104,8 +93,18 @@ class Gemma4Server:
         return prompt, images
 
     @staticmethod
-    def _move_schema(available_moves: list[str]) -> str:
-        return json.dumps({"type": "string", "enum": available_moves})
+    def _move_regex(available_moves: list[str]) -> str:
+        return (
+            "(?:"
+            + "|".join(
+                sorted(
+                    (re.escape(move).replace(r"\ ", " ") for move in available_moves),
+                    key=len,
+                    reverse=True,
+                )
+            )
+            + ")"
+        )
 
     @modal.enter(snap=True)
     async def enter(self):
@@ -120,31 +119,29 @@ class Gemma4Server:
             model_path=str(load_path),
             revision=revision,
             context_length=MAX_CONTEXT_LEN,
-            attention_backend="triton",
             chunked_prefill_size=8192,
-            max_prefill_tokens=8192,
             max_running_requests=max_num_seqs,
             cuda_graph_max_bs_decode=max_inputs * 2,
-            cuda_graph_max_bs_prefill=max_inputs * 2,
-            disable_cuda_graph_padding=True,
-            mem_fraction_static=0.85,
+            mem_fraction_static=0.7,
             grammar_backend="xgrammar",
-            enable_multimodal=True,
+            attention_backend="trtllm_mha",
+            linear_attn_prefill_backend="flashinfer",
+            linear_attn_decode_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+            mm_attention_backend="fa4",
             enable_memory_saver=True,
             enable_weights_cpu_backup=True,
             trust_remote_code=True,
-            speculative_algorithm="DFLASH",
-            speculative_draft_model_path=draft_model_name,
-            speculative_draft_model_revision=draft_model_revision,
-            speculative_dflash_block_size=16,
-            speculative_draft_attention_backend="fa4",
         )
         self.tokenizer = self.llm.tokenizer_manager.tokenizer
 
         self.sampling_params = {
-            "temperature": 1.0,
-            "top_p": 0.95,
-            "top_k": 64,
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 20,
+            "min_p": 0.0,
+            "presence_penalty": 1.5,
+            "repetition_penalty": 1.0,
             "max_new_tokens": MAX_TOKENS,
         }
 
@@ -152,7 +149,7 @@ class Gemma4Server:
         prompt, images = self.prepare_request(messages)
         warmup_params = {
             **self.sampling_params,
-            "json_schema": self._move_schema(available_moves),
+            "regex": self._move_regex(available_moves),
         }
 
         _ = await self.llm.async_generate(
@@ -194,7 +191,7 @@ class Gemma4Server:
 
         sampling_params = {
             **self.sampling_params,
-            "json_schema": self._move_schema(available_moves),
+            "regex": self._move_regex(available_moves),
         }
         prompt, images = self.prepare_request(messages)
         request_id = uuid.uuid4().hex
@@ -212,7 +209,7 @@ class Gemma4Server:
                 last_output = output
                 if output["meta_info"].get("finish_reason") is not None:
                     break
-                move_name = _unique_move_from_json_prefix(
+                move_name = _unique_move_from_prefix(
                     output["text"].strip(), available_moves
                 )
                 if move_name is not None:
@@ -231,13 +228,7 @@ class Gemma4Server:
             raise RuntimeError("SGLang stream produced no output")
 
         if move_name is None:
-            raw = last_output["text"].strip()
-            try:
-                move_name = json.loads(raw) if raw.startswith('"') else raw
-            except json.JSONDecodeError:
-                move_name = raw.strip('"')
-            if not isinstance(move_name, str):
-                move_name = str(move_name)
+            move_name = last_output["text"].strip()
 
         move_sequence, resolved_move_name = resolve_move_with_fallback(
             character, move_name, side
@@ -252,8 +243,8 @@ class Gemma4Server:
 
 
 @app.function(routing_region=ROUTING_REGION, timeout=15 * MINUTES)
-async def test_gemma(n_samples: int):
-    llm = Gemma4Server()
+async def test_qwen35(n_samples: int):
+    llm = Qwen35Server()
     await llm.boot.remote.aio()
 
     ms_per_move = []
@@ -285,4 +276,4 @@ async def test_gemma(n_samples: int):
 
 @app.local_entrypoint()
 async def main(n_samples: int = 100):
-    await test_gemma.remote.aio(n_samples)
+    await test_qwen35.remote.aio(n_samples)

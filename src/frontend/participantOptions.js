@@ -1,6 +1,6 @@
 export const PARTICIPANT_LABELS = {
   human: "YOU",
-  qwen36_35ba3b_fp8: "QWEN3.6-35B",
+  qwen35_9b: "QWEN3.5-9B",
   gemma4_31b: "GEMMA4-31B",
   ministral3_14b: "MINISTRAL3-14B",
 };
