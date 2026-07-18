@@ -222,7 +222,6 @@ class Qwen3VLServer:
             max_running_requests=max_num_seqs,
             cuda_graph_max_bs=max_inputs * 2,
             mem_fraction_static=0.9,
-            kv_cache_dtype="fp8_e4m3",
             grammar_backend="xgrammar",
         )
         self.tokenizer = self.llm.tokenizer_manager.tokenizer
