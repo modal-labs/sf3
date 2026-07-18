@@ -58,16 +58,18 @@ modal deploy -m src.app
 <details>
 <summary>Summer 2026</summary>
 
+### Updates
+
 - The methodology for measuring LLM latencies in `src/serve/` was fixed, alongside an updated diagram:
 
 ![Latency](./assets/readme/latency.png "Latency diagram")
-
-- Training migrated to [Modal Training Gym](https://github.com/modal-projects/training-gym) and `Qwen3-VL-8B-Instruct`. Instead of an offline KTO approach, we use slime GRPO self-play.
 
 </details>
 
 <details>
 <summary>Spring 2026</summary>
+
+### Updates
 
 - Since the diambra engine no longer works, this project now runs the game through a local MAME runtime.
 - To improve reliability, video is streamed over WebRTC instead of websockets.
