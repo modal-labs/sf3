@@ -13,8 +13,8 @@ from src.serve.gemma4_31b import Gemma4Server
 from src.serve.gemma4_31b import app as gemma4_app
 from src.serve.ministral3_14b import Ministral3Server
 from src.serve.ministral3_14b import app as ministral3_app
-from src.serve.qwen36_35ba3b_fp8 import Qwen36Server
-from src.serve.qwen36_35ba3b_fp8 import app as qwen36_app
+from src.serve.qwen35_9b import Qwen35Server
+from src.serve.qwen35_9b import app as qwen35_app
 from src.utils import (
     COMBOS,
     CONTAINER_REGION,
@@ -30,18 +30,17 @@ from src.utils import (
 
 # web app
 app = (
-    modal
-    .App(name="sf3")
+    modal.App(name="sf3")
     .include(gemma4_app)
     .include(ministral3_app)
-    .include(qwen36_app)
+    .include(qwen35_app)
 )
 
 PARTICIPANT_SPECS = {
     "human": {"label": "YOU", "server_cls": None},
-    "qwen36_35ba3b_fp8": {
-        "label": "QWEN3.6-35B",
-        "server_cls": Qwen36Server,
+    "qwen35_9b": {
+        "label": "QWEN3.5-9B",
+        "server_cls": Qwen35Server,
     },
     "gemma4_31b": {
         "label": "GEMMA4-31B",
@@ -56,7 +55,7 @@ PARTICIPANT_LABELS = {
     participant: spec["label"] for participant, spec in PARTICIPANT_SPECS.items()
 }
 DEFAULT_PLAYER1_PARTICIPANT = "human"
-DEFAULT_PLAYER2_PARTICIPANT = "qwen36_35ba3b_fp8"
+DEFAULT_PLAYER2_PARTICIPANT = "qwen35_9b"
 
 local_assets_dir = Path(__file__).parent.parent / "assets"
 local_engine_dir = local_assets_dir / "engine"
@@ -69,8 +68,7 @@ remote_portraits_dir = "/root/portraits"
 remote_sounds_dir = "/root/sounds"
 
 static_image = (
-    modal.Image
-    .debian_slim(python_version="3.12")
+    modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install(
         "fastapi[standard]==0.116.1",
     )
@@ -98,17 +96,18 @@ static_image = (
 )
 
 gameplay_image = (
-    modal.Image
-    .debian_slim(python_version="3.12")
+    modal.Image.debian_slim(python_version="3.12")
     .apt_install(
         "ffmpeg",
         "libturbojpeg-dev",
     )
-    .env({
-        "SDL_VIDEODRIVER": "dummy",
-        "SDL_AUDIODRIVER": "dummy",
-        "XDG_RUNTIME_DIR": "/tmp",
-    })
+    .env(
+        {
+            "SDL_VIDEODRIVER": "dummy",
+            "SDL_AUDIODRIVER": "dummy",
+            "XDG_RUNTIME_DIR": "/tmp",
+        }
+    )
     .uv_pip_install(
         "aiortc",
         "av",
@@ -409,10 +408,12 @@ class Web:
                 self.actions = {"agent_0": 0, "agent_1": 0}
 
             async def send_game_state(self):
-                await self.outbound_message_queue.put({
-                    "type": "game_state",
-                    "data": make_json_safe(self.game_state),
-                })
+                await self.outbound_message_queue.put(
+                    {
+                        "type": "game_state",
+                        "data": make_json_safe(self.game_state),
+                    }
+                )
 
             async def handle_inbound_message(self, data):
                 message_type = data.get("type", "unknown")
@@ -596,14 +597,16 @@ class Web:
                         return
                     if websocket.client_state == WebSocketState.DISCONNECTED:
                         return
-                    await websocket.send_json({
-                        "type": "ice_candidate",
-                        "candidate": {
-                            "candidate_sdp": candidate.to_sdp(),
-                            "sdpMid": candidate.sdpMid,
-                            "sdpMLineIndex": candidate.sdpMLineIndex,
-                        },
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "ice_candidate",
+                            "candidate": {
+                                "candidate_sdp": candidate.to_sdp(),
+                                "sdpMid": candidate.sdpMid,
+                                "sdpMLineIndex": candidate.sdpMLineIndex,
+                            },
+                        }
+                    )
                 except Exception:
                     print(f"Error sending ICE candidate: {traceback.format_exc()}")
 
@@ -679,11 +682,13 @@ class Web:
                             )
                             answer = await pc.createAnswer()
                             await pc.setLocalDescription(answer)
-                            await websocket.send_json({
-                                "type": "answer",
-                                "sdp": pc.localDescription.sdp,
-                                "peer_id": "server",
-                            })
+                            await websocket.send_json(
+                                {
+                                    "type": "answer",
+                                    "sdp": pc.localDescription.sdp,
+                                    "peer_id": "server",
+                                }
+                            )
                             continue
 
                         if message_type == "ice_candidate":
@@ -755,10 +760,12 @@ class Web:
             async def keepalive():
                 try:
                     while not session.stop_event.is_set():
-                        await session.outbound_message_queue.put({
-                            "type": "heartbeat",
-                            "data": {},
-                        })
+                        await session.outbound_message_queue.put(
+                            {
+                                "type": "heartbeat",
+                                "data": {},
+                            }
+                        )
                         await asyncio.sleep(15)
                 except Exception:
                     print(f"Error in keepalive: {traceback.format_exc()}")
@@ -1148,10 +1155,12 @@ class Web:
                                     session.transition_start_time = (
                                         asyncio.get_event_loop().time()
                                     )
-                                    await session.outbound_message_queue.put({
-                                        "type": "transition",
-                                        "data": {"transition_type": "round"},
-                                    })
+                                    await session.outbound_message_queue.put(
+                                        {
+                                            "type": "transition",
+                                            "data": {"transition_type": "round"},
+                                        }
+                                    )
 
                             if not session.in_transition:
                                 frame = session.observation.get("frame")
@@ -1254,13 +1263,15 @@ def resolve_gameplay_base_url(
                 ("--sf3.modal.run", f"--gameplay.{ROUTING_REGION}.modal.run"),
             ):
                 if netloc.endswith(static_suffix):
-                    return urlunsplit((
-                        parsed.scheme,
-                        netloc[: -len(static_suffix)] + gameplay_suffix,
-                        "",
-                        "",
-                        "",
-                    ))
+                    return urlunsplit(
+                        (
+                            parsed.scheme,
+                            netloc[: -len(static_suffix)] + gameplay_suffix,
+                            "",
+                            "",
+                            "",
+                        )
+                    )
         except ValueError:
             pass
 

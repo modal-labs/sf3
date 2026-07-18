@@ -1,14 +1,17 @@
-# https://modal.com/docs/examples/vllm_inference
+# https://modal.com/docs/examples/sglang_low_latency
 # https://docs.vllm.ai/projects/recipes/en/latest/Google/Gemma4.html
 # https://huggingface.co/google/gemma-4-31B-it#1-sampling-parameters
 
-import base64
+import asyncio
+import json
 import time
+import uuid
 from pathlib import Path
 
 import modal
 
 from src.utils import (
+    CONTAINER_REGION,
     MAX_CONTEXT_LEN,
     MAX_TOKENS,
     MINUTES,
@@ -20,47 +23,60 @@ from src.utils import (
 
 app = modal.App("sf3-llm")
 
-vllm_image = (
+sglang_image = (
     modal.Image
-    .from_registry("nvidia/cuda:12.9.0-devel-ubuntu22.04", add_python="3.12")
+    .from_registry("modalresearch/sglang:nightly-dev-cu13-20260619-patched")
     .entrypoint([])
-    .uv_pip_install(
-        "vllm==0.19.0",
-        "huggingface-hub==0.36.0",
-        "flashinfer-python==0.6.6",
-        "qwen-vl-utils==0.0.14",
-    )
-    .uv_pip_install("transformers==5.5.0")
+    .run_commands("rm -rf /root/.cache/huggingface")
     .env({
         "HF_XET_HIGH_PERFORMANCE": "1",
-        "VLLM_SERVER_DEV_MODE": "1",
+        "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
         "TORCHINDUCTOR_COMPILE_THREADS": "1",
+        "CUDA_ENABLE_COREDUMP_ON_EXCEPTION": "0",
     })
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
-vllm_cache_vol = modal.Volume.from_name("sf3-vllm-cache", create_if_missing=True)
 flashinfer_cache_vol = modal.Volume.from_name(
     "sf3-flashinfer-cache", create_if_missing=True
 )
 
 model_name = "google/gemma-4-31B-it"
-model_revision = "439edf5652646a0d1bd8b46bfdc1d3645761a445"
+model_revision = "3548789868c5356dbf307c98e6f609007b82b3eb"
+draft_model_name = "z-lab/gemma-4-31B-it-DFlash"
+draft_model_revision = "eabd648301ce28583cc14757912e5e0f84e152e1"
 
 max_inputs = max_num_seqs = 16
-gpu = "b200"
+gpu = "B200:1"
+
+
+def _unique_move_from_json_prefix(
+    raw: str, available_moves: list[str]
+) -> str | None:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            value = json.loads(raw + '"')
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(value, str):
+            return None
+        matches = [move for move in available_moves if move.startswith(value)]
+        return matches[0] if len(matches) == 1 else None
+    return value if isinstance(value, str) and value in available_moves else None
 
 
 @app.cls(
-    image=vllm_image,
-    gpu=gpu,
-    routing_region=ROUTING_REGION,
+    image=sglang_image,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
-        "/root/.cache/vllm": vllm_cache_vol,
         "/root/.cache/flashinfer": flashinfer_cache_vol,
     },
-    secrets=[modal.Secret.from_dotenv(Path(__file__).parent.parent.parent)],
+    secrets=[modal.Secret.from_name("huggingface-secret")],
+    gpu=gpu,
+    region=CONTAINER_REGION,
+    routing_region=ROUTING_REGION,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * MINUTES,
@@ -70,91 +86,91 @@ gpu = "b200"
 class Gemma4Server:
     ckpt_path: str = modal.parameter(default="")
 
-    def normalize_messages(self, messages):
-        def normalize_image_url(url: str) -> str:
-            if url.startswith(("http://", "https://", "data:", "file://")):
-                return url
-            if url.startswith("/"):
-                suffix = Path(url).suffix.lower()
-                mime = "image/png" if suffix == ".png" else "image/jpeg"
-                return f"data:{mime};base64," + base64.b64encode(
-                    Path(url).read_bytes()
-                ).decode("utf-8")
-            return url
+    def prepare_request(self, messages: list[dict]) -> tuple[str, list[str]]:
+        images = [
+            item["image"]
+            for message in messages
+            if isinstance(message["content"], list)
+            for item in message["content"]
+            if item.get("type") == "image"
+        ]
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            return_dict=False,
+            enable_thinking=False,
+        )
+        return prompt, images
 
-        normalized = []
-        for message in messages:
-            content = message["content"]
-            if not isinstance(content, list):
-                normalized.append(message)
-                continue
+    @staticmethod
+    def _move_schema(available_moves: list[str]) -> str:
+        return json.dumps({"type": "string", "enum": available_moves})
 
-            normalized_content = []
-            for item in content:
-                if item.get("type") == "image":
-                    normalized_content.append({
-                        "type": "image_url",
-                        "image_url": {"url": normalize_image_url(item["image"])},
-                    })
-                    continue
-                if item.get("type") == "image_url":
-                    image_url = item["image_url"]
-                    if isinstance(image_url, str):
-                        image_url = {"url": image_url}
-                    image_url["url"] = normalize_image_url(image_url["url"])
-                    normalized_content.append({
-                        "type": "image_url",
-                        "image_url": image_url,
-                    })
-                    continue
-                normalized_content.append(item)
-
-            normalized.append({**message, "content": normalized_content})
-
-        return normalized
-
-    @modal.enter()
+    @modal.enter(snap=True)
     async def enter(self):
-        from vllm import LLM, SamplingParams
-        from vllm.sampling_params import StructuredOutputsParams
+        import sglang as sgl
+        from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
 
         load_path = self.ckpt_path or model_name
         revision = None if self.ckpt_path else model_revision
         print(f"Loading model from {load_path}")
 
-        self.SamplingParams = SamplingParams
-        self.StructuredOutputsParams = StructuredOutputsParams
-        self.llm = LLM(
-            model=str(load_path),
+        self.llm = sgl.Engine(
+            model_path=str(load_path),
             revision=revision,
-            max_model_len=MAX_CONTEXT_LEN,
-            max_num_batched_tokens=8192,
-            max_num_seqs=max_num_seqs,
-            max_cudagraph_capture_size=max_inputs * 2,
-            swap_space=0,
-            enable_prefix_caching=True,
-            gpu_memory_utilization=0.9,
-            disable_log_stats=True,
-            limit_mm_per_prompt={"image": 1, "video": 0, "audio": 0},
-            kv_cache_dtype="fp8",
-            async_scheduling=True,
-            enable_sleep_mode=True,
+            context_length=MAX_CONTEXT_LEN,
+            attention_backend="triton",
+            chunked_prefill_size=8192,
+            max_prefill_tokens=8192,
+            max_running_requests=max_num_seqs,
+            cuda_graph_max_bs_decode=max_inputs * 2,
+            cuda_graph_max_bs_prefill=max_inputs * 2,
+            disable_cuda_graph_padding=True,
+            mem_fraction_static=0.85,
+            grammar_backend="xgrammar",
+            enable_multimodal=True,
+            enable_memory_saver=True,
+            enable_weights_cpu_backup=True,
+            trust_remote_code=True,
+            speculative_algorithm="DFLASH",
+            speculative_draft_model_path=draft_model_name,
+            speculative_draft_model_revision=draft_model_revision,
+            speculative_dflash_block_size=16,
+            speculative_draft_attention_backend="fa4",
         )
+        self.tokenizer = self.llm.tokenizer_manager.tokenizer
 
-        self.chat_template_kwargs = {"enable_thinking": False}
-        self.sampling_params_kwargs = {
+        self.sampling_params = {
             "temperature": 1.0,
             "top_p": 0.95,
             "top_k": 64,
-            "max_tokens": MAX_TOKENS,
+            "max_new_tokens": MAX_TOKENS,
         }
 
-        messages, _, _, _, _, _ = create_random_messages()
+        messages, _, _, _, _, available_moves = create_random_messages()
+        prompt, images = self.prepare_request(messages)
+        warmup_params = {
+            **self.sampling_params,
+            "json_schema": self._move_schema(available_moves),
+        }
 
-        _ = self.llm.chat(
-            [self.normalize_messages(messages)],
-            self.SamplingParams(**self.sampling_params_kwargs),
-            chat_template_kwargs=self.chat_template_kwargs,
+        _ = await self.llm.async_generate(
+            prompt,
+            image_data=images,
+            sampling_params=warmup_params,
+        )
+        await asyncio.sleep(1)
+        await self.llm.tokenizer_manager.release_memory_occupation(
+            ReleaseMemoryOccupationReqInput(tags=["kv_cache"]), None
+        )
+
+    @modal.enter(snap=False)
+    async def wake_up(self):
+        from sglang.srt.managers.io_struct import ResumeMemoryOccupationReqInput
+
+        await self.llm.tokenizer_manager.resume_memory_occupation(
+            ResumeMemoryOccupationReqInput(tags=["kv_cache"]), None
         )
 
     @modal.method()
@@ -176,19 +192,52 @@ class Gemma4Server:
                 character, super_art, super_count
             )
 
-        sampling_params = self.SamplingParams(
-            **self.sampling_params_kwargs,
-            structured_outputs=self.StructuredOutputsParams(
-                choice=available_moves,
-            ),
+        sampling_params = {
+            **self.sampling_params,
+            "json_schema": self._move_schema(available_moves),
+        }
+        prompt, images = self.prepare_request(messages)
+        request_id = uuid.uuid4().hex
+        generator = await self.llm.async_generate(
+            prompt,
+            image_data=images,
+            sampling_params=sampling_params,
+            stream=True,
+            rid=request_id,
         )
+        last_output = None
+        move_name = None
+        try:
+            async for output in generator:
+                last_output = output
+                if output["meta_info"].get("finish_reason") is not None:
+                    break
+                move_name = _unique_move_from_json_prefix(
+                    output["text"].strip(), available_moves
+                )
+                if move_name is not None:
+                    break
+        finally:
+            try:
+                if (
+                    last_output is None
+                    or last_output["meta_info"].get("finish_reason") is None
+                ):
+                    self.llm.tokenizer_manager.abort_request(request_id)
+            finally:
+                await generator.aclose()
 
-        outputs = self.llm.chat(
-            [self.normalize_messages(messages)],
-            sampling_params,
-            chat_template_kwargs=self.chat_template_kwargs,
-        )
-        move_name = outputs[0].outputs[0].text.strip()
+        if last_output is None:
+            raise RuntimeError("SGLang stream produced no output")
+
+        if move_name is None:
+            raw = last_output["text"].strip()
+            try:
+                move_name = json.loads(raw) if raw.startswith('"') else raw
+            except json.JSONDecodeError:
+                move_name = raw.strip('"')
+            if not isinstance(move_name, str):
+                move_name = str(move_name)
 
         move_sequence, resolved_move_name = resolve_move_with_fallback(
             character, move_name, side
@@ -197,8 +246,12 @@ class Gemma4Server:
             print(f"Invalid move: {move_name}")
         return move_sequence, resolved_move_name
 
+    @modal.exit()
+    async def exit(self):
+        self.llm.shutdown()
 
-@app.function(routing_region=ROUTING_REGION)
+
+@app.function(routing_region=ROUTING_REGION, timeout=15 * MINUTES)
 async def test_gemma(n_samples: int):
     llm = Gemma4Server()
     await llm.boot.remote.aio()
@@ -214,7 +267,7 @@ async def test_gemma(n_samples: int):
         )
         elapsed = (time.perf_counter() - start_time) * 1000
         ms_per_move.append(elapsed)
-        print(f"Sample {sample_idx}: {move}, {buttons}")
+        print(f"Sample {sample_idx}: {elapsed:.2f}ms, {move}, {buttons}")
 
     percentiles = [50, 90, 95, 99]
     sorted_ms = sorted(ms_per_move)

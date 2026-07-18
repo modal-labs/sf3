@@ -42,7 +42,7 @@ modal secret create wandb-secret WANDB_API_KEY=your-key
 modal run -m src.training.qwen35_35ba3b
 
 # Test model latency
-modal run -m src.serve.qwen36_35ba3b_fp8
+modal run -m src.serve.qwen35_9b
 modal run -m src.serve.gemma4_31b
 modal run -m src.serve.ministral3_14b
 
