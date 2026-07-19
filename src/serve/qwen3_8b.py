@@ -3,7 +3,6 @@ import re
 import time
 
 import modal
-from modal.exception import NotFoundError
 
 from src.utils import (
     CONTAINER_REGION,
@@ -59,15 +58,13 @@ def checkpoint_iter_index(name: str) -> int:
 
 def completed_sf3_training_run_ids() -> list[str]:
     from modal_training_gym import MetadataStore, Qwen3_VL_8B, list_checkpoints
-    from modal_training_gym.utils.metadata import (
-        vol_get_summary_items,
-        vol_get_summary_items_healed,
-    )
+    from modal_training_gym.utils.metadata import vol_get_summary_items_healed
 
-    try:
-        runs = vol_get_summary_items_healed(MetadataStore.TRAINING_RUNS_SUMMARY)
-    except NotFoundError:
-        runs = vol_get_summary_items(MetadataStore.TRAINING_RUNS_SUMMARY) or []
+    runs = vol_get_summary_items_healed(MetadataStore.TRAINING_RUNS_SUMMARY)
+    result_run_ids = {
+        str(result["training_run_id"])
+        for result in vol_get_summary_items_healed(MetadataStore.TRAIN_RESULTS_SUMMARY)
+    }
     runs.sort(
         key=lambda run: (
             int(
@@ -97,13 +94,10 @@ def completed_sf3_training_run_ids() -> list[str]:
             continue
 
         training_run_id = str(run.get("training_run_id") or "")
-        if not training_run_id:
+        if not training_run_id or training_run_id not in result_run_ids:
             continue
-        try:
-            if list_checkpoints(training_run_id):
-                run_ids.append(training_run_id)
-        except KeyError:
-            continue
+        if list_checkpoints(training_run_id):
+            run_ids.append(training_run_id)
 
     return run_ids
 
