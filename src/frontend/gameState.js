@@ -3,6 +3,8 @@ const createGameState = () => {
     // core game status
     player1Participant: "human",
     player2Participant: "qwen35_9b",
+    modelDifficulty: 2,
+    cpuDifficulty: 8,
     loaded: false,
     paused: false,
     serverReady: false,

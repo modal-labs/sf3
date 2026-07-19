@@ -5,12 +5,16 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping, Protocol, Sequence
 
 from src.utils import STUN_BAR_MAX, SUPER_BAR_MAX, TIMER_MAX
 
 _ROM_FILENAME = "sfiii3n.zip"
 _ROM_SHA256 = "7239b5eb005488db22ace477501c574e9420c0ab70aeeb0795dfeb474284d416"
+_CPU_CHARACTER_MENU = 2
+_CPU_OPPONENT_MENUS = {3, 9}
+_CPU_OPPONENT_CONFIRM_DELAY = 30
+_CPU_OPPONENT_CONFIRM_INTERVAL = 30
 
 # Raw emulator ids used by MAME / sfiii-gym.
 # Intentionally different than CHARACTER_TO_ID in utils.py
@@ -91,20 +95,62 @@ def _normalize_local_observation(raw: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _boot_steps(frame_ratio: int):
+def arcade_level(difficulty: int) -> int:
+    """Map public difficulties 1..8 to arcade menu levels 0..7."""
+    return max(0, min(7, int(difficulty) - 1))
+
+
+def _menu_steps(
+    frame_ratio: int,
+    entries: Sequence[tuple[int, tuple[Any, ...]]],
+) -> list[dict[str, Any]]:
+    return [
+        {"wait": int(wait / frame_ratio), "actions": list(actions)}
+        for wait, actions in entries
+    ]
+
+
+def _boot_steps(frame_ratio: int, *, vs_cpu: bool = False):
+    # MAME is container-only; local imports must not load its native wheel.
     from MAMEToolkit.sf_environment.Actions import Actions
 
-    return [
-        {"wait": 0, "actions": [Actions.SERVICE]},
-        {"wait": int(30 / frame_ratio), "actions": [Actions.P1_UP]},
-        {"wait": int(30 / frame_ratio), "actions": [Actions.P1_JPUNCH]},
-        {"wait": int(300 / frame_ratio), "actions": [Actions.COIN_P1, Actions.COIN_P2]},
-        {"wait": int(10 / frame_ratio), "actions": [Actions.COIN_P1, Actions.COIN_P2]},
-        {
-            "wait": int(60 / frame_ratio),
-            "actions": [Actions.P1_START, Actions.P2_START],
-        },
+    coin = (Actions.COIN_P1,) if vs_cpu else (Actions.COIN_P1, Actions.COIN_P2)
+    start = (Actions.P1_START,) if vs_cpu else (Actions.P1_START, Actions.P2_START)
+    return _menu_steps(
+        frame_ratio,
+        [
+            (0, (Actions.SERVICE,)),
+            (30, (Actions.P1_UP,)),
+            (30, (Actions.P1_JPUNCH,)),
+            (300, coin),
+            (10, coin),
+            (60, start),
+        ],
+    )
+
+
+def _cpu_difficulty_steps(frame_ratio: int, difficulty: int):
+    from MAMEToolkit.sf_environment.Actions import Actions
+
+    up = Actions.P1_UP
+    down = Actions.P1_DOWN
+    jab = Actions.P1_JPUNCH
+    entries = [
+        (0, (Actions.SERVICE,)),
+        *([(10, (up,))] * 4),
+        (10, (jab,)),
+        (10, (down,)),
+        (10, (down,)),
+        (10, (jab, Actions.P1_FPUNCH)),
+        (10, (up,)),
+        (10, (jab,)),
     ]
+    level = arcade_level(difficulty)
+    direction = Actions.P1_LEFT if level < 3 else Actions.P1_RIGHT
+    entries.extend((10, (direction,)) for _ in range(abs(level - 3)))
+    tail = [down] * 6 + [jab, down, jab, down, down, jab, down, down, down, jab]
+    entries.extend((10, (action,)) for action in tail)
+    return _menu_steps(frame_ratio, entries)
 
 
 def _action_values(player: int, action_id: int):
@@ -143,9 +189,17 @@ class EnvironmentConfig:
     render_mode: str = "rgb_array"
     roms_path: str = "/root"
     env_id: str | None = None
+    vs_cpu: bool = False
+    cpu_difficulty: int = 8
 
     def resolved_env_id(self) -> str:
         return self.env_id or f"sf3-{uuid.uuid4().hex[:8]}"
+
+
+@dataclass
+class _CpuMenuAdvanceState:
+    pending_p1_states: set[int]
+    opponent_menu_frames: int = 0
 
 
 class GameEnvironment(Protocol):
@@ -200,6 +254,7 @@ class LocalSfiiiAdapter:
             "stunBarP2": Address("0x02069611", "u32"),
             "characterP1": Address("0x02011387", "u8"),
             "characterP2": Address("0x02011388", "u8"),
+            "menuState": Address("0x0201546B", "u8"),
             "characterSelectStateP1": Address("0x0201553D", "u8"),
             "characterSelectStateP2": Address("0x02015545", "u8"),
             "characterSelectSaP1": Address("0x020154D3", "u8"),
@@ -226,6 +281,7 @@ class LocalSfiiiAdapter:
         self.expected_wins = {"P1": 0, "P2": 0}
         self._reset_called = False
         self._closed = False
+        self._cpu_character_lock_installed = False
 
     def reset(self) -> tuple[dict[str, Any], dict[str, Any]]:
         if self._closed:
@@ -243,10 +299,10 @@ class LocalSfiiiAdapter:
         self,
         actions: dict[str, int],
     ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
-        raw = self._sub_step(
-            _action_values(1, actions.get("agent_0", 0))
-            + _action_values(2, actions.get("agent_1", 0))
-        )
+        pressed = _action_values(1, actions.get("agent_0", 0))
+        if not self.config.vs_cpu:
+            pressed = pressed + _action_values(2, actions.get("agent_1", 0))
+        raw = self._sub_step(pressed)
         reward = float(raw["reward"])
         round_done = False
         game_done = False
@@ -289,6 +345,62 @@ class LocalSfiiiAdapter:
         address = self.memory_addresses[address_name].address
         self.emu.console.writeln(f"mem:write_u8({address}, {int(value)})")
 
+    def _register_cpu_character_lock(self) -> None:
+        if self._cpu_character_lock_installed:
+            return
+        address = self.memory_addresses["characterP2"].address
+        character = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
+        # Story mode assigns its route opponent during the frame after pre-step writes.
+        # Install after boot/difficulty inputs so the service menu is untouched.
+        self.emu.console.writeln(
+            "function lockConfiguredCpuCharacter() "
+            f"mem:write_u8({address}, {character}) "
+            "end"
+        )
+        self.emu.console.writeln(
+            'emu.register_frame(lockConfiguredCpuCharacter, "configured-cpu-character")'
+        )
+        self._cpu_character_lock_installed = True
+
+    def _lock_matchup_characters(self) -> None:
+        for player, character in enumerate(self.config.characters, start=1):
+            self._write_u8(
+                f"characterP{player}",
+                CHARACTER_NAME_TO_LOCAL_ID[character],
+            )
+
+    def _advance_cpu_menus(
+        self,
+        state: _CpuMenuAdvanceState,
+        *,
+        p1_char: int,
+        p2_char: int,
+        p1_jab: int,
+    ) -> list[int]:
+        pressed: list[int] = []
+        menu_state = int(self._data["menuState"])
+        p1_state = int(self._data["characterSelectStateP1"])
+        if menu_state == _CPU_CHARACTER_MENU and p1_state in state.pending_p1_states:
+            pressed.append(p1_jab)
+            state.pending_p1_states.remove(p1_state)
+        if menu_state in _CPU_OPPONENT_MENUS:
+            state.opponent_menu_frames += 1
+        else:
+            state.opponent_menu_frames = 0
+        cpu_confirm_elapsed = state.opponent_menu_frames - _CPU_OPPONENT_CONFIRM_DELAY
+        if (
+            cpu_confirm_elapsed >= 0
+            and cpu_confirm_elapsed % _CPU_OPPONENT_CONFIRM_INTERVAL == 0
+        ):
+            self._write_u8("characterP1", p1_char)
+            self._write_u8("characterP2", p2_char)
+            self._write_u8(
+                "characterSelectColorP2",
+                max(0, self.config.outfits[1] - 1),
+            )
+            pressed.append(p1_jab)
+        return pressed
+
     def _wait_for_boot_ready(self) -> None:
         stable_frames = 0
         for _ in range(240):
@@ -309,83 +421,100 @@ class LocalSfiiiAdapter:
     def _wait_for_character_select(self) -> None:
         from MAMEToolkit.sf_environment.Actions import Actions
 
+        players = ("P1",) if self.config.vs_cpu else ("P1", "P2")
+        start_actions = [Actions.P1_START.value]
+        if not self.config.vs_cpu:
+            start_actions.append(Actions.P2_START.value)
         for _ in range(240):
             self._data = self.emu.step([])
-            state_p1 = int(self._data["characterSelectStateP1"])
-            state_p2 = int(self._data["characterSelectStateP2"])
-            if state_p1 >= 2 and state_p2 >= 2:
+            states = [
+                int(self._data[f"characterSelectState{player}"]) for player in players
+            ]
+            if all(state >= 2 for state in states):
                 return
-            if state_p1 == 0 or state_p2 == 0:
-                self._data = self.emu.step([
-                    Actions.P1_START.value,
-                    Actions.P2_START.value,
-                ])
-        raise TimeoutError("Timed out waiting for 2-player character select")
+            if any(state == 0 for state in states):
+                self._data = self.emu.step(start_actions)
+        mode = "1-player" if self.config.vs_cpu else "2-player"
+        raise TimeoutError(f"Timed out waiting for {mode} character select")
 
     def _select_characters(self) -> None:
         from MAMEToolkit.sf_environment.Actions import Actions
 
-        p1_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[0]]
-        p2_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
-        p1_color = max(0, self.config.outfits[0] - 1)
-        p2_color = max(0, self.config.outfits[1] - 1)
-        p1_sa = max(0, self.config.super_arts[0] - 1)
-        p2_sa = max(0, self.config.super_arts[1] - 1)
-
-        character_locked = {"P1": False, "P2": False}
-        sa_locked = {"P1": False, "P2": False}
+        players = [
+            (
+                f"P{index + 1}",
+                CHARACTER_NAME_TO_LOCAL_ID[character],
+                max(0, self.config.outfits[index] - 1),
+                max(0, self.config.super_arts[index] - 1),
+                (Actions.P1_JPUNCH if index == 0 else Actions.P2_JPUNCH).value,
+            )
+            for index, character in enumerate(self.config.characters)
+            if index == 0 or not self.config.vs_cpu
+        ]
+        character_locked = {player: False for player, *_ in players}
+        sa_locked = character_locked.copy()
 
         for _ in range(240):
             self._data = self.emu.step([])
-            state_p1 = int(self._data["characterSelectStateP1"])
-            state_p2 = int(self._data["characterSelectStateP2"])
-
-            self._write_u8("characterP1", p1_char)
-            self._write_u8("characterP2", p2_char)
-            self._write_u8("characterSelectColorP1", p1_color)
-            self._write_u8("characterSelectColorP2", p2_color)
-
             pressed = []
-            if state_p1 == 2 and not character_locked["P1"]:
-                pressed.append(Actions.P1_JPUNCH.value)
-                character_locked["P1"] = True
-            if state_p2 == 2 and not character_locked["P2"]:
-                pressed.append(Actions.P2_JPUNCH.value)
-                character_locked["P2"] = True
-
-            if state_p1 >= 3:
-                self._write_u8("characterSelectSaP1", p1_sa)
-            if state_p2 >= 3:
-                self._write_u8("characterSelectSaP2", p2_sa)
-
-            if state_p1 == 4 and not sa_locked["P1"]:
-                pressed.append(Actions.P1_JPUNCH.value)
-                sa_locked["P1"] = True
-            if state_p2 == 4 and not sa_locked["P2"]:
-                pressed.append(Actions.P2_JPUNCH.value)
-                sa_locked["P2"] = True
+            states = {}
+            for player, character, color, super_art, jab in players:
+                state = int(self._data[f"characterSelectState{player}"])
+                states[player] = state
+                self._write_u8(f"character{player}", character)
+                self._write_u8(f"characterSelectColor{player}", color)
+                if state == 2 and not character_locked[player]:
+                    pressed.append(jab)
+                    character_locked[player] = True
+                if state >= 3:
+                    self._write_u8(f"characterSelectSa{player}", super_art)
+                if state == 4 and not sa_locked[player]:
+                    pressed.append(jab)
+                    sa_locked[player] = True
 
             if pressed:
                 self._data = self.emu.step(pressed)
-                state_p1 = int(self._data["characterSelectStateP1"])
-                state_p2 = int(self._data["characterSelectStateP2"])
-
-            if state_p1 == 5 and state_p2 == 5:
+                states = {
+                    player: int(self._data[f"characterSelectState{player}"])
+                    for player, *_ in players
+                }
+            if all(state == 5 for state in states.values()):
+                self._lock_matchup_characters()
                 return
 
         raise TimeoutError("Timed out locking characters/super arts")
 
     def _wait_for_fight_start(self) -> dict[str, Any]:
-        self._data = self.emu.step([])
+        p1_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[0]]
+        p2_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
+        cpu_menus = None
+        p1_jab = 0
+        if self.config.vs_cpu:
+            from MAMEToolkit.sf_environment.Actions import Actions
+
+            cpu_menus = _CpuMenuAdvanceState(pending_p1_states={2, 4})
+            p1_jab = Actions.P1_JPUNCH.value
         for _ in range(900):
+            self._lock_matchup_characters()
+            pressed = (
+                self._advance_cpu_menus(
+                    cpu_menus,
+                    p1_char=p1_char,
+                    p2_char=p2_char,
+                    p1_jab=p1_jab,
+                )
+                if cpu_menus is not None
+                else []
+            )
+            self._data = self.emu.step(pressed)
             if int(self._data["fighting"]) != 0:
                 break
-            self._data = self.emu.step([])
         else:
             raise TimeoutError(
                 "Timed out waiting for fight start "
                 f"(p1_state={int(self._data['characterSelectStateP1'])}, "
                 f"p2_state={int(self._data['characterSelectStateP2'])}, "
+                f"menu={int(self._data['menuState'])}, "
                 f"fighting={int(self._data['fighting'])})"
             )
 
@@ -397,11 +526,29 @@ class LocalSfiiiAdapter:
             "P1": int(self._data["winsP1"]),
             "P2": int(self._data["winsP2"]),
         }
-        return self._sub_step([])
+        data = self._sub_step([])
+        actual_p1 = int(data["characterP1"])
+        actual_p2 = int(data["characterP2"])
+        if actual_p1 != p1_char or actual_p2 != p2_char:
+            raise RuntimeError(
+                "fight started with unexpected matchup "
+                f"(p1={actual_p1}, p2={actual_p2}; "
+                f"expected p1={p1_char}, p2={p2_char})"
+            )
+        return data
 
     def _new_game(self) -> None:
         self._wait_for_boot_ready()
-        self._run_steps(_boot_steps(self.config.step_ratio))
+        if self.config.vs_cpu:
+            self._run_steps(
+                _cpu_difficulty_steps(
+                    self.config.step_ratio, self.config.cpu_difficulty
+                )
+            )
+            self._run_steps(_boot_steps(self.config.step_ratio, vs_cpu=True))
+            self._register_cpu_character_lock()
+        else:
+            self._run_steps(_boot_steps(self.config.step_ratio))
         self._wait_for_character_select()
         self._select_characters()
         self.expected_health = {"P1": 0, "P2": 0}

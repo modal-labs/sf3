@@ -7,22 +7,90 @@ import { InputController } from "./inputController.js";
 import { MovesDisplay } from "./movesEngine.js";
 import { GamepadUINavigator } from "./gamepadUINavigator.js";
 import {
-  PARTICIPANT_LABELS,
   getParticipantLabel,
+  getParticipantsForSeat,
+  isCpuParticipant,
   isHumanParticipant,
 } from "./participantOptions.js";
 import { SOUND_KEYS } from "./constants.js";
 
+const DIFFICULTY_MODES = {
+  model: {
+    stateKey: "modelDifficulty",
+    min: 0,
+    max: 2,
+    defaultValue: 2,
+    labels: ["Basic", "Advanced", "Expert"],
+    descriptions: [
+      "No combos or super arts",
+      "Combos enabled, no super arts",
+      "All moves available",
+    ],
+    descriptionColors: ["text-sf-green", "text-sf-blue", "text-sf-red"],
+  },
+  cpu: {
+    stateKey: "cpuDifficulty",
+    min: 1,
+    max: 8,
+    defaultValue: 8,
+    labels: ["1", "CPU", "8"],
+    descriptionFor: (value) => `Arcade CPU level ${value} of 8`,
+    descriptionColors: ["text-sf-beige"],
+  },
+};
+
 const createUIController = () => {
-  const populateParticipantSelect = (select, { allowHuman }) => {
+  const populateParticipantSelect = (select, seat) => {
     select.innerHTML = "";
-    Object.entries(PARTICIPANT_LABELS).forEach(([participant, label]) => {
-      if (!allowHuman && isHumanParticipant(participant)) return;
+    getParticipantsForSeat(seat).forEach(({ participant, label }) => {
       const option = document.createElement("option");
       option.value = participant;
       option.textContent = label;
       select.appendChild(option);
     });
+  };
+
+  const getActiveDifficultyMode = () => {
+    const state = GameState.get();
+    return isCpuParticipant(state.player2Participant) ? "cpu" : "model";
+  };
+
+  const syncDifficultySlider = () => {
+    const slider = byId("difficulty-slider");
+    const description = byId("difficulty-description");
+    const labelMin = byId("difficulty-label-min");
+    const labelMid = byId("difficulty-label-mid");
+    const labelMax = byId("difficulty-label-max");
+    if (!slider || !description || !labelMin || !labelMid || !labelMax) return;
+
+    const modeKey = getActiveDifficultyMode();
+    const mode = DIFFICULTY_MODES[modeKey];
+    const state = GameState.get();
+    const value = state[mode.stateKey] ?? mode.defaultValue;
+
+    slider.min = String(mode.min);
+    slider.max = String(mode.max);
+    slider.value = String(value);
+    labelMin.textContent = mode.labels[0];
+    labelMid.textContent = mode.labels[1];
+    labelMax.textContent = mode.labels[2];
+
+    if (mode.descriptions) {
+      description.textContent = mode.descriptions[value];
+    } else {
+      description.textContent = mode.descriptionFor(value);
+    }
+
+    description.classList.remove(
+      "text-sf-green",
+      "text-sf-blue",
+      "text-sf-red",
+      "text-sf-beige"
+    );
+    const color =
+      mode.descriptionColors[value] ??
+      mode.descriptionColors[mode.descriptionColors.length - 1];
+    description.classList.add(color);
   };
 
   const syncParticipantUI = () => {
@@ -36,6 +104,7 @@ const createUIController = () => {
     if (p2Select) p2Select.value = state.player2Participant;
     if (p1Label) p1Label.textContent = getParticipantLabel(state.player1Participant);
     if (p2Label) p2Label.textContent = getParticipantLabel(state.player2Participant);
+    syncDifficultySlider();
   };
 
   const setupParticipantSelectors = () => {
@@ -43,8 +112,8 @@ const createUIController = () => {
     const p2Select = byId("participant-select-p2");
     if (!p1Select || !p2Select) return;
 
-    populateParticipantSelect(p1Select, { allowHuman: true });
-    populateParticipantSelect(p2Select, { allowHuman: false });
+    populateParticipantSelect(p1Select, "P1");
+    populateParticipantSelect(p2Select, "P2");
 
     p1Select.addEventListener("change", () => {
       GameState.setPlayer1Participant(p1Select.value);
@@ -63,40 +132,24 @@ const createUIController = () => {
 
   const setupDifficultySlider = () => {
     const slider = byId("difficulty-slider");
-    const description = byId("difficulty-description");
+    if (!slider) return;
 
-    if (!slider || !description) return;
-
-    const descriptions = [
-      "No combos or super arts",
-      "Combos enabled, no super arts",
-      "All moves available",
-    ];
-
-    const updateDescription = () => {
-      const value = parseInt(slider.value);
-      description.textContent = descriptions[value];
-
-      description.classList.remove(
-        "text-sf-green",
-        "text-sf-blue",
-        "text-sf-red"
-      );
-      if (value === 0) description.classList.add("text-sf-green");
-      else if (value === 1) description.classList.add("text-sf-blue");
-      else description.classList.add("text-sf-red");
+    const onInput = () => {
+      const mode = DIFFICULTY_MODES[getActiveDifficultyMode()];
+      const value = parseInt(slider.value, 10);
+      GameState.updateProperty(mode.stateKey, value);
+      syncDifficultySlider();
     };
 
-    slider.addEventListener("input", updateDescription);
+    slider.addEventListener("input", onInput);
     slider.addEventListener("change", () => {
       AudioManager.playSound(SOUND_KEYS.CLICK);
     });
-
     slider.addEventListener("mouseenter", () => {
       AudioManager.playSound(SOUND_KEYS.HOVER);
     });
 
-    updateDescription();
+    syncDifficultySlider();
   };
 
   const setupOptionsPanel = () => {

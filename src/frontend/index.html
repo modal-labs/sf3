@@ -632,7 +632,10 @@
         >
           <div class="w-full flex flex-col gap-6 lg:gap-8">
             <div class="flex flex-col justify-center items-center gap-4">
-              <div class="relative w-full max-w-md flex flex-col gap-2">
+              <div
+                id="difficulty-control"
+                class="relative w-full max-w-md flex flex-col gap-2"
+              >
                 <input
                   type="range"
                   id="difficulty-slider"
@@ -643,14 +646,20 @@
                   class="w-full h-2 bg-gradient-to-r from-sf-green via-sf-blue to-sf-red rounded-lg cursor-pointer slider appearance-none"
                 />
                 <div class="flex justify-between">
-                  <span class="text-sf-green">Basic</span>
-                  <span class="text-sf-blue">Advanced</span>
-                  <span class="text-sf-red">Expert</span>
+                  <span id="difficulty-label-min" class="text-sf-green"
+                    >Basic</span
+                  >
+                  <span id="difficulty-label-mid" class="text-sf-blue"
+                    >Advanced</span
+                  >
+                  <span id="difficulty-label-max" class="text-sf-red"
+                    >Expert</span
+                  >
                 </div>
+                <p id="difficulty-description" class="text-sf-beige text-center">
+                  All moves available
+                </p>
               </div>
-              <p id="difficulty-description" class="text-sf-beige text-center">
-                All moves available
-              </p>
             </div>
             <div class="flex justify-center items-center gap-8 lg:gap-12">
               <div class="flex items-center gap-4">

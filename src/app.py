@@ -5,6 +5,7 @@ import time
 from contextlib import asynccontextmanager
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import modal
@@ -37,18 +38,30 @@ app = (
     .include(qwen35_app)
 )
 
-PARTICIPANT_SPECS = {
-    "human": {"label": "YOU", "server_cls": None},
+PARTICIPANT_SPECS: dict[str, dict[str, Any]] = {
+    "human": {
+        "label": "YOU",
+        "seats": ("P1",),
+        "server_cls": None,
+    },
+    "cpu": {
+        "label": "CPU",
+        "seats": ("P2",),
+        "server_cls": None,
+    },
     "qwen35_9b": {
         "label": "QWEN3.5-9B",
+        "seats": ("P1", "P2"),
         "server_cls": Qwen35Server,
     },
     "gemma4_31b": {
         "label": "GEMMA4-31B",
+        "seats": ("P1", "P2"),
         "server_cls": Gemma4Server,
     },
     "ministral3_14b": {
         "label": "MINISTRAL3-14B",
+        "seats": ("P1", "P2"),
         "server_cls": Ministral3Server,
     },
 }
@@ -57,6 +70,25 @@ PARTICIPANT_LABELS = {
 }
 DEFAULT_PLAYER1_PARTICIPANT = "human"
 DEFAULT_PLAYER2_PARTICIPANT = "qwen35_9b"
+DEFAULT_CPU_DIFFICULTY = 8
+
+
+def participant_has_model_server(participant: str) -> bool:
+    spec = PARTICIPANT_SPECS.get(participant)
+    return spec is not None and spec["server_cls"] is not None
+
+
+def is_cpu_participant(participant: str) -> bool:
+    return participant == "cpu"
+
+
+def normalize_cpu_difficulty(value: Any) -> int:
+    try:
+        difficulty = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_CPU_DIFFICULTY
+    return max(1, min(8, difficulty))
+
 
 local_assets_dir = Path(__file__).parent.parent / "assets"
 local_engine_dir = local_assets_dir / "engine"
@@ -125,24 +157,24 @@ gameplay_image = (
 )
 
 
-def normalize_participant(participant: str, *, allow_human: bool) -> str:
-    if participant not in PARTICIPANT_LABELS:
-        return (
-            DEFAULT_PLAYER1_PARTICIPANT if allow_human else DEFAULT_PLAYER2_PARTICIPANT
-        )
-    if participant == "human" and not allow_human:
-        return DEFAULT_PLAYER2_PARTICIPANT
+def normalize_participant(participant: str, *, seat: str) -> str:
+    default = (
+        DEFAULT_PLAYER1_PARTICIPANT if seat == "P1" else DEFAULT_PLAYER2_PARTICIPANT
+    )
+    spec = PARTICIPANT_SPECS.get(participant)
+    if spec is None or seat not in spec["seats"]:
+        return default
     return participant
 
 
 def normalize_game_participants(game_settings: dict) -> tuple[str, str]:
     player1_participant = normalize_participant(
         game_settings.get("player1Participant", DEFAULT_PLAYER1_PARTICIPANT),
-        allow_human=True,
+        seat="P1",
     )
     player2_participant = normalize_participant(
         game_settings.get("player2Participant", DEFAULT_PLAYER2_PARTICIPANT),
-        allow_human=False,
+        seat="P2",
     )
     game_settings["player1Participant"] = player1_participant
     game_settings["player2Participant"] = player2_participant
@@ -359,6 +391,7 @@ class Web:
                     "player1Participant": DEFAULT_PLAYER1_PARTICIPANT,
                     "player2Participant": DEFAULT_PLAYER2_PARTICIPANT,
                     "difficulty": "expert",
+                    "cpuDifficulty": DEFAULT_CPU_DIFFICULTY,
                 }
                 self.game_state = create_initial_game_state()
 
@@ -581,7 +614,7 @@ class Web:
                 tasks = [
                     self.create_participant_server(participant)
                     for participant in {player1_participant, player2_participant}
-                    if participant != "human"
+                    if participant_has_model_server(participant)
                 ]
                 if tasks:
                     await asyncio.gather(*tasks)
@@ -914,16 +947,16 @@ class Web:
                         player1_participant, player2_participant = (
                             normalize_game_participants(session.game_settings)
                         )
-                        if (
-                            player1_participant == "human"
-                            and player2_participant == "human"
+                        if not (
+                            participant_has_model_server(player1_participant)
+                            or participant_has_model_server(player2_participant)
                         ):
                             continue
 
                         last_player1 = None
                         last_player2 = None
 
-                        if player1_participant != "human":
+                        if participant_has_model_server(player1_participant):
                             snap = snapshot_robot_observation()
                             if snap is None:
                                 continue
@@ -970,7 +1003,7 @@ class Web:
                             ):
                                 session.player1_recent_move_names.pop(0)
 
-                        if player2_participant != "human":
+                        if participant_has_model_server(player2_participant):
                             snap = snapshot_robot_observation()
                             if snap is None:
                                 continue
@@ -1037,6 +1070,12 @@ class Web:
                             normalize_game_participants(session.game_settings)
                         )
 
+                        vs_cpu = is_cpu_participant(player2_participant)
+                        cpu_difficulty = DEFAULT_CPU_DIFFICULTY
+                        if vs_cpu:
+                            cpu_difficulty = normalize_cpu_difficulty(
+                                session.game_settings.get("cpuDifficulty")
+                            )
                         env_config = EnvironmentConfig(
                             characters=(
                                 p1_settings["character"],
@@ -1052,6 +1091,8 @@ class Web:
                             ),
                             step_ratio=1,
                             render_mode="rgb_array",
+                            vs_cpu=vs_cpu,
+                            cpu_difficulty=cpu_difficulty,
                         )
                         environment_task = asyncio.create_task(
                             asyncio.to_thread(create_environment, env_config)
