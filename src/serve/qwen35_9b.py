@@ -2,7 +2,6 @@
 # https://huggingface.co/Qwen/Qwen3.5-9B
 # https://cookbook.sglang.io/autoregressive/Qwen/Qwen3.6
 
-import asyncio
 import re
 import time
 import uuid
@@ -66,8 +65,6 @@ def _unique_move_from_prefix(raw: str, available_moves: list[str]) -> str | None
     gpu=gpu,
     region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
-    enable_memory_snapshot=True,
-    experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * MINUTES,
     timeout=60 * MINUTES,
 )
@@ -106,10 +103,9 @@ class Qwen35Server:
             + ")"
         )
 
-    @modal.enter(snap=True)
+    @modal.enter()
     async def enter(self):
         import sglang as sgl
-        from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
 
         load_path = self.ckpt_path or model_name
         revision = None if self.ckpt_path else model_revision
@@ -129,8 +125,6 @@ class Qwen35Server:
             linear_attn_decode_backend="flashinfer",
             mamba_ssm_dtype="bfloat16",
             mm_attention_backend="fa4",
-            enable_memory_saver=True,
-            enable_weights_cpu_backup=True,
             trust_remote_code=True,
         )
         self.tokenizer = self.llm.tokenizer_manager.tokenizer
@@ -156,18 +150,6 @@ class Qwen35Server:
             prompt,
             image_data=images,
             sampling_params=warmup_params,
-        )
-        await asyncio.sleep(1)
-        await self.llm.tokenizer_manager.release_memory_occupation(
-            ReleaseMemoryOccupationReqInput(tags=["kv_cache"]), None
-        )
-
-    @modal.enter(snap=False)
-    async def wake_up(self):
-        from sglang.srt.managers.io_struct import ResumeMemoryOccupationReqInput
-
-        await self.llm.tokenizer_manager.resume_memory_occupation(
-            ResumeMemoryOccupationReqInput(tags=["kv_cache"]), None
         )
 
     @modal.method()
