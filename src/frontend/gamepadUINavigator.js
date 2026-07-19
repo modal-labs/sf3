@@ -502,10 +502,13 @@ const createGamepadUINavigator = () => {
       } else if (inputY > 0) {
         moveCursor(superArtP1Idx);
       } else if (inputX !== 0) {
-        const slider = $("#difficulty-slider");
+        const slider = $(currentEl);
         if (slider) {
           const currentValue = parseInt(slider.value);
-          const newValue = Math.max(0, Math.min(2, currentValue + inputX));
+          const newValue = Math.max(
+            parseInt(slider.min),
+            Math.min(parseInt(slider.max), currentValue + inputX)
+          );
           if (newValue !== currentValue) {
             slider.value = newValue;
             slider.dispatchEvent(new Event("input"));

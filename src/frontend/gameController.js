@@ -4,7 +4,10 @@ import { ScreenManager } from "./screenManager.js";
 import { WebRtcManager } from "./webRtcManager.js";
 import { AudioManager } from "./audioManager.js";
 import { GamepadManager } from "./gamepadManager.js";
-import { isHumanParticipant } from "./participantOptions.js";
+import {
+  isCpuParticipant,
+  isHumanParticipant,
+} from "./participantOptions.js";
 import { SOUND_KEYS } from "./constants.js";
 import { setCanvasSize } from "./app.js";
 
@@ -78,10 +81,8 @@ const createGameController = () => {
   const startGame = () => {
     const state = GameState.get();
 
-    const difficultySlider = byId("difficulty-slider");
-    const difficultyValue = parseInt(difficultySlider?.value || 2);
     const difficultyMap = ["basic", "advanced", "expert"];
-
+    const modelDifficulty = state.modelDifficulty ?? 2;
     const gameConfig = {
       player1Participant: state.player1Participant,
       player2Participant: state.player2Participant,
@@ -95,8 +96,11 @@ const createGameController = () => {
         outfit: state.characterGrid.p2.outfit,
         superArt: parseInt(byId("super-art-select-p2")?.value || 1),
       },
-      difficulty: difficultyMap[difficultyValue],
+      difficulty: difficultyMap[modelDifficulty] || "expert",
     };
+    if (isCpuParticipant(state.player2Participant)) {
+      gameConfig.cpuDifficulty = state.cpuDifficulty ?? 8;
+    }
 
     GameState.update({
       player1: gameConfig.player1,
