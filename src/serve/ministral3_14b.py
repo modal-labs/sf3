@@ -34,7 +34,6 @@ vllm_image = (
     .env(
         {
             "HF_XET_HIGH_PERFORMANCE": "1",
-            "VLLM_SERVER_DEV_MODE": "1",
             "TORCHINDUCTOR_COMPILE_THREADS": "1",
         }
     )
@@ -64,8 +63,6 @@ gpu = "b200"
         "/root/.cache/flashinfer": flashinfer_cache_vol,
     },
     secrets=[modal.Secret.from_name("huggingface-secret")],
-    enable_memory_snapshot=True,
-    experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * MINUTES,
     timeout=60 * MINUTES,
 )
@@ -136,7 +133,7 @@ class Ministral3Server:
             raise RuntimeError("vLLM returned no output")
         return output.outputs[0].text
 
-    @modal.enter(snap=True)
+    @modal.enter()
     async def enter(self):
         from vllm import SamplingParams
         from vllm.engine.arg_utils import AsyncEngineArgs
@@ -164,7 +161,6 @@ class Ministral3Server:
                 limit_mm_per_prompt={"image": 1, "video": 0, "audio": 0},
                 kv_cache_dtype="fp8",
                 async_scheduling=True,
-                enable_sleep_mode=True,
                 tokenizer_mode="mistral",
                 config_format="mistral",
                 load_format="mistral",
@@ -195,11 +191,6 @@ class Ministral3Server:
             ),
         )
         await self.llm.reset_mm_cache()
-        await self.llm.sleep(level=1)
-
-    @modal.enter(snap=False)
-    async def wake_up(self):
-        await self.llm.wake_up()
 
     @modal.method()
     async def boot(self):

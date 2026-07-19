@@ -2,7 +2,6 @@
 # https://docs.vllm.ai/projects/recipes/en/latest/Google/Gemma4.html
 # https://huggingface.co/google/gemma-4-31B-it#1-sampling-parameters
 
-import asyncio
 import json
 import time
 import uuid
@@ -77,8 +76,6 @@ def _unique_move_from_json_prefix(
     gpu=gpu,
     region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
-    enable_memory_snapshot=True,
-    experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * MINUTES,
     timeout=60 * MINUTES,
 )
@@ -107,10 +104,9 @@ class Gemma4Server:
     def _move_schema(available_moves: list[str]) -> str:
         return json.dumps({"type": "string", "enum": available_moves})
 
-    @modal.enter(snap=True)
+    @modal.enter()
     async def enter(self):
         import sglang as sgl
-        from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
 
         load_path = self.ckpt_path or model_name
         revision = None if self.ckpt_path else model_revision
@@ -130,8 +126,6 @@ class Gemma4Server:
             mem_fraction_static=0.85,
             grammar_backend="xgrammar",
             enable_multimodal=True,
-            enable_memory_saver=True,
-            enable_weights_cpu_backup=True,
             trust_remote_code=True,
             speculative_algorithm="DFLASH",
             speculative_draft_model_path=draft_model_name,
@@ -159,18 +153,6 @@ class Gemma4Server:
             prompt,
             image_data=images,
             sampling_params=warmup_params,
-        )
-        await asyncio.sleep(1)
-        await self.llm.tokenizer_manager.release_memory_occupation(
-            ReleaseMemoryOccupationReqInput(tags=["kv_cache"]), None
-        )
-
-    @modal.enter(snap=False)
-    async def wake_up(self):
-        from sglang.srt.managers.io_struct import ResumeMemoryOccupationReqInput
-
-        await self.llm.tokenizer_manager.resume_memory_occupation(
-            ResumeMemoryOccupationReqInput(tags=["kv_cache"]), None
         )
 
     @modal.method()
