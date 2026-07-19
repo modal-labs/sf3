@@ -567,10 +567,11 @@ class Web:
                 return frame_cache["jpeg_bytes"]
 
             def get_frame_data_url(frame: np.ndarray) -> str:
+                jpeg_bytes = get_frame_jpeg_bytes(frame)
                 if frame_cache["data_url"] is None:
                     frame_cache["data_url"] = (
                         "data:image/jpeg;base64,"
-                        + base64.b64encode(get_frame_jpeg_bytes(frame)).decode("utf-8")
+                        + base64.b64encode(jpeg_bytes).decode("utf-8")
                     )
                 return frame_cache["data_url"]
 
@@ -844,6 +845,52 @@ class Web:
                 llm_ms = generation_ms + (n_buttons - 1) * (1000.0 / 60.0)
                 return max(0.0, human_ms - llm_ms)
 
+            def snapshot_robot_observation():
+                obs = session.observation
+                if (
+                    obs is None
+                    or "timer" not in obs
+                    or obs["timer"] is None
+                    or "frame" not in obs
+                ):
+                    return None
+                p1_settings = session.game_settings["player1"]
+                p2_settings = session.game_settings["player2"]
+                obs_p1 = obs["P1"]
+                obs_p2 = obs["P2"]
+                player1 = PlayerState(
+                    character=p1_settings["character"],
+                    super_art=p1_settings["superArt"],
+                    wins=obs_p1["wins"][0],
+                    side=obs_p1["side"],
+                    stunned=obs_p1["stunned"],
+                    stun_bar=obs_p1["stun_bar"][0],
+                    health=obs_p1["health"][0],
+                    super_count=obs_p1["super_count"][0],
+                    super_bar=obs_p1["super_bar"][0],
+                )
+                player2 = PlayerState(
+                    character=p2_settings["character"],
+                    super_art=p2_settings["superArt"],
+                    wins=obs_p2["wins"][0],
+                    side=obs_p2["side"],
+                    stunned=obs_p2["stunned"],
+                    stun_bar=obs_p2["stun_bar"][0],
+                    health=obs_p2["health"][0],
+                    super_count=obs_p2["super_count"][0],
+                    super_bar=obs_p2["super_bar"][0],
+                )
+                frames = [get_frame_data_url(obs["frame"])]
+                return (
+                    p1_settings,
+                    p2_settings,
+                    obs_p1,
+                    obs_p2,
+                    player1,
+                    player2,
+                    frames,
+                )
+
             async def run_robot_background():
                 try:
                     while not session.stop_event.is_set():
@@ -864,17 +911,6 @@ class Web:
                             continue
 
                         action_generation = session.action_generation
-                        frame = session.observation["frame"]
-
-                        obs_p1 = session.observation["P1"]
-                        obs_p2 = session.observation["P2"]
-
-                        p1_settings = session.game_settings["player1"]
-                        p2_settings = session.game_settings["player2"]
-
-                        p1_character = p1_settings["character"]
-                        p2_character = p2_settings["character"]
-
                         player1_participant, player2_participant = (
                             normalize_game_participants(session.game_settings)
                         )
@@ -884,34 +920,23 @@ class Web:
                         ):
                             continue
 
-                        player1 = PlayerState(
-                            character=p1_character,
-                            super_art=p1_settings["superArt"],
-                            wins=obs_p1["wins"][0],
-                            side=obs_p1["side"],
-                            stunned=obs_p1["stunned"],
-                            stun_bar=obs_p1["stun_bar"][0],
-                            health=obs_p1["health"][0],
-                            super_count=obs_p1["super_count"][0],
-                            super_bar=obs_p1["super_bar"][0],
-                        )
-
-                        player2 = PlayerState(
-                            character=p2_character,
-                            super_art=p2_settings["superArt"],
-                            wins=obs_p2["wins"][0],
-                            side=obs_p2["side"],
-                            stunned=obs_p2["stunned"],
-                            stun_bar=obs_p2["stun_bar"][0],
-                            health=obs_p2["health"][0],
-                            super_count=obs_p2["super_count"][0],
-                            super_bar=obs_p2["super_bar"][0],
-                        )
-
-                        frame_data_url = get_frame_data_url(frame)
-                        frames = [frame_data_url]
+                        last_player1 = None
+                        last_player2 = None
 
                         if player1_participant != "human":
+                            snap = snapshot_robot_observation()
+                            if snap is None:
+                                continue
+                            (
+                                p1_settings,
+                                p2_settings,
+                                obs_p1,
+                                obs_p2,
+                                player1,
+                                player2,
+                                frames,
+                            ) = snap
+                            last_player1, last_player2 = player1, player2
                             t0 = time.perf_counter()
                             moves_p1, move_name_p1 = await get_participant_move(
                                 player1_participant,
@@ -946,6 +971,19 @@ class Web:
                                 session.player1_recent_move_names.pop(0)
 
                         if player2_participant != "human":
+                            snap = snapshot_robot_observation()
+                            if snap is None:
+                                continue
+                            (
+                                p1_settings,
+                                p2_settings,
+                                obs_p1,
+                                obs_p2,
+                                player1,
+                                player2,
+                                frames,
+                            ) = snap
+                            last_player1, last_player2 = player1, player2
                             t0 = time.perf_counter()
                             moves, move_name = await get_participant_move(
                                 player2_participant,
@@ -975,8 +1013,9 @@ class Web:
                             ):
                                 session.player2_recent_move_names.pop(0)
 
-                        session.prev_player1_state = player1
-                        session.prev_player2_state = player2
+                        if last_player1 is not None:
+                            session.prev_player1_state = last_player1
+                            session.prev_player2_state = last_player2
 
                 except WebSocketDisconnect:
                     session.stop_event.set()
