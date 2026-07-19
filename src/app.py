@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import time
 from contextlib import asynccontextmanager
 from fractions import Fraction
 from pathlib import Path
@@ -836,6 +837,13 @@ class Web:
                     timeout=1 * MINUTES,
                 )
 
+            def human_floor_wait_ms(n_buttons: int, generation_ms: float) -> float:
+                if n_buttons < 1:
+                    return 0.0
+                human_ms = 100.0 + 30.0 * (n_buttons - 1)
+                llm_ms = generation_ms + (n_buttons - 1) * (1000.0 / 60.0)
+                return max(0.0, human_ms - llm_ms)
+
             async def run_robot_background():
                 try:
                     while not session.stop_event.is_set():
@@ -904,6 +912,7 @@ class Web:
                         frames = [frame_data_url]
 
                         if player1_participant != "human":
+                            t0 = time.perf_counter()
                             moves_p1, move_name_p1 = await get_participant_move(
                                 player1_participant,
                                 player1,
@@ -915,8 +924,16 @@ class Web:
                                 session.player1_recent_move_names,
                                 frames,
                             )
+                            generation_ms_p1 = (time.perf_counter() - t0) * 1000.0
                             if action_generation != session.action_generation:
                                 continue
+                            wait_ms = human_floor_wait_ms(
+                                len(moves_p1), generation_ms_p1
+                            )
+                            if wait_ms > 0:
+                                await asyncio.sleep(wait_ms / 1000.0)
+                                if action_generation != session.action_generation:
+                                    continue
                             session.enqueue_buttons(
                                 session.player1_next_buttons, moves_p1
                             )
@@ -929,6 +946,7 @@ class Web:
                                 session.player1_recent_move_names.pop(0)
 
                         if player2_participant != "human":
+                            t0 = time.perf_counter()
                             moves, move_name = await get_participant_move(
                                 player2_participant,
                                 player2,
@@ -940,8 +958,14 @@ class Web:
                                 session.player2_recent_move_names,
                                 frames,
                             )
+                            generation_ms = (time.perf_counter() - t0) * 1000.0
                             if action_generation != session.action_generation:
                                 continue
+                            wait_ms = human_floor_wait_ms(len(moves), generation_ms)
+                            if wait_ms > 0:
+                                await asyncio.sleep(wait_ms / 1000.0)
+                                if action_generation != session.action_generation:
+                                    continue
                             session.enqueue_buttons(session.player2_next_buttons, moves)
                             session.player2_recent_move_names.append(move_name)
 
