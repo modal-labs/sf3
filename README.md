@@ -37,6 +37,8 @@ modal secret create wandb-secret WANDB_API_KEY=your-key
 
 ### Commands
 
+For demos, prepend web app commands with `SF3_WARM_MODELS=1`.
+
 ```bash
 # Alternate between rounds of collecting self-play data and training the LLM
 modal run -m src.training.qwen35_35ba3b
@@ -62,7 +64,7 @@ modal deploy -m src.app
 
 - The methodology for measuring LLM latencies in `src/serve/` was fixed, alongside an updated diagram:
 
-![Latency](./assets/readme/latency.png "Latency diagram")
+![Latency](./assets/readme/latency.webp "Latency diagram")
 
 </details>
 
@@ -88,7 +90,7 @@ The goal of this project was to promote [Modal sandboxes](https://modal.com/docs
 
 Below is a diagram explaining how the application works:
 
-![Architecture](./assets/readme/arch_old.png "Architecture")
+![Architecture](./assets/readme/arch_old.webp "Architecture")
 
 We have four important services, each running in their own Modal container:
 
@@ -106,7 +108,7 @@ Some important notes for how this even works:
 
 Below is a diagram explaining the latency for one action:
 
-![Latency](./assets/readme/latency_old.png "Latency diagram")
+![Latency](./assets/readme/latency_old.webp "Latency diagram")
 
 Note that at 60 FPS, each frame is emitted once every 16ms. Also, since the latency the web server communicates with the Diambra engine and the latency of storing nonlocal variables is much lower than everything else, we treat it as basically instantaneous.
 
@@ -120,7 +122,7 @@ Some napkin math:
 
 Below are some results from training the YOLO model:
 
-![Training curves](./assets/readme/results.png "Training curves") ![Confusion matrix](./assets/readme/confusion_matrix.png "Confusion matrix") ![Recall curve](./assets/readme/BoxR_curve.png "Recall curve") ![Validation predictions](./assets/readme/val_batch0_pred.jpg "Validation predictions")
+![Training curves](./assets/readme/results.webp "Training curves") ![Confusion matrix](./assets/readme/confusion_matrix.webp "Confusion matrix") ![Recall curve](./assets/readme/BoxR_curve.webp "Recall curve") ![Validation predictions](./assets/readme/val_batch0_pred.webp "Validation predictions")
 
 Note that we care most about recall here since we want to make sure all characters are detected.
 
@@ -128,7 +130,7 @@ Note that we care most about recall here since we want to make sure all characte
 
 Below is a diagram explaining how we train the LLM using RL:
 
-![RL diagram](./assets/readme/training_rl.png "RL diagram")
+![RL diagram](./assets/readme/training_rl.webp "RL diagram")
 
 We use a self-play temporal-difference policy-gradient approach (here, the policy is an LLM instead of something like an actor-critic) that is "bootstrapped" by prior knowledge from the LLM, meaning we don't require expert data but instead rely only on given features such as game state. This is inspired by [TD Gammon for the game of Backgammon](https://davidstarsilver.wordpress.com/wp-content/uploads/2025/04/lecture-10-case-study-rl-in-classic-games.pdf), though search was not implemented for sake of time.
 
@@ -154,7 +156,7 @@ To measure the efficacy of training, we compare the LLM's performance against GP
 
 Below are some visualizations:
 
-![ELO](./assets/readme/match_history_baseline.png "ELO")
+![ELO](./assets/readme/match_history_baseline.webp "ELO")
 
 https://github.com/user-attachments/assets/9064c7e1-cd07-4592-99f9-243d190654d8
 
@@ -165,44 +167,43 @@ https://github.com/user-attachments/assets/9064c7e1-cd07-4592-99f9-243d190654d8
 
 Below are some visualizations:
 
-![ELO](./assets/readme/match_history_9-20250821_000252.png "ELO")
+![ELO](./assets/readme/match_history_9-20250821_000252.webp "ELO")
 
 https://github.com/user-attachments/assets/0d290da3-7e89-4db9-8bac-145e7048c109
 
 </details>
 
-## Credit
+## Credits
+
+### Game and Emulator
+
+- [Operator's manual](https://db.hfsplay.fr/files/2018/10/06/d8d455cd-2054-4930-bfc5-1fa2d6b2a4b4.pdf)
+- [MAME](https://www.mamedev.org/) and its [CPS-3 driver](https://github.com/mamedev/mame/blob/master/src/mame/capcom/cps3.cpp)
+- [MAMEToolkit](https://github.com/M-J-Murray/MAMEToolkit)
+- [sfiii-gym](https://github.com/alexpalms/sfiii-gym)
+- [Moves](https://streetfighter.fandom.com/wiki/List_of_moves_in_Street_Fighter_III:_3rd_Strike)
 
 ### Icons
 
 - [Help](https://www.flaticon.com/free-icons/question)
 - [Close](https://www.flaticon.com/free-icons/close)
-- [Keyboard](https://www.flaticon.com/free-icons/electric-keyboard)
 - [Gamepad](https://www.flaticon.com/free-icons/controller)
-- [Human](https://www.flaticon.com/free-icons/muscle)
-- [LLM](https://www.flaticon.com/free-icons/robot)
+- [Human](https://github.com/lucide-icons/lucide/blob/main/icons/user-round.svg)
+- [CPU](https://github.com/lucide-icons/lucide/blob/main/icons/cpu.svg)
 - [Mute/unmute icons](https://feathericons.com/)
-
-### LLM
-
-- [Qwen3 chat template](https://qwen.readthedocs.io/en/latest/_downloads/c101120b5bebcc2f12ec504fc93a965e/qwen3_nonthinking.jinja)
 
 ### Logos
 
-- [Capcom](https://logos.fandom.com/wiki/Capcom?file=Capcom.svg)
 - [Favicon](https://images.app.goo.gl/Dx3mLrW8dorr92Uq7)
-- [Modal](https://live.standards.site/modal)
+- [Modal](https://modal.com/brand)
+- [Qwen](https://img.alicdn.com/imgextra/i4/O1CN01OXv3EM1FN8t9W4P79_!!6000000000474-2-tps-80-80.png)
+- [Google](https://github.com/firebase/firebaseui-web/blob/master/image/google.svg)
+- [Mistral AI](https://mistral.ai/brand)
 
-### Characters
-
-- [Outfits](https://www.zytor.com/~johannax/jigsaw/sf/3s.html)
-- [Moves/portraits](https://streetfighter.fandom.com/wiki/List_of_moves_in_Street_Fighter_III:_3rd_Strike)
-
-### Sounds
+### Audio
 
 - [Gamepad connect](https://orangefreesounds.com/usb-connection-sound-effect/)
 - [Gamepad disconnect](https://www.myinstants.com/en/instant/windows-10-usb-disconnect-8906/)
-- [Button click](https://freesound.org/people/orginaljun/sounds/157871/)
-- [Button/link hover](https://freesound.org/people/steaq/sounds/757328/)
+- [Button click](https://freesound.org/people/orginaljun/sounds/157871/) and [button/link hover](https://freesound.org/people/steaq/sounds/757328/)
 - [Coin insert](https://www.myinstants.com/en/instant/street-fighter-ii-coin/)
-- [Original SF3](https://downloads.khinsider.com/game-soundtracks/album/street-fighter-iii-third-strike)
+- [Soundtrack](https://downloads.khinsider.com/game-soundtracks/album/street-fighter-iii-third-strike)

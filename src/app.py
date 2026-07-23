@@ -1,6 +1,8 @@
 import asyncio
 import base64
+import mimetypes
 import os
+import queue
 import time
 from contextlib import asynccontextmanager
 from fractions import Fraction
@@ -27,6 +29,8 @@ from src.utils import (
     PlayerState,
     create_messages,
 )
+
+mimetypes.add_type("image/webp", ".webp")
 
 # Modal setup
 
@@ -71,6 +75,9 @@ PARTICIPANT_LABELS = {
 DEFAULT_PLAYER1_PARTICIPANT = "human"
 DEFAULT_PLAYER2_PARTICIPANT = "qwen35_9b"
 DEFAULT_CPU_DIFFICULTY = 8
+VERSUS_START_OFFSET_FRAMES = 30
+CONTROL_MESSAGE_QUEUE_LIMIT = 128
+SESSION_TASK_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 
 
 def participant_has_model_server(participant: str) -> bool:
@@ -82,22 +89,12 @@ def is_cpu_participant(participant: str) -> bool:
     return participant == "cpu"
 
 
-def normalize_cpu_difficulty(value: Any) -> int:
-    try:
-        difficulty = int(value)
-    except (TypeError, ValueError):
-        return DEFAULT_CPU_DIFFICULTY
-    return max(1, min(8, difficulty))
-
-
 local_assets_dir = Path(__file__).parent.parent / "assets"
 local_engine_dir = local_assets_dir / "engine"
 
 remote_frontend_dir = "/root/frontend"
 remote_icons_dir = "/root/icons"
 remote_logos_dir = "/root/logos"
-remote_outfits_dir = "/root/outfits"
-remote_portraits_dir = "/root/portraits"
 remote_sounds_dir = "/root/sounds"
 
 static_image = (
@@ -115,14 +112,6 @@ static_image = (
         remote_logos_dir,
     )
     .add_local_dir(
-        local_assets_dir / "outfits",
-        remote_outfits_dir,
-    )
-    .add_local_dir(
-        local_assets_dir / "portraits",
-        remote_portraits_dir,
-    )
-    .add_local_dir(
         local_assets_dir / "sounds",
         remote_sounds_dir,
     )
@@ -138,6 +127,7 @@ gameplay_image = (
         {
             "SDL_VIDEODRIVER": "dummy",
             "SDL_AUDIODRIVER": "dummy",
+            "SF3_WARM_MODELS": os.environ.get("SF3_WARM_MODELS", "0"),
             "XDG_RUNTIME_DIR": "/tmp",
         }
     )
@@ -200,6 +190,17 @@ class Web:
     ):
         self.participant_servers = {}
         self.participant_boot_tasks = {}
+        if os.environ.get("SF3_WARM_MODELS") != "1":
+            return
+        for participant, spec in PARTICIPANT_SPECS.items():
+            server_cls = spec["server_cls"]
+            if server_cls is None:
+                continue
+            try:
+                server_cls().update_autoscaler(min_containers=1)
+            except Exception as exc:
+                label = PARTICIPANT_LABELS.get(participant, participant)
+                print(f"Could not keep {label} warm: {exc!r}")
 
     async def create_participant_server(self, participant: str):
         server_cls = PARTICIPANT_SPECS.get(participant, {}).get("server_cls")
@@ -249,12 +250,7 @@ class Web:
         )
         from aiortc.sdp import candidate_from_sdp
         from av import VideoFrame
-        from fastapi import (
-            BackgroundTasks,
-            FastAPI,
-            WebSocket,
-            WebSocketDisconnect,
-        )
+        from fastapi import FastAPI, WebSocket, WebSocketDisconnect
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.middleware.gzip import GZipMiddleware
         from fastapi.responses import JSONResponse
@@ -297,7 +293,7 @@ class Web:
 
         def build_rtc_configuration() -> RTCConfiguration:
             ice_servers = []
-            for server in stun_ice_servers:
+            for server in build_ice_servers():
                 ice_servers.append(
                     RTCIceServer(
                         urls=server["urls"],
@@ -308,42 +304,70 @@ class Web:
             return RTCConfiguration(iceServers=ice_servers)
 
         class GameVideoTrack(VideoStreamTrack):
-            def __init__(self, target_fps: float = 60.0):
+            def __init__(self, should_stop, target_fps: float = 60.0):
                 super().__init__()
+                self.should_stop = should_stop
                 self.target_fps = target_fps
                 self.latest_frame = None
-                self._start_time = None
+                self.phase_frames = queue.Queue(maxsize=2)
                 self._timestamp = 0
-                self._timeline_needs_realign = False
+                self._has_sent_frame = False
+                self._last_frame_at = None
 
             def set_frame(self, frame):
                 self.latest_frame = frame
 
+            def queue_frame(self, frame):
+                while True:
+                    try:
+                        self.phase_frames.put_nowait(frame)
+                        self.latest_frame = frame
+                        return
+                    except queue.Full:
+                        try:
+                            self.phase_frames.get_nowait()
+                        except queue.Empty:
+                            pass
+
             def reset(self):
                 # Hold the track open without encoding placeholder frames.
                 self.latest_frame = None
-                self._timeline_needs_realign = True
-                self._start_time = None
+                while not self.phase_frames.empty():
+                    try:
+                        self.phase_frames.get_nowait()
+                    except queue.Empty:
+                        break
+
+            async def wait_for_phase_frames(self):
+                while (
+                    not self.phase_frames.empty()
+                    and self.readyState == "live"
+                    and not self.should_stop()
+                ):
+                    await asyncio.sleep(1 / (self.target_fps * 2))
 
             async def recv(self) -> VideoFrame:
                 while self.latest_frame is None:
                     await asyncio.sleep(1 / self.target_fps)
+                frame = self.latest_frame
 
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 timestamp_step = int((1 / self.target_fps) * 90000)
-                if self._start_time is None or self._timeline_needs_realign:
-                    if self._timestamp:
-                        self._timestamp += timestamp_step
-                    self._start_time = loop.time() - (self._timestamp / 90000)
-                    self._timeline_needs_realign = False
-                else:
-                    self._timestamp += timestamp_step
-                    deadline = self._start_time + (self._timestamp / 90000)
-                    delay = deadline - loop.time()
-                    if delay > 0:
+                if self._last_frame_at is not None:
+                    deadline = self._last_frame_at + (1 / self.target_fps)
+                    while (delay := deadline - loop.time()) > 0:
                         await asyncio.sleep(delay)
+                self._last_frame_at = loop.time()
+                if self._has_sent_frame:
+                    self._timestamp += timestamp_step
+                else:
+                    self._has_sent_frame = True
 
-                output = VideoFrame.from_ndarray(self.latest_frame, format="rgb24")
+                try:
+                    frame = self.phase_frames.get_nowait()
+                except queue.Empty:
+                    frame = self.latest_frame
+                output = VideoFrame.from_ndarray(frame, format="rgb24")
                 output.pts = self._timestamp
                 output.time_base = Fraction(1, 90000)
                 return output
@@ -362,10 +386,15 @@ class Web:
         def create_initial_game_state():
             return {
                 "status": "initializing",
-                "paused": False,
                 "scores": [0, 0],
+                "round_number": 1,
                 "winner": "",
+                "winner_side": "",
                 "error": "",
+                "accepts_input": False,
+                "match_identity": None,
+                "player1_selection": None,
+                "player2_selection": None,
             }
 
         # manages game state and communication
@@ -376,7 +405,9 @@ class Web:
 
                 self.env = None
                 self.game_running = False
-                self.paused = False
+                self.accepts_input = False
+                self.start_requested = False
+                self.match_identity = None
                 self.game_settings = {
                     "player1": {
                         "character": "Ken",
@@ -384,14 +415,12 @@ class Web:
                         "superArt": 1,
                     },
                     "player2": {
-                        "character": "Ken",
+                        "character": "Ryu",
                         "outfit": 1,
                         "superArt": 1,
                     },
                     "player1Participant": DEFAULT_PLAYER1_PARTICIPANT,
                     "player2Participant": DEFAULT_PLAYER2_PARTICIPANT,
-                    "difficulty": "expert",
-                    "cpuDifficulty": DEFAULT_CPU_DIFFICULTY,
                 }
                 self.game_state = create_initial_game_state()
 
@@ -400,20 +429,17 @@ class Web:
                 self.observation = None
                 self.info = None
 
-                # transition state
-
-                self.in_transition = False
-                self.transition_start_time = None
-                self.transition_duration = 3.0  # seconds, matches frontend
-
                 # game duration state
 
                 self.player1_next_buttons = []
                 self.player2_next_buttons = []
+                self.selection_next_buttons = []
                 self.next_buttons_limit = (
                     20  # simply for memory, roughly length of longest combo
                 )
                 self.player1_current_action = 0
+                self.player2_current_action = 0
+                self.selection_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
                 self.action_generation = 0
 
@@ -428,6 +454,35 @@ class Web:
                 self.outbound_message_queue = asyncio.Queue()
                 self.stop_event = asyncio.Event()
                 self.cleanup_tasks = set()
+                self.env_operation_task = None
+
+            def request_stop(self):
+                self.stop_event.set()
+                if self.env is not None:
+                    self.env.request_stop()
+
+            async def run_env_operation(self, func, /, *args, **kwargs):
+                if self.env_operation_task is not None:
+                    raise RuntimeError("Environment operation already in progress")
+                task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+                self.env_operation_task = task
+                try:
+                    return await asyncio.shield(task)
+                finally:
+                    if task.done() and self.env_operation_task is task:
+                        self.env_operation_task = None
+
+            async def wait_for_env_operation(self):
+                task = self.env_operation_task
+                if task is None:
+                    return
+                try:
+                    await asyncio.shield(task)
+                except Exception:
+                    pass
+                finally:
+                    if self.env_operation_task is task:
+                        self.env_operation_task = None
 
             def enqueue_buttons(self, queue, buttons):
                 available = self.next_buttons_limit - len(queue)
@@ -438,10 +493,48 @@ class Web:
                 self.action_generation += 1
                 self.player1_next_buttons.clear()
                 self.player2_next_buttons.clear()
+                self.selection_next_buttons.clear()
                 self.player1_current_action = 0
+                self.player2_current_action = 0
+                self.selection_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
 
+            def sync_accepts_input_state(self):
+                self.game_state["accepts_input"] = self.accepts_input
+
+            def human_player_number(self):
+                player1_participant, player2_participant = normalize_game_participants(
+                    self.game_settings
+                )
+                if player1_participant == "human":
+                    return 1
+                if player2_participant == "human":
+                    return 2
+                return None
+
+            def next_player_action(self, player: int, participant: str):
+                next_buttons = (
+                    self.player1_next_buttons
+                    if player == 1
+                    else self.player2_next_buttons
+                )
+                if next_buttons:
+                    return next_buttons.pop(0)
+                if participant == "human":
+                    return (
+                        self.player1_current_action
+                        if player == 1
+                        else self.player2_current_action
+                    )
+                return 0
+
+            def next_selection_action(self):
+                if self.selection_next_buttons:
+                    return self.selection_next_buttons.pop(0)
+                return self.selection_current_action
+
             async def send_game_state(self):
+                self.sync_accepts_input_state()
                 await self.outbound_message_queue.put(
                     {
                         "type": "game_state",
@@ -453,31 +546,52 @@ class Web:
                 message_type = data.get("type", "unknown")
 
                 if message_type == "start_game":
-                    if not self.game_running:
-                        received_settings = data.get("data", {})
-                        if received_settings:
-                            self.game_settings.update(received_settings)
-                        self.invalidate_actions()
-                        self.game_running = True
-                        self.paused = False
-                elif message_type == "pause_game":
-                    await self.pause_game()
-                elif message_type == "resume_game":
-                    await self.resume_game()
+                    if (
+                        self.start_requested
+                        or self.game_running
+                        or self.game_state["status"] != "pregame"
+                    ):
+                        return
+                    received = data.get("data", {}) or {}
+                    self.game_settings["player1Participant"] = received.get(
+                        "player1Participant", DEFAULT_PLAYER1_PARTICIPANT
+                    )
+                    self.game_settings["player2Participant"] = received.get(
+                        "player2Participant", DEFAULT_PLAYER2_PARTICIPANT
+                    )
+                    normalize_game_participants(self.game_settings)
+                    self.invalidate_actions()
+                    self.accepts_input = False
+                    self.start_requested = True
                 elif message_type == "player_action":
                     await self.handle_player_action(data["data"])
 
             async def handle_player_action(self, action_data):
-                if self.paused:
+                if not self.accepts_input:
                     return
                 if self.observation is None:
                     return
 
-                player1_participant, _ = normalize_game_participants(self.game_settings)
-                if player1_participant != "human":
+                action = action_data.get("action")
+                if not isinstance(action, int):
+                    return
+                if self.info and self.info.get("selecting"):
+                    if action <= 8:
+                        self.selection_current_action = action
+                    else:
+                        self.enqueue_buttons(self.selection_next_buttons, [action])
                     return
 
-                action = action_data["action"]
+                player_number = self.human_player_number()
+                if player_number is None:
+                    return
+                player_key = f"player{player_number}"
+                observation_key = f"P{player_number}"
+                next_buttons = (
+                    self.player1_next_buttons
+                    if player_number == 1
+                    else self.player2_next_buttons
+                )
 
                 # super art
 
@@ -486,15 +600,13 @@ class Web:
                     if not super_art_name:
                         return
 
-                    p1_obs = self.observation["P1"]
-                    p1_character = self.game_settings["player1"]["character"]
-                    p1_direction = "left" if p1_obs["side"] == 0 else "right"
+                    player_obs = self.observation[observation_key]
+                    character = self.game_settings[player_key]["character"]
+                    direction = "left" if player_obs["side"] == 0 else "right"
 
-                    move = SPECIAL_MOVES.get(p1_character, {}).get(super_art_name)
+                    move = SPECIAL_MOVES.get(character, {}).get(super_art_name)
                     if move is not None:
-                        self.enqueue_buttons(
-                            self.player1_next_buttons, move[p1_direction]
-                        )
+                        self.enqueue_buttons(next_buttons, move[direction])
 
                 # combo
 
@@ -503,75 +615,93 @@ class Web:
                     if not combo_name:
                         return
 
-                    p1_obs = self.observation["P1"]
-                    p1_character = self.game_settings["player1"]["character"]
-                    p1_direction = "left" if p1_obs["side"] == 0 else "right"
+                    player_obs = self.observation[observation_key]
+                    character = self.game_settings[player_key]["character"]
+                    direction = "left" if player_obs["side"] == 0 else "right"
 
-                    move = COMBOS.get(p1_character, {}).get(combo_name)
+                    move = COMBOS.get(character, {}).get(combo_name)
                     if move is not None:
-                        self.enqueue_buttons(
-                            self.player1_next_buttons, move[p1_direction]
-                        )
+                        self.enqueue_buttons(next_buttons, move[direction])
 
                 # normal move
 
                 else:
                     if action <= 8:  # directional, so don't queue
-                        self.player1_current_action = action
+                        if player_number == 1:
+                            self.player1_current_action = action
+                        else:
+                            self.player2_current_action = action
                     else:  # attack moves (9-17), so queue
-                        self.enqueue_buttons(self.player1_next_buttons, [action])
+                        self.enqueue_buttons(next_buttons, [action])
 
             async def cleanup_environment(self):
                 env = self.env
-                self.env = None
                 if env is None:
                     return
+                env.request_stop()
+                await self.wait_for_env_operation()
+                self.env = None
                 try:
                     await asyncio.to_thread(env.close)
                 except Exception as exc:
                     print(f"Warning: could not close environment: {exc!r}")
 
             async def prepare_for_next_game(self):
-                await self.cleanup_environment()
-
                 self.game_running = False
-                self.paused = False
+                self.accepts_input = False
+                self.start_requested = False
+                self.match_identity = None
                 self.game_state = create_initial_game_state()
                 self.observation = None
                 self.info = None
                 self.player1_recent_move_names = []
                 self.player2_recent_move_names = []
                 self.invalidate_actions()
-                self.in_transition = False
-                self.transition_start_time = None
 
-            async def pause_game(self):
-                if not self.game_running:
-                    return
-                self.paused = True
+            async def hold_finished(self):
+                self.game_running = False
+                self.accepts_input = False
+                self.start_requested = False
+                self.observation = None
+                self.info = None
+                self.player1_recent_move_names = []
+                self.player2_recent_move_names = []
                 self.invalidate_actions()
-                self.game_state["status"] = "paused"
-                self.game_state["paused"] = True
-                await self.send_game_state()
-
-            async def resume_game(self):
-                if not self.game_running:
-                    return
-                self.paused = False
-                self.game_state["status"] = "running"
-                self.game_state["paused"] = False
-                await self.send_game_state()
 
             async def fail_game(self, message: str):
                 self.game_running = False
-                self.paused = False
+                self.accepts_input = False
+                self.start_requested = False
                 self.game_state["status"] = "error"
                 self.game_state["error"] = message
-                self.game_state["paused"] = False
                 await self.send_game_state()
+
+            def sync_round_number(self):
+                observation = self.observation
+                if observation is None:
+                    return
+                self.game_state["round_number"] = (
+                    int(observation["P1"]["wins"][0])
+                    + int(observation["P2"]["wins"][0])
+                    + 1
+                )
+
+            def apply_match_identity(self, identity: dict):
+                self.match_identity = identity
+                self.game_settings["player1"] = dict(identity["player1"])
+                self.game_settings["player2"] = dict(identity["player2"])
+                self.game_state["players"] = identity
+                self.game_state["match_identity"] = identity
+                self.game_state["player1_selection"] = identity["player1"]
+                self.game_state["player2_selection"] = identity["player2"]
 
             async def cleanup(self):
                 await self.cleanup_environment()
+                if self.cleanup_tasks:
+                    await asyncio.gather(
+                        *tuple(self.cleanup_tasks),
+                        return_exceptions=True,
+                    )
 
         # routes
 
@@ -582,9 +712,10 @@ class Web:
             session = GameSession()
             jpeg_enc = TurboJPEG()
             frame_cache = {"frame": None, "jpeg_bytes": None, "data_url": None}
-            video_track = GameVideoTrack()
+            video_track = GameVideoTrack(session.stop_event.is_set)
             control_channel = None
             control_channel_ready = asyncio.Event()
+            control_message_queue = asyncio.Queue(maxsize=CONTROL_MESSAGE_QUEUE_LIMIT)
             pc = RTCPeerConnection(configuration=build_rtc_configuration())
 
             def get_frame_jpeg_bytes(frame: np.ndarray) -> bytes:
@@ -623,7 +754,7 @@ class Web:
             async def on_connectionstatechange():
                 state = pc.connectionState
                 if state in {"closed", "failed", "disconnected"}:
-                    session.stop_event.set()
+                    session.request_stop()
 
             @pc.on("icecandidate")
             async def on_icecandidate(candidate):
@@ -663,23 +794,41 @@ class Web:
                 @channel.on("close")
                 def on_channel_close():
                     control_channel_ready.clear()
-                    session.stop_event.set()
+                    session.request_stop()
 
                 @channel.on("message")
                 def on_channel_message(message):
-                    async def process_message():
-                        try:
-                            if isinstance(message, bytes):
-                                payload = json.loads(message.decode("utf-8"))
-                            else:
-                                payload = json.loads(message)
-                            await session.handle_inbound_message(payload)
-                        except Exception:
-                            print(
-                                f"Error processing datachannel msg: {traceback.format_exc()}"
-                            )
+                    try:
+                        control_message_queue.put_nowait(message)
+                    except asyncio.QueueFull:
+                        print("Closing session with a full control-message queue")
+                        session.request_stop()
 
-                    asyncio.create_task(process_message())
+            async def process_control_messages():
+                while not session.stop_event.is_set():
+                    get_message_task = asyncio.create_task(control_message_queue.get())
+                    stop_task = asyncio.create_task(session.stop_event.wait())
+                    done, pending = await asyncio.wait(
+                        {get_message_task, stop_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                    if stop_task in done:
+                        break
+                    message = get_message_task.result()
+                    try:
+                        if isinstance(message, bytes):
+                            payload = json.loads(message.decode("utf-8"))
+                        else:
+                            payload = json.loads(message)
+                        await session.handle_inbound_message(payload)
+                    except Exception:
+                        print(
+                            f"Error processing datachannel msg: {traceback.format_exc()}"
+                        )
 
             async def process_signaling_messages():
                 try:
@@ -743,10 +892,10 @@ class Web:
                             await websocket.send_json(build_turn_servers())
                             continue
                 except WebSocketDisconnect:
-                    session.stop_event.set()
+                    session.request_stop()
                 except Exception:
                     print(f"Error in signaling processor: {traceback.format_exc()}")
-                    session.stop_event.set()
+                    session.request_stop()
 
             async def process_outbound_messages():
                 try:
@@ -790,44 +939,46 @@ class Web:
                                 break
                 except Exception:
                     print(f"Error in outgoing processor: {traceback.format_exc()}")
-                    session.stop_event.set()
+                    session.request_stop()
 
             async def keepalive():
                 try:
                     while not session.stop_event.is_set():
+                        if websocket.client_state != WebSocketState.DISCONNECTED:
+                            await websocket.send_json(
+                                {
+                                    "type": "heartbeat",
+                                    "peer_id": "server",
+                                }
+                            )
                         await session.outbound_message_queue.put(
                             {
                                 "type": "heartbeat",
                                 "data": {},
                             }
                         )
-                        await asyncio.sleep(15)
+                        try:
+                            await asyncio.wait_for(
+                                session.stop_event.wait(),
+                                timeout=15,
+                            )
+                        except asyncio.TimeoutError:
+                            pass
                 except Exception:
                     print(f"Error in keepalive: {traceback.format_exc()}")
-                    session.stop_event.set()
+                    session.request_stop()
 
-            async def prefetch_servers():
-                try:
-                    player1_participant, player2_participant = (
-                        normalize_game_participants(session.game_settings)
-                    )
-                    await prefetch_required_servers(
-                        player1_participant, player2_participant
-                    )
-                    await session.send_game_state()
-                except Exception as e:
-                    print(f"Error creating model servers: {traceback.format_exc()}")
-                    await fail_current_game(format_runtime_error(e))
-                    session.stop_event.set()
-
-            async def prepare_for_next_game():
-                video_track.reset()
+            async def prepare_for_next_game(*, preserve_frame: bool = True):
+                if not preserve_frame:
+                    video_track.reset()
                 await session.prepare_for_next_game()
 
             async def fail_current_game(message: str):
-                await session.fail_game(message)
-                await prepare_for_next_game()
-                await session.send_game_state()
+                try:
+                    await session.fail_game(message)
+                finally:
+                    await session.cleanup_environment()
+                    session.request_stop()
 
             def format_runtime_error(exc: BaseException) -> str:
                 if isinstance(exc, asyncio.TimeoutError):
@@ -836,6 +987,67 @@ class Web:
                 if message:
                     return message
                 return type(exc).__name__
+
+            event_loop = asyncio.get_running_loop()
+            phase_generation = 0
+            phase_edge_armed = False
+
+            async def show_models_loading():
+                if session.game_state["status"] == "models_loading":
+                    return
+                session.accepts_input = False
+                session.invalidate_actions()
+                session.game_state["status"] = "models_loading"
+                await session.send_game_state()
+
+            async def wait_for_models(model_ready_task, *, show_loading: bool) -> bool:
+                if show_loading and not model_ready_task.done():
+                    await video_track.wait_for_phase_frames()
+                    await show_models_loading()
+                try:
+                    await model_ready_task
+                except Exception as exc:
+                    print(f"Model prefetch failed: {exc}")
+                    await fail_current_game(format_runtime_error(exc))
+                    return False
+                if session.game_state["status"] == "models_loading":
+                    session.game_state["status"] = "transitioning"
+                    await session.send_game_state()
+                return True
+
+            def begin_non_fight_phase(generation: int):
+                if generation != phase_generation:
+                    return
+                if not session.game_running:
+                    return
+                if session.game_state["status"] in {
+                    "pregame",
+                    "selecting",
+                    "models_loading",
+                    "finished",
+                }:
+                    return
+                session.accepts_input = False
+                session.invalidate_actions()
+                session.game_state["status"] = "transitioning"
+                asyncio.create_task(session.send_game_state())
+
+            def stream_phase_frame(frame):
+                nonlocal phase_edge_armed
+                if phase_edge_armed:
+                    phase_edge_armed = False
+                    generation = phase_generation
+                    event_loop.call_soon_threadsafe(begin_non_fight_phase, generation)
+                video_track.queue_frame(np.ascontiguousarray(frame))
+
+            def send_presentation(name: str):
+                event_loop.call_soon_threadsafe(
+                    session.outbound_message_queue.put_nowait,
+                    {
+                        "type": "presentation",
+                        "data": {"name": name},
+                    },
+                )
 
             async def get_participant_move(
                 participant: str,
@@ -855,7 +1067,6 @@ class Web:
                     prev_opponent_player,
                     prev_controlled_player,
                     recent_moves,
-                    session.game_settings["difficulty"],
                 )
 
                 server = await self.create_participant_server(participant)
@@ -924,6 +1135,46 @@ class Web:
                     frames,
                 )
 
+            async def generate_robot_move(player_number, participant, snapshot):
+                (
+                    p1_settings,
+                    p2_settings,
+                    obs_p1,
+                    obs_p2,
+                    player1,
+                    player2,
+                    frames,
+                ) = snapshot
+                if player_number == 1:
+                    args = (
+                        player1,
+                        p1_settings,
+                        obs_p1,
+                        player2,
+                        session.prev_player1_state,
+                        session.prev_player2_state,
+                        session.player1_recent_move_names,
+                    )
+                else:
+                    args = (
+                        player2,
+                        p2_settings,
+                        obs_p2,
+                        player1,
+                        session.prev_player2_state,
+                        session.prev_player1_state,
+                        session.player2_recent_move_names,
+                    )
+
+                started_at = time.perf_counter()
+                moves, move_name = await get_participant_move(
+                    participant,
+                    *args,
+                    frames,
+                )
+                generation_ms = (time.perf_counter() - started_at) * 1000.0
+                return player_number, moves, move_name, generation_ms
+
             async def run_robot_background():
                 try:
                     while not session.stop_event.is_set():
@@ -932,8 +1183,8 @@ class Web:
                         if (
                             not session.game_running
                             or session.observation is None
-                            or session.paused
-                            or session.in_transition
+                            or session.game_state["status"] != "running"
+                            or session.match_identity is None
                         ):
                             continue
 
@@ -947,355 +1198,483 @@ class Web:
                         player1_participant, player2_participant = (
                             normalize_game_participants(session.game_settings)
                         )
-                        if not (
-                            participant_has_model_server(player1_participant)
-                            or participant_has_model_server(player2_participant)
+                        player1_is_model = participant_has_model_server(
+                            player1_participant
+                        )
+                        player2_is_model = participant_has_model_server(
+                            player2_participant
+                        )
+                        if not (player1_is_model or player2_is_model):
+                            continue
+                        if (
+                            player1_is_model
+                            and player2_is_model
+                            and (
+                                session.player1_next_buttons
+                                or session.player2_next_buttons
+                            )
                         ):
                             continue
 
-                        last_player1 = None
-                        last_player2 = None
-
-                        if participant_has_model_server(player1_participant):
-                            snap = snapshot_robot_observation()
-                            if snap is None:
-                                continue
-                            (
-                                p1_settings,
-                                p2_settings,
-                                obs_p1,
-                                obs_p2,
-                                player1,
-                                player2,
-                                frames,
-                            ) = snap
-                            last_player1, last_player2 = player1, player2
-                            t0 = time.perf_counter()
-                            moves_p1, move_name_p1 = await get_participant_move(
-                                player1_participant,
-                                player1,
-                                p1_settings,
-                                obs_p1,
-                                player2,
-                                session.prev_player1_state,
-                                session.prev_player2_state,
-                                session.player1_recent_move_names,
-                                frames,
+                        snapshot = snapshot_robot_observation()
+                        if snapshot is None:
+                            continue
+                        requests = []
+                        if player1_is_model:
+                            requests.append(
+                                generate_robot_move(
+                                    1,
+                                    player1_participant,
+                                    snapshot,
+                                )
                             )
-                            generation_ms_p1 = (time.perf_counter() - t0) * 1000.0
+                        if player2_is_model:
+                            requests.append(
+                                generate_robot_move(
+                                    2,
+                                    player2_participant,
+                                    snapshot,
+                                )
+                            )
+
+                        results = await asyncio.gather(*requests)
+                        if action_generation != session.action_generation:
+                            continue
+                        wait_ms = max(
+                            human_floor_wait_ms(len(moves), generation_ms)
+                            for _, moves, _, generation_ms in results
+                        )
+                        if wait_ms > 0:
+                            await asyncio.sleep(wait_ms / 1000.0)
                             if action_generation != session.action_generation:
                                 continue
-                            wait_ms = human_floor_wait_ms(
-                                len(moves_p1), generation_ms_p1
-                            )
-                            if wait_ms > 0:
-                                await asyncio.sleep(wait_ms / 1000.0)
-                                if action_generation != session.action_generation:
-                                    continue
-                            session.enqueue_buttons(
-                                session.player1_next_buttons, moves_p1
-                            )
-                            session.player1_recent_move_names.append(move_name_p1)
 
-                            if (
-                                len(session.player1_recent_move_names)
-                                > RECENT_MOVE_LIMIT
-                            ):
-                                session.player1_recent_move_names.pop(0)
+                        for player_number, moves, move_name, _ in results:
+                            if player_number == 1:
+                                next_buttons = session.player1_next_buttons
+                                recent_move_names = session.player1_recent_move_names
+                            else:
+                                next_buttons = session.player2_next_buttons
+                                recent_move_names = session.player2_recent_move_names
+                            session.enqueue_buttons(next_buttons, moves)
+                            recent_move_names.append(move_name)
+                            if len(recent_move_names) > RECENT_MOVE_LIMIT:
+                                recent_move_names.pop(0)
 
-                        if participant_has_model_server(player2_participant):
-                            snap = snapshot_robot_observation()
-                            if snap is None:
-                                continue
-                            (
-                                p1_settings,
-                                p2_settings,
-                                obs_p1,
-                                obs_p2,
-                                player1,
-                                player2,
-                                frames,
-                            ) = snap
-                            last_player1, last_player2 = player1, player2
-                            t0 = time.perf_counter()
-                            moves, move_name = await get_participant_move(
-                                player2_participant,
-                                player2,
-                                p2_settings,
-                                obs_p2,
-                                player1,
-                                session.prev_player2_state,
-                                session.prev_player1_state,
-                                session.player2_recent_move_names,
-                                frames,
-                            )
-                            generation_ms = (time.perf_counter() - t0) * 1000.0
-                            if action_generation != session.action_generation:
-                                continue
-                            wait_ms = human_floor_wait_ms(len(moves), generation_ms)
-                            if wait_ms > 0:
-                                await asyncio.sleep(wait_ms / 1000.0)
-                                if action_generation != session.action_generation:
-                                    continue
-                            session.enqueue_buttons(session.player2_next_buttons, moves)
-                            session.player2_recent_move_names.append(move_name)
-
-                            if (
-                                len(session.player2_recent_move_names)
-                                > RECENT_MOVE_LIMIT
-                            ):
-                                session.player2_recent_move_names.pop(0)
-
-                        if last_player1 is not None:
-                            session.prev_player1_state = last_player1
-                            session.prev_player2_state = last_player2
+                        (
+                            _,
+                            _,
+                            _,
+                            _,
+                            player1,
+                            player2,
+                            _,
+                        ) = snapshot
+                        session.prev_player1_state = player1
+                        session.prev_player2_state = player2
 
                 except WebSocketDisconnect:
-                    session.stop_event.set()
+                    session.request_stop()
                 except Exception as exc:
                     print(f"Error in robot background: {traceback.format_exc()}")
                     await fail_current_game(format_runtime_error(exc))
-                    session.stop_event.set()
+                    session.request_stop()
+
+            async def create_interactive_env():
+                env_config = EnvironmentConfig(
+                    characters=("Ken", "Ryu"),
+                    outfits=(1, 1),
+                    super_arts=(1, 1),
+                    step_ratio=1,
+                    render_mode="rgb_array",
+                    vs_cpu=False,
+                    cpu_difficulty=DEFAULT_CPU_DIFFICULTY,
+                    interactive_select=True,
+                )
+                environment_task = asyncio.create_task(
+                    asyncio.to_thread(create_environment, env_config)
+                )
+
+                async def close_abandoned_environment():
+                    try:
+                        abandoned = await environment_task
+                        await asyncio.to_thread(abandoned.close)
+                    except Exception as exc:
+                        print(
+                            f"Warning: could not close abandoned environment: {exc!r}"
+                        )
+
+                def schedule_abandoned_cleanup():
+                    cleanup_task = asyncio.create_task(close_abandoned_environment())
+                    session.cleanup_tasks.add(cleanup_task)
+                    cleanup_task.add_done_callback(session.cleanup_tasks.discard)
+
+                try:
+                    env = await asyncio.wait_for(
+                        asyncio.shield(environment_task),
+                        timeout=1 * MINUTES,
+                    )
+                except asyncio.CancelledError:
+                    schedule_abandoned_cleanup()
+                    raise
+                except Exception as e:
+                    if isinstance(e, asyncio.TimeoutError):
+                        schedule_abandoned_cleanup()
+                    raise
+                return env
+
+            ENV_INIT_ATTEMPTS = 3
+            ENV_INIT_BACKOFF_S = (0.5, 1.0, 2.0)
+
+            async def bring_up_interactive_env(pregame_frame_sink):
+                last_error = None
+                for attempt in range(1, ENV_INIT_ATTEMPTS + 1):
+                    env = None
+                    try:
+                        env = await create_interactive_env()
+                        session.env = env
+                        raw = await session.run_env_operation(
+                            env.pregame_step,
+                            pregame_frame_sink,
+                        )
+                        return env, raw
+                    except Exception as e:
+                        last_error = e
+                        print(
+                            "Error bringing up local environment "
+                            f"(attempt {attempt}/{ENV_INIT_ATTEMPTS}): {e}"
+                        )
+                        if env is not None:
+                            await session.cleanup_environment()
+                        if attempt < ENV_INIT_ATTEMPTS:
+                            await asyncio.sleep(ENV_INIT_BACKOFF_S[attempt - 1])
+                raise last_error
 
             async def run_game_loop():
+                nonlocal phase_edge_armed, phase_generation
+                frame_interval = 1.0 / video_track.target_fps
+
+                async def pace_frame(last_frame_at):
+                    if last_frame_at is not None:
+                        deadline = last_frame_at + frame_interval
+                        while (
+                            delay := deadline - asyncio.get_running_loop().time()
+                        ) > 0:
+                            await asyncio.sleep(delay)
+                    return asyncio.get_running_loop().time()
+
                 try:
                     while not session.stop_event.is_set():
-                        if not session.game_running:
-                            await asyncio.sleep(0.001)
-                            continue
+                        await session.cleanup_environment()
+                        stream_pregame_frames = video_track.latest_frame is None
+                        pregame_frame_sink = (
+                            stream_phase_frame if stream_pregame_frames else None
+                        )
+                        try:
+                            session.env, raw = await bring_up_interactive_env(
+                                pregame_frame_sink
+                            )
+                        except Exception as e:
+                            print(f"Error creating local environment: {e}")
+                            await fail_current_game(format_runtime_error(e))
+                            return
 
-                        p1_settings = session.game_settings["player1"]
-                        p2_settings = session.game_settings["player2"]
+                        session.match_identity = None
+                        session.accepts_input = False
+                        session.game_running = False
+                        session.start_requested = False
+
+                        initial_frame = raw.get("frame")
+                        if stream_pregame_frames and initial_frame is not None:
+                            video_track.set_frame(np.ascontiguousarray(initial_frame))
+
+                        session.game_state["status"] = "pregame"
+                        session.game_state["winner"] = ""
+                        session.game_state["winner_side"] = ""
+                        session.game_state["player1_selection"] = None
+                        session.game_state["player2_selection"] = None
+                        session.game_state["error"] = ""
+                        await session.send_game_state()
+
+                        last_frame_at = None
+                        while (
+                            not session.start_requested
+                            and not session.stop_event.is_set()
+                        ):
+                            last_frame_at = await pace_frame(last_frame_at)
+                            try:
+                                raw = await session.run_env_operation(
+                                    session.env.pregame_step,
+                                    pregame_frame_sink,
+                                )
+                            except Exception as e:
+                                print(f"Error during pregame step: {e}")
+                                await fail_current_game(format_runtime_error(e))
+                                session.request_stop()
+                                break
+                            session.observation = {
+                                "frame": raw.get("frame"),
+                            }
+                            frame = session.observation.get("frame")
+                            if stream_pregame_frames and frame is not None:
+                                video_track.set_frame(np.ascontiguousarray(frame))
+
+                        if session.stop_event.is_set():
+                            break
+
                         player1_participant, player2_participant = (
                             normalize_game_participants(session.game_settings)
                         )
-
+                        human_player_number = session.human_player_number()
                         vs_cpu = is_cpu_participant(player2_participant)
-                        cpu_difficulty = DEFAULT_CPU_DIFFICULTY
-                        if vs_cpu:
-                            cpu_difficulty = normalize_cpu_difficulty(
-                                session.game_settings.get("cpuDifficulty")
+                        model_ready_task = asyncio.create_task(
+                            prefetch_required_servers(
+                                player1_participant,
+                                player2_participant,
                             )
-                        env_config = EnvironmentConfig(
-                            characters=(
-                                p1_settings["character"],
-                                p2_settings["character"],
-                            ),
-                            outfits=(
-                                p1_settings["outfit"],
-                                p2_settings["outfit"],
-                            ),
-                            super_arts=(
-                                p1_settings["superArt"],
-                                p2_settings["superArt"],
-                            ),
-                            step_ratio=1,
-                            render_mode="rgb_array",
-                            vs_cpu=vs_cpu,
-                            cpu_difficulty=cpu_difficulty,
                         )
-                        environment_task = asyncio.create_task(
-                            asyncio.to_thread(create_environment, env_config)
+                        models_loading_delay_frames = max(
+                            1, round(video_track.target_fps)
                         )
-                        try:
-                            session.env = await asyncio.wait_for(
-                                asyncio.shield(environment_task),
-                                timeout=1 * MINUTES,
-                            )
-                        except Exception as e:
-                            if isinstance(e, asyncio.TimeoutError):
+                        models_loading_frames_remaining = None
+                        models_ready_checked = False
+                        versus_frames_after_lock = None
 
-                                async def close_abandoned_environment():
-                                    try:
-                                        env = await environment_task
-                                        await asyncio.to_thread(env.close)
-                                    except Exception as exc:
-                                        print(
-                                            "Warning: could not close abandoned "
-                                            f"environment: {exc!r}"
-                                        )
-
-                                cleanup_task = asyncio.create_task(
-                                    close_abandoned_environment()
-                                )
-                                session.cleanup_tasks.add(cleanup_task)
-                                cleanup_task.add_done_callback(
-                                    session.cleanup_tasks.discard
-                                )
-                            print(f"Error creating local environment: {e}")
-                            await fail_current_game(format_runtime_error(e))
-                            continue
-
-                        session.game_state["status"] = "warming"
+                        session.game_running = True
+                        session.accepts_input = False
+                        session.game_state["status"] = "starting"
                         await session.send_game_state()
-                        try:
-                            await prefetch_required_servers(
-                                player1_participant, player2_participant
-                            )
-                        except Exception as e:
-                            print(f"Model prefetch failed: {e}")
-                            await fail_current_game(format_runtime_error(e))
-                            continue
 
                         try:
                             (
                                 session.observation,
                                 session.info,
-                            ) = await asyncio.to_thread(session.env.reset)
+                            ) = await session.run_env_operation(
+                                session.env.start_interactive_game,
+                                vs_cpu=vs_cpu,
+                                cpu_difficulty=DEFAULT_CPU_DIFFICULTY,
+                                frame_sink=stream_phase_frame,
+                                presentation_sink=send_presentation,
+                            )
                         except Exception as e:
-                            print(f"Error during env.reset: {e}")
+                            print(f"Error starting interactive game: {e}")
                             await fail_current_game(format_runtime_error(e))
-                            continue
+                            return
 
-                        initial_frame = session.observation.get("frame")
-                        if initial_frame is not None:
-                            video_track.set_frame(np.ascontiguousarray(initial_frame))
+                        await video_track.wait_for_phase_frames()
+                        frame = session.observation.get("frame")
+                        if frame is not None:
+                            video_track.set_frame(np.ascontiguousarray(frame))
 
-                        session.paused = False
-                        session.game_state["status"] = "running"
-                        session.game_state["paused"] = False
+                        session.accepts_input = True
+                        session.game_state["status"] = "selecting"
                         await session.send_game_state()
 
-                        # SF3 runs faster than our target output rate.
-                        target_fps = 60.0
-                        frame_interval = 1.0 / target_fps
-                        next_frame_time = asyncio.get_event_loop().time()
-
-                        # game loop
-
+                        last_frame_at = None
                         while session.game_running and not session.stop_event.is_set():
-                            if session.paused:
-                                next_frame_time = (
-                                    asyncio.get_event_loop().time() + frame_interval
-                                )
-                                await asyncio.sleep(0.05)
-                                continue
+                            last_frame_at = await pace_frame(last_frame_at)
 
-                            current_time = asyncio.get_event_loop().time()
-                            sleep_time = next_frame_time - current_time
-                            if sleep_time > 0:
-                                await asyncio.sleep(sleep_time)
-                            else:
-                                await asyncio.sleep(0)
-                            next_frame_time += frame_interval
-
-                            if session.in_transition:
-                                elapsed = (
-                                    asyncio.get_event_loop().time()
-                                    - session.transition_start_time
-                                )
-                                if elapsed >= session.transition_duration:
-                                    session.in_transition = False
-                                    session.transition_start_time = None
+                            selecting = bool(
+                                session.info and session.info.get("selecting")
+                            )
+                            if selecting:
+                                session.actions = {
+                                    "selection": session.next_selection_action(),
+                                }
                             else:
                                 session.actions = {
-                                    "agent_0": session.player1_next_buttons.pop(0)
-                                    if session.player1_next_buttons
-                                    else (
-                                        session.player1_current_action
-                                        if player1_participant == "human"
-                                        else 0
+                                    "agent_0": session.next_player_action(
+                                        1, player1_participant
                                     ),
-                                    "agent_1": session.player2_next_buttons.pop(0)
-                                    if session.player2_next_buttons
-                                    else 0,
+                                    "agent_1": session.next_player_action(
+                                        2, player2_participant
+                                    ),
                                 }
 
-                                try:
-                                    (
-                                        session.observation,
-                                        reward,
-                                        terminated,
-                                        truncated,
-                                        session.info,
-                                    ) = await asyncio.to_thread(
-                                        session.env.step, session.actions
+                            try:
+                                phase_edge_armed = True
+                                (
+                                    session.observation,
+                                    reward,
+                                    terminated,
+                                    truncated,
+                                    session.info,
+                                ) = await session.run_env_operation(
+                                    session.env.step,
+                                    session.actions,
+                                    stream_phase_frame,
+                                )
+                            except Exception as e:
+                                print(f"Error during env.step: {e}")
+                                await fail_current_game(format_runtime_error(e))
+                                break
+                            finally:
+                                phase_edge_armed = False
+                                phase_generation += 1
+
+                            frame = session.observation.get("frame")
+                            if frame is not None:
+                                video_track.set_frame(np.ascontiguousarray(frame))
+
+                            selection_changed = False
+                            if selecting:
+                                for player_number in (1, 2):
+                                    selection_key = f"player{player_number}_selection"
+                                    selected_key = f"player{player_number}_selected"
+                                    if (
+                                        session.info.get(selected_key)
+                                        and session.game_state[selection_key] is None
+                                    ):
+                                        session.game_state[selection_key] = (
+                                            session.env.read_player_identity(
+                                                f"P{player_number}"
+                                            )
+                                        )
+                                        selection_changed = True
+                            both_selected_while_selecting = bool(
+                                selecting
+                                and session.info.get("player1_selected")
+                                and session.info.get("player2_selected")
+                            )
+                            if (
+                                both_selected_while_selecting
+                                and versus_frames_after_lock is None
+                            ):
+                                versus_frames_after_lock = 0
+                                if (
+                                    not models_ready_checked
+                                    and models_loading_frames_remaining is None
+                                ):
+                                    models_loading_frames_remaining = (
+                                        models_loading_delay_frames
                                     )
-                                except Exception as e:
-                                    print(f"Error during env.step: {e}")
-                                    await fail_current_game(format_runtime_error(e))
-                                    continue
+                                session.accepts_input = False
+                                session.invalidate_actions()
+                                selection_changed = True
+                            if versus_frames_after_lock == VERSUS_START_OFFSET_FRAMES:
+                                send_presentation("versus")
+                            if versus_frames_after_lock is not None:
+                                versus_frames_after_lock += 1
+                            if selection_changed:
+                                await session.send_game_state()
 
-                                if session.info.get("game_done", False):
-                                    if terminated or truncated:
-                                        p1_wins = session.observation["P1"]["wins"][0]
-                                        p2_wins = session.observation["P2"]["wins"][0]
-
-                                        if p1_wins > p2_wins:
-                                            session.game_state["scores"][0] += 1
-                                            winner = PARTICIPANT_LABELS.get(
-                                                player1_participant,
-                                                player1_participant,
-                                            )
-                                            if (
-                                                player1_participant
-                                                == player2_participant
-                                            ):
-                                                winner = f"{winner} (P1)"
-                                        elif p2_wins > p1_wins:
-                                            session.game_state["scores"][1] += 1
-                                            winner = PARTICIPANT_LABELS.get(
-                                                player2_participant,
-                                                player2_participant,
-                                            )
-                                            if (
-                                                player2_participant
-                                                == player1_participant
-                                            ):
-                                                winner = f"{winner} (P2)"
-                                        else:
-                                            winner = "Draw"
-
-                                        session.game_state["status"] = "finished"
-                                        session.game_state["winner"] = winner
+                            if (
+                                selecting
+                                and models_loading_frames_remaining is not None
+                            ):
+                                models_loading_frames_remaining -= 1
+                                if models_loading_frames_remaining <= 0:
+                                    models_loading_frames_remaining = None
+                                    if not model_ready_task.done() and not (
+                                        await wait_for_models(
+                                            model_ready_task,
+                                            show_loading=True,
+                                        )
+                                    ):
+                                        return
+                                    models_ready_checked = True
+                                    if session.game_state["status"] == "models_loading":
+                                        session.game_state["status"] = "selecting"
                                         await session.send_game_state()
 
-                                        await prepare_for_next_game()
-                                        await session.send_game_state()
-                                        continue
-                                elif session.info.get("round_done", False):
+                            if selecting and not session.info.get("selecting"):
+                                identity = session.env.read_match_identity()
+                                if not await wait_for_models(
+                                    model_ready_task,
+                                    show_loading=not model_ready_task.done(),
+                                ):
+                                    return
+                                models_ready_checked = True
+                                session.apply_match_identity(identity)
+                                session.accepts_input = human_player_number is not None
+                                session.sync_round_number()
+                                session.game_state["status"] = "running"
+                                await session.send_game_state()
+
+                            if session.info.get("game_done", False):
+                                if terminated or truncated:
+                                    await video_track.wait_for_phase_frames()
+                                    session.accepts_input = False
                                     session.invalidate_actions()
-                                    session.in_transition = True
-                                    session.transition_start_time = (
-                                        asyncio.get_event_loop().time()
-                                    )
-                                    await session.outbound_message_queue.put(
-                                        {
-                                            "type": "transition",
-                                            "data": {"transition_type": "round"},
-                                        }
-                                    )
+                                    p1_wins = session.observation["P1"]["wins"][0]
+                                    p2_wins = session.observation["P2"]["wins"][0]
 
-                            if not session.in_transition:
-                                frame = session.observation.get("frame")
-                                if frame is not None:
-                                    video_track.set_frame(np.ascontiguousarray(frame))
+                                    if p1_wins > p2_wins:
+                                        session.game_state["scores"][0] += 1
+                                        winner_side = "P1"
+                                        winner = PARTICIPANT_LABELS.get(
+                                            player1_participant,
+                                            player1_participant,
+                                        )
+                                        if player1_participant == player2_participant:
+                                            winner = f"{winner} (P1)"
+                                    elif p2_wins > p1_wins:
+                                        session.game_state["scores"][1] += 1
+                                        winner_side = "P2"
+                                        winner = PARTICIPANT_LABELS.get(
+                                            player2_participant,
+                                            player2_participant,
+                                        )
+                                        if player2_participant == player1_participant:
+                                            winner = f"{winner} (P2)"
+                                    else:
+                                        winner_side = "draw"
+                                        winner = "Draw"
+
+                                    session.game_state["status"] = "finished"
+                                    session.game_state["winner"] = winner
+                                    session.game_state["winner_side"] = winner_side
+                                    await session.send_game_state()
+                                    await session.hold_finished()
+                                    break
+                            elif session.info.get("round_done", False):
+                                session.invalidate_actions()
+                                if session.info.get("stage_done", False):
+                                    identity = session.env.read_match_identity()
+                                    session.apply_match_identity(identity)
+                                    session.prev_player1_state = None
+                                    session.prev_player2_state = None
+                                    session.player1_recent_move_names = []
+                                    session.player2_recent_move_names = []
+                                session.accepts_input = human_player_number is not None
+                                session.sync_round_number()
+                                session.game_state["status"] = "running"
+                                last_frame_at = None
+                                await session.send_game_state()
+
+                        if session.stop_event.is_set():
+                            break
+                        await prepare_for_next_game(preserve_frame=True)
 
                 except Exception:
                     print(f"Error in game loop: {traceback.format_exc()}")
-                    session.stop_event.set()
+                    session.request_stop()
 
+            await session.send_game_state()
             tasks = [
                 asyncio.create_task(process_signaling_messages()),
+                asyncio.create_task(process_control_messages()),
                 asyncio.create_task(process_outbound_messages()),
                 asyncio.create_task(keepalive()),
-                asyncio.create_task(prefetch_servers()),
                 asyncio.create_task(run_robot_background()),
                 asyncio.create_task(run_game_loop()),
             ]
+            stop_waiter = asyncio.create_task(session.stop_event.wait())
 
             try:
-                await asyncio.gather(*tasks)
+                done, _ = await asyncio.wait(
+                    {*tasks, stop_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    if task is not stop_waiter:
+                        task.result()
             except WebSocketDisconnect:
-                session.stop_event.set()
+                session.request_stop()
                 session.game_running = False
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
                 print(f"WebSocket error: {e}")
-                session.stop_event.set()
+                session.request_stop()
                 session.game_running = False
                 session.game_state["status"] = "error"
                 session.game_state["error"] = str(e)
@@ -1303,24 +1682,27 @@ class Web:
                     await session.send_game_state()
                 except Exception:
                     print("Warning: could not send error message")
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
             finally:
+                session.request_stop()
+                session.game_running = False
+                _, pending_tasks = await asyncio.wait(
+                    tasks,
+                    timeout=SESSION_TASK_SHUTDOWN_TIMEOUT_SECONDS,
+                )
+                for task in pending_tasks:
+                    task.cancel()
+                stop_waiter.cancel()
+                await asyncio.gather(
+                    *tasks,
+                    stop_waiter,
+                    return_exceptions=True,
+                )
                 await pc.close()
                 await session.cleanup()
 
         @web_app.websocket("/ws")
         async def websocket_missing_peer_id(websocket: WebSocket):
             await websocket.close(code=1008)
-
-        @web_app.get("/warm/default-participant")
-        async def warm_default_participant(background_tasks: BackgroundTasks):
-            background_tasks.add_task(
-                self.create_participant_server, DEFAULT_PLAYER2_PARTICIPANT
-            )
-            return JSONResponse({"ok": True}, status_code=202)
 
         @web_app.get("/api/extra-moves")
         async def get_extra_moves():
@@ -1451,23 +1833,15 @@ def static_site():
     async def wrong_websocket_host_path(websocket: WebSocket, path: str):
         await websocket.close(code=1013, reason="Connect to gameplay host")
 
-    @web_app.get("/capcom.svg")
-    async def capcom_logo():
-        return FileResponse(f"{remote_logos_dir}/capcom.svg")
-
     @web_app.get("/favicon.ico")
     async def favicon():
-        return FileResponse(f"{remote_logos_dir}/favicon.ico")
-
-    @web_app.get("/modal.svg")
-    async def modal_logo():
-        return FileResponse(f"{remote_logos_dir}/modal.svg")
+        return FileResponse(
+            f"{remote_logos_dir}/mobile.webp",
+            media_type="image/webp",
+        )
 
     web_app.mount("/icons", StaticFiles(directory=remote_icons_dir), name="icons")
-    web_app.mount("/outfits", StaticFiles(directory=remote_outfits_dir), name="outfits")
-    web_app.mount(
-        "/portraits", StaticFiles(directory=remote_portraits_dir), name="portraits"
-    )
+    web_app.mount("/logos", StaticFiles(directory=remote_logos_dir), name="logos")
     web_app.mount("/sounds", StaticFiles(directory=remote_sounds_dir), name="sounds")
 
     def frontend_file_response(frontend_path: str):
