@@ -1,41 +1,13 @@
 import { byId, show, hide } from "./utils.js";
-import { AudioManager } from "./audioManager.js";
-import { GamepadManager } from "./gamepadManager.js";
 import { GameState } from "./gameState.js";
-import {
-  getWinnerLabel,
-  isHumanParticipant,
-} from "./participantOptions.js";
-import { SOUND_KEYS } from "./constants.js";
 
 const createScreenManager = () => {
   const screens = {
-    COIN: "coin",
-    SPLASH: "splash",
-    SETTINGS: "settings",
+    LOBBY: "lobby",
     LOADING: "loading",
     GAME: "game",
-    WIN: "win",
     ERROR: "error",
   };
-
-  const volumes = {
-    select: 0.2,
-    start: 0.2,
-    gameplay: 0.2,
-    transition: 0.2,
-    winLose: 0.2,
-  };
-
-  const durations = {
-    coin: 1000,
-    capcom: 6000,
-    animation: 600,
-    transitionMinDisplay: 3000,
-  };
-
-  let capcomTimeout = null;
-  let transitionTimeout = null;
 
   const hideAllScreens = () => {
     Object.values(screens).forEach((screen) => {
@@ -48,36 +20,22 @@ const createScreenManager = () => {
     const state = GameState.get();
     const isLoading = screenId === screens.LOADING;
     const hideAll = isLoading && !state.assetsLoaded;
+    const hideSideControls = screenId === screens.GAME || hideAll;
 
     const header = byId("game-header");
     if (header) {
-      const hideHeader =
-        screenId === screens.SPLASH || screenId === screens.GAME || hideAll;
+      const hideHeader = screenId === screens.GAME || hideAll;
       header.classList.toggle("hidden", hideHeader);
     }
 
-    const isGameplay = screenId === screens.GAME;
-    const isMinimalScreen =
-      screenId === screens.WIN ||
-      screenId === screens.ERROR ||
-      (screenId === screens.LOADING && state.assetsLoaded);
-
     const muteButton = byId("mute-toggle");
     if (muteButton) {
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      const player1Human = isHumanParticipant(state.player1Participant);
-      const hideMute =
-        isMobile ||
-        hideAll ||
-        (isGameplay && player1Human) ||
-        (isMinimalScreen && player1Human) ||
-        (screenId === screens.SPLASH && GamepadManager.isConnected());
-      muteButton.classList.toggle("hidden", hideMute);
+      muteButton.classList.toggle("hidden", hideSideControls);
     }
 
     const gamepadStatus = byId("gamepad-status");
     if (gamepadStatus) {
-      gamepadStatus.classList.toggle("hidden", hideAll);
+      gamepadStatus.classList.toggle("hidden", hideSideControls);
     }
 
     updateHelpIconVisibility(screenId);
@@ -88,50 +46,12 @@ const createScreenManager = () => {
     if (!controlsHelp) return;
 
     const state = GameState.get();
-    if (!isHumanParticipant(state.player1Participant)) {
-      hide(controlsHelp);
-      return;
-    }
-
     const isLoading = screenId === screens.LOADING;
     const hideAll = isLoading && !state.assetsLoaded;
-    const isEarlyScreen =
-      screenId === screens.COIN || screenId === screens.SPLASH;
-    const isGameplay = screenId === screens.GAME;
-    const isMinimalScreen =
-      screenId === screens.WIN ||
-      screenId === screens.ERROR ||
-      (screenId === screens.LOADING && state.assetsLoaded);
-
     controlsHelp.classList.toggle(
       "hidden",
-      hideAll || isEarlyScreen || isGameplay || isMinimalScreen
+      screenId === screens.GAME || hideAll
     );
-  };
-
-  const manageAudio = (screenId) => {
-    if (screenId === screens.SETTINGS) {
-      AudioManager.play(SOUND_KEYS.SELECT, {
-        volume: volumes.select,
-        loop: true,
-        trackAs: "select",
-      });
-      AudioManager.stopTrack("winLose");
-    } else {
-      AudioManager.stopTrack("select");
-      if (screenId !== screens.WIN) {
-        AudioManager.stopTrack("winLose");
-      }
-    }
-  };
-
-  const resetCoinScreen = () => {
-    const coinBtn = byId("insert-coin-btn");
-    if (coinBtn) {
-      coinBtn.disabled = false;
-      coinBtn.classList.remove("animate-coin-insert");
-      coinBtn.classList.add("animate-coin-shine");
-    }
   };
 
   const showScreen = (screenId) => {
@@ -142,179 +62,9 @@ const createScreenManager = () => {
 
     GameState.setCurrentScreen(screenId);
     updateUIVisibility(screenId);
-    manageAudio(screenId);
 
-    if (screenId === screens.COIN) {
-      resetCoinScreen();
-    }
-
-    if (GamepadManager.isConnected()) {
-      GameState.updateGamepadUIState({ currentScreen: null });
-    }
-  };
-
-  const transitionToSplash = () => {
-    const coinScreen = byId("coin-screen");
-    if (!coinScreen || coinScreen.classList.contains("hidden")) return;
-
-    showScreen(screens.SPLASH);
-    AudioManager.playSound(SOUND_KEYS.CAPCOM);
-
-    capcomTimeout = setTimeout(() => {
-      capcomTimeout = null;
-      showScreen(screens.SETTINGS);
-    }, durations.capcom);
-  };
-
-  const skipSplash = () => {
-    if (capcomTimeout) {
-      clearTimeout(capcomTimeout);
-      capcomTimeout = null;
-    }
-
-    const capcomSound = AudioManager.sounds[SOUND_KEYS.CAPCOM];
-    if (capcomSound) {
-      capcomSound.pause();
-      capcomSound.currentTime = 0;
-    }
-
-    showScreen(screens.SETTINGS);
-  };
-
-  const showTransition = (message) => {
-    GameState.update({
-      inTransition: true,
-      transitionStartTime: Date.now(),
-      readyToHideTransition: false,
-    });
-
-    AudioManager.stopTrack("select");
-    AudioManager.play(SOUND_KEYS.TRANSITION, {
-      volume: volumes.transition,
-      trackAs: "transition",
-    });
-
-    const status = byId("canvas-loading-status");
-    if (status) status.textContent = message;
-
-    const overlay = byId("canvas-loading-overlay");
-    const canvas = byId("game-canvas");
-
-    if (overlay) show(overlay);
-    if (canvas) hide(canvas);
-
-    const header = byId("game-header");
-    if (header) show(header);
-
-    transitionTimeout = setTimeout(() => {
-      const currentState = GameState.get();
-      if (currentState.readyToHideTransition && currentState.inTransition) {
-        hideTransition();
-      }
-    }, durations.transitionMinDisplay);
-  };
-
-  const hideTransition = () => {
-    if (transitionTimeout) {
-      clearTimeout(transitionTimeout);
-      transitionTimeout = null;
-    }
-
-    GameState.update({
-      inTransition: false,
-      transitionStartTime: null,
-      readyToHideTransition: false,
-    });
-
-    AudioManager.stopTrack("transition");
-
-    const state = GameState.get();
-    const gameScreen = byId("game-screen");
-
-    if (
-      state.loaded &&
-      gameScreen &&
-      !gameScreen.classList.contains("hidden")
-    ) {
-      const character = state.player1.character;
-      if (character) {
-        AudioManager.play(character, {
-          volume: volumes.gameplay,
-          loop: true,
-          trackAs: "select",
-        });
-      }
-
-      const header = byId("game-header");
-      if (header) hide(header);
-    }
-
-    const canvas = byId("game-canvas");
-    const overlay = byId("canvas-loading-overlay");
-
-    if (canvas) show(canvas);
-    if (overlay) hide(overlay);
-  };
-
-  const checkTransitionReady = () => {
-    const state = GameState.get();
-    if (!state.inTransition) return;
-
-    GameState.update({ readyToHideTransition: true });
-
-    const elapsedTime = Date.now() - state.transitionStartTime;
-    if (elapsedTime >= durations.transitionMinDisplay) {
-      hideTransition();
-    }
-  };
-
-  const showWinScreen = (winner) => {
-    const state = GameState.get();
-    const player1Label = getWinnerLabel(
-      state.player1Participant,
-      "p1",
-      state.player2Participant
-    );
-    const player2Label = getWinnerLabel(
-      state.player2Participant,
-      "p2",
-      state.player1Participant
-    );
-    const winnerEl = byId("winner-text");
-    if (winnerEl) {
-      winnerEl.textContent = `Winner: ${winner}`;
-      winnerEl.classList.toggle(
-        "text-sf-blue",
-        winner === player1Label
-      );
-      winnerEl.classList.toggle(
-        "text-sf-red",
-        winner === player2Label
-      );
-    }
-
-    const winSound = isHumanParticipant(state.player1Participant)
-      ? winner === player1Label
-        ? SOUND_KEYS.WIN
-        : SOUND_KEYS.LOSE
-      : SOUND_KEYS.WIN;
-
-    AudioManager.play(winSound, {
-      volume: volumes.winLose,
-      trackAs: "winLose",
-      onEnd: () => {
-        const winScreen = byId("win-screen");
-        if (winScreen && !winScreen.classList.contains("hidden")) {
-          AudioManager.play(SOUND_KEYS.CONTINUE, {
-            volume: volumes.select,
-            loop: true,
-            trackAs: "select",
-          });
-        }
-      },
-    });
-
-    showScreen(screens.WIN);
+    // Always invalidate so keyboard and gamepad rebuild the same focus sections.
+    GameState.updateGamepadUIState({ currentScreen: null });
   };
 
   const showError = (message) => {
@@ -325,75 +75,11 @@ const createScreenManager = () => {
     showScreen(screens.ERROR);
   };
 
-  const initCoinScreen = () => {
-    const coinBtn = byId("insert-coin-btn");
-    if (!coinBtn) return;
-
-    const handleCoinInsert = () => {
-      if (coinBtn.disabled) return;
-
-      coinBtn.disabled = true;
-      coinBtn.classList.remove("animate-coin-shine");
-      coinBtn.classList.add("animate-coin-insert");
-
-      AudioManager.playSound(SOUND_KEYS.COIN);
-
-      setTimeout(() => {
-        transitionToSplash();
-      }, 1000);
-    };
-
-    coinBtn.addEventListener("click", handleCoinInsert);
-    coinBtn.addEventListener("touchend", (e) => {
-      e.preventDefault();
-      handleCoinInsert();
-    });
-
-    coinBtn.addEventListener("mouseenter", () => {
-      AudioManager.playSound(SOUND_KEYS.HOVER);
-    });
-  };
-
-  const initSplashScreen = () => {
-    const splashScreen = byId("splash-screen");
-    if (!splashScreen) return;
-
-    const handleSplashSkip = () => {
-      if (splashScreen.classList.contains("hidden")) return;
-      skipSplash();
-    };
-
-    splashScreen.addEventListener("click", handleSplashSkip);
-    splashScreen.addEventListener("touchend", (e) => {
-      e.preventDefault();
-      handleSplashSkip();
-    });
-  };
-
-  const cleanup = () => {
-    if (capcomTimeout) {
-      clearTimeout(capcomTimeout);
-      capcomTimeout = null;
-    }
-    if (transitionTimeout) {
-      clearTimeout(transitionTimeout);
-      transitionTimeout = null;
-    }
-  };
-
   return {
     screens,
     showScreen,
-    transitionToSplash,
-    skipSplash,
-    showTransition,
-    hideTransition,
-    checkTransitionReady,
-    showWinScreen,
     showError,
-    initCoinScreen,
-    initSplashScreen,
-    cleanup,
+    refreshVisibility: () => updateUIVisibility(GameState.getCurrentScreen()),
   };
 };
 

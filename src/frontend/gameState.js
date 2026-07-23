@@ -1,19 +1,12 @@
 const createGameState = () => {
   let state = {
-    // core game status
     player1Participant: "human",
     player2Participant: "qwen35_9b",
-    modelDifficulty: 2,
-    cpuDifficulty: 8,
     loaded: false,
-    paused: false,
+    acceptsInput: false,
     serverReady: false,
     firstFrameReceived: false,
     assetsLoaded: false,
-
-    inTransition: false,
-    transitionStartTime: null,
-    readyToHideTransition: false,
 
     player1: {
       character: null,
@@ -26,27 +19,19 @@ const createGameState = () => {
       superArt: 1,
     },
 
-    characterGrid: {
-      activePlayer: "p1",
-      p1: { selected: false, character: "Ryu", outfit: 1 },
-      p2: { selected: false, character: "Ken", outfit: 1 },
-    },
-
     currentCharacter: null,
     playerDirection: "right",
 
+    gamePhase: "connecting",
     currentScreen: null,
 
-    // input state
     keyState: {},
 
-    // gamepad nav
     gamepadUIState: {
       currentScreen: null,
       currentSection: 0,
       currentElement: 0,
       sections: [],
-      lastSidePanelIndex: -1,
     },
   };
 
@@ -63,74 +48,9 @@ const createGameState = () => {
       return { ...state };
     },
 
-    getProperty(path) {
-      const keys = path.split(".");
-      let value = state;
-      for (const key of keys) {
-        value = value[key];
-        if (value === undefined) return undefined;
-      }
-      return value;
-    },
-
     update(updates) {
       state = { ...state, ...updates };
       notifyListeners("update", updates);
-    },
-
-    updateProperty(path, value) {
-      const keys = path.split(".");
-      const lastKey = keys.pop();
-      let target = state;
-
-      for (const key of keys) {
-        if (!target[key]) target[key] = {};
-        target = target[key];
-      }
-
-      target[lastKey] = value;
-      notifyListeners("propertyUpdate", { path, value });
-    },
-
-    resetGameState() {
-      state.loaded = false;
-      state.paused = false;
-      state.serverReady = false;
-      state.firstFrameReceived = false;
-      state.inTransition = false;
-      state.transitionStartTime = null;
-      state.readyToHideTransition = false;
-      state.keyState = {};
-      notifyListeners("reset", null);
-    },
-
-    setPlayer1Character(character, outfit = 1) {
-      state.characterGrid.p1.character = character;
-      state.characterGrid.p1.outfit = outfit;
-      state.player1.character = character;
-      state.player1.outfit = outfit;
-      notifyListeners("playerCharacterChange", {
-        player: "p1",
-        character,
-        outfit,
-      });
-    },
-
-    setPlayer2Character(character, outfit = 1) {
-      state.characterGrid.p2.character = character;
-      state.characterGrid.p2.outfit = outfit;
-      state.player2.character = character;
-      state.player2.outfit = outfit;
-      notifyListeners("playerCharacterChange", {
-        player: "p2",
-        character,
-        outfit,
-      });
-    },
-
-    switchActivePlayer(player) {
-      state.characterGrid.activePlayer = player;
-      notifyListeners("activePlayerChange", player);
     },
 
     setCurrentScreen(screen) {

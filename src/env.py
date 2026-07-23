@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from src.utils import STUN_BAR_MAX, SUPER_BAR_MAX, TIMER_MAX
 
@@ -15,11 +17,22 @@ _CPU_CHARACTER_MENU = 2
 _CPU_OPPONENT_MENUS = {3, 9}
 _CPU_OPPONENT_CONFIRM_DELAY = 30
 _CPU_OPPONENT_CONFIRM_INTERVAL = 30
+_CAPCOM_PRESENTATION_OFFSET_FRAMES = 345
+_INSERT_COIN_PRESENTATION_FRAMES = 600
+_SELECTION_PRESENTATION_FRAMES = 300
+_TERMINAL_MIN_SECONDS = 20
+_TOURNAMENT_WIN_MIN_SECONDS = 60
+_TERMINAL_MAX_SECONDS = 120
+_TERMINAL_IDLE_SECONDS = 5
+_GAME_OVER_CUE_SECONDS = 10
+FrameSink = Callable[[Any], None]
+PresentationSink = Callable[[str], None]
 
 # Raw emulator ids used by MAME / sfiii-gym.
 # Intentionally different than CHARACTER_TO_ID in utils.py
 # since the emulator uses a different numbering scheme.
 CHARACTER_NAME_TO_LOCAL_ID = {
+    "Gill": 0,
     "Alex": 1,
     "Ryu": 2,
     "Yun": 3,
@@ -39,6 +52,9 @@ CHARACTER_NAME_TO_LOCAL_ID = {
     "Q": 18,
     "Twelve": 19,
     "Remy": 20,
+}
+LOCAL_ID_TO_CHARACTER_NAME = {
+    local_id: name for name, local_id in CHARACTER_NAME_TO_LOCAL_ID.items()
 }
 
 
@@ -116,17 +132,23 @@ def _boot_steps(frame_ratio: int, *, vs_cpu: bool = False):
 
     coin = (Actions.COIN_P1,) if vs_cpu else (Actions.COIN_P1, Actions.COIN_P2)
     start = (Actions.P1_START,) if vs_cpu else (Actions.P1_START, Actions.P2_START)
-    return _menu_steps(
+    steps = _menu_steps(
         frame_ratio,
         [
             (0, (Actions.SERVICE,)),
             (30, (Actions.P1_UP,)),
             (30, (Actions.P1_JPUNCH,)),
-            (300, coin),
+            (300 + _INSERT_COIN_PRESENTATION_FRAMES, coin),
             (10, coin),
             (60, start),
         ],
     )
+    intro_step = steps[3]
+    intro_step["presentations"] = {
+        int(_CAPCOM_PRESENTATION_OFFSET_FRAMES / frame_ratio): "capcom",
+    }
+    intro_step["action_presentation"] = "coin"
+    return steps
 
 
 def _cpu_difficulty_steps(frame_ratio: int, difficulty: int):
@@ -150,6 +172,17 @@ def _cpu_difficulty_steps(frame_ratio: int, difficulty: int):
     entries.extend((10, (direction,)) for _ in range(abs(level - 3)))
     tail = [down] * 6 + [jab, down, jab, down, down, jab, down, down, down, jab]
     entries.extend((10, (action,)) for action in tail)
+    return _menu_steps(frame_ratio, entries)
+
+
+def _next_stage_steps(frame_ratio: int):
+    # MAME is container-only; local imports must not load its native wheel.
+    from MAMEToolkit.sf_environment.Actions import Actions
+
+    jab = Actions.P1_JPUNCH
+    entries = [(60, (jab,))]
+    entries.extend((0, (jab,)) for _ in range(int(180 / frame_ratio)))
+    entries.append((60, (jab,)))
     return _menu_steps(frame_ratio, entries)
 
 
@@ -191,6 +224,7 @@ class EnvironmentConfig:
     env_id: str | None = None
     vs_cpu: bool = False
     cpu_difficulty: int = 8
+    interactive_select: bool = False
 
     def resolved_env_id(self) -> str:
         return self.env_id or f"sf3-{uuid.uuid4().hex[:8]}"
@@ -202,19 +236,56 @@ class _CpuMenuAdvanceState:
     opponent_menu_frames: int = 0
 
 
+class _FramePacer:
+    def __init__(self, target_fps: float = 60.0):
+        self.frame_interval = 1.0 / target_fps
+        self.last_frame_at: float | None = None
+
+    def wait(self) -> None:
+        if self.last_frame_at is not None:
+            deadline = self.last_frame_at + self.frame_interval
+            while (delay := deadline - time.perf_counter()) > 0:
+                time.sleep(delay)
+        self.last_frame_at = time.perf_counter()
+
+
 class GameEnvironment(Protocol):
-    def reset(self) -> tuple[dict[str, Any], dict[str, Any]]: ...
+    def pregame_step(
+        self,
+        frame_sink: FrameSink | None = None,
+    ) -> dict[str, Any]: ...
+
+    def start_interactive_game(
+        self,
+        *,
+        vs_cpu: bool,
+        cpu_difficulty: int,
+        frame_sink: FrameSink | None = None,
+        presentation_sink: PresentationSink | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
+    def reset(
+        self,
+        frame_sink: FrameSink | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]: ...
 
     def step(
         self,
         actions: dict[str, int],
+        frame_sink: FrameSink | None = None,
     ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]: ...
+
+    def read_match_identity(self) -> dict[str, dict[str, Any]]: ...
+
+    def read_player_identity(self, player: str) -> dict[str, Any]: ...
+
+    def request_stop(self) -> None: ...
 
     def close(self) -> None: ...
 
 
 class LocalSfiiiAdapter:
-    """One-game emulator adapter. Create a new instance for each game."""
+    """Local emulator adapter for automated or interactive matches."""
 
     def __init__(self, config: EnvironmentConfig):
         os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -281,9 +352,60 @@ class LocalSfiiiAdapter:
         self.expected_wins = {"P1": 0, "P2": 0}
         self._reset_called = False
         self._closed = False
+        self._stop_requested = threading.Event()
         self._cpu_character_lock_installed = False
+        self._cpu_opponent_menu_seen = False
+        self._selecting = False
+        self._vs_cpu = config.vs_cpu
+        self._cpu_difficulty = config.cpu_difficulty
+        self._match_identity: dict[str, dict[str, Any]] | None = None
+        self._presentation_sink: PresentationSink | None = None
+        self._frame_pacer = _FramePacer()
 
-    def reset(self) -> tuple[dict[str, Any], dict[str, Any]]:
+    def pregame_step(
+        self,
+        frame_sink: FrameSink | None = None,
+    ) -> dict[str, Any]:
+        if self._closed:
+            raise RuntimeError("Cannot step a closed LocalSfiiiAdapter")
+        self._data = self._phase_step([], frame_sink)
+        return self._data
+
+    def start_interactive_game(
+        self,
+        *,
+        vs_cpu: bool,
+        cpu_difficulty: int,
+        frame_sink: FrameSink | None = None,
+        presentation_sink: PresentationSink | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self._closed:
+            raise RuntimeError("Cannot start a closed LocalSfiiiAdapter")
+        if not self.config.interactive_select:
+            raise RuntimeError(
+                "Interactive game requested from an automated environment"
+            )
+
+        self._vs_cpu = vs_cpu
+        self._cpu_difficulty = max(1, min(8, int(cpu_difficulty)))
+        self._match_identity = None
+        self._cpu_opponent_menu_seen = False
+        self._selecting = False
+        self._presentation_sink = presentation_sink
+        self._new_game(frame_sink, presentation_sink)
+        return _normalize_local_observation(self._data), {
+            "selecting": self._selecting,
+            "player1_selected": False,
+            "player2_selected": False,
+            "game_done": False,
+            "round_done": False,
+            "stage_done": False,
+        }
+
+    def reset(
+        self,
+        frame_sink: FrameSink | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         if self._closed:
             raise RuntimeError("Cannot reset a closed LocalSfiiiAdapter")
         if self._reset_called:
@@ -292,31 +414,80 @@ class LocalSfiiiAdapter:
                 "for each game"
             )
         self._reset_called = True
-        self._new_game()
-        return _normalize_local_observation(self._data), {}
+        self._vs_cpu = self.config.vs_cpu
+        self._cpu_difficulty = self.config.cpu_difficulty
+        self._match_identity = None
+        self._cpu_opponent_menu_seen = False
+        self._new_game(frame_sink)
+        return _normalize_local_observation(self._data), {
+            "selecting": self._selecting,
+            "player1_selected": False,
+            "player2_selected": False,
+            "game_done": False,
+            "round_done": False,
+            "stage_done": False,
+        }
 
     def step(
         self,
         actions: dict[str, int],
+        frame_sink: FrameSink | None = None,
     ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
+        if self._selecting:
+            return self._step_select(actions, frame_sink)
+
         pressed = _action_values(1, actions.get("agent_0", 0))
-        if not self.config.vs_cpu:
+        if not self._vs_cpu:
             pressed = pressed + _action_values(2, actions.get("agent_1", 0))
         raw = self._sub_step(pressed)
         reward = float(raw["reward"])
         round_done = False
+        stage_done = False
         game_done = False
 
         if int(raw["fighting"]) == 0:
-            raw = self._run_till_victor(raw)
+            # Equal health at the fighting edge is time-over or double KO.
+            if int(raw["healthP1"]) == int(raw["healthP2"]):
+                self._emit_presentation("judgement")
+            raw = self._run_till_victor(raw, frame_sink)
             reward = float(raw["reward"])
             round_done = True
-            game_done = int(raw["winsP1"]) >= 2 or int(raw["winsP2"]) >= 2
-            if not game_done:
-                self._data = self._wait_for_fight_start()
+            p1_won_match = int(raw["winsP1"]) >= 2
+            p2_won_match = int(raw["winsP2"]) >= 2
+            tournament_mode = self._vs_cpu and self.config.interactive_select
+            tournament_won = (
+                tournament_mode
+                and p1_won_match
+                and int(raw["characterP2"]) == CHARACTER_NAME_TO_LOCAL_ID["Gill"]
+            )
+            stage_done = tournament_mode and p1_won_match and not tournament_won
+            game_done = (
+                p2_won_match or tournament_won
+                if tournament_mode
+                else p1_won_match or p2_won_match
+            )
+            if stage_done:
+                self._data = self._wait_for_post_ko_black_frame(raw, frame_sink)
+                self._emit_presentation("winner")
+                self._run_steps(
+                    _next_stage_steps(self.config.step_ratio),
+                    frame_sink,
+                )
+                if int(self._data["characterP2"]) == CHARACTER_NAME_TO_LOCAL_ID["Gill"]:
+                    self._emit_presentation("gill_intro")
+                self._data = self._wait_for_fight_start(frame_sink)
+                self._data["reward"] = reward
+            elif not game_done:
+                self._data = self._wait_for_fight_start(frame_sink)
                 self._data["reward"] = reward
             else:
-                self._data = raw
+                self._data = self._stream_terminal_sequence(
+                    raw,
+                    frame_sink,
+                    tournament_won=tournament_won,
+                    show_continue=tournament_mode and p2_won_match,
+                )
+                self._data["reward"] = reward
         else:
             self._data = raw
 
@@ -324,22 +495,103 @@ class LocalSfiiiAdapter:
         info = {
             "game_done": game_done,
             "round_done": round_done,
-            "stage_done": False,
+            "stage_done": stage_done,
+            "selecting": False,
         }
         return observation, reward, game_done, False, info
+
+    def read_match_identity(self) -> dict[str, dict[str, Any]]:
+        if self._match_identity is not None:
+            return {
+                player: dict(settings)
+                for player, settings in self._match_identity.items()
+            }
+
+        return {
+            "player1": self.read_player_identity("P1"),
+            "player2": self.read_player_identity("P2"),
+        }
+
+    def read_player_identity(self, player: str) -> dict[str, Any]:
+        if player not in {"P1", "P2"}:
+            raise ValueError(f"Unknown player seat {player}")
+        local_id = int(self._data[f"character{player}"])
+        character = LOCAL_ID_TO_CHARACTER_NAME.get(local_id)
+        if character is None:
+            raise RuntimeError(f"Unknown MAME character id {local_id} for {player}")
+        return {
+            "character": character,
+            "outfit": max(
+                1,
+                min(
+                    6,
+                    int(self._data[f"characterSelectColor{player}"]) + 1,
+                ),
+            ),
+            "superArt": max(
+                1,
+                min(
+                    3,
+                    int(self._data[f"characterSelectSa{player}"]) + 1,
+                ),
+            ),
+        }
+
+    def request_stop(self) -> None:
+        self._stop_requested.set()
 
     def close(self) -> None:
         if self._closed:
             return
+        self.request_stop()
         self._closed = True
         self.emu.close()
 
-    def _run_steps(self, steps: list[dict[str, Any]]) -> None:
+    def _raise_if_stopping(self) -> None:
+        if self._stop_requested.is_set():
+            raise RuntimeError("Environment stop requested")
+
+    def _emit_frame(
+        self,
+        data: Mapping[str, Any],
+        frame_sink: FrameSink | None,
+    ) -> None:
+        if frame_sink is not None and data.get("frame") is not None:
+            self._frame_pacer.wait()
+            frame_sink(data["frame"])
+
+    def _emit_presentation(self, name: str) -> None:
+        if self._presentation_sink is not None:
+            self._presentation_sink(name)
+
+    def _phase_step(
+        self,
+        actions: list[Any],
+        frame_sink: FrameSink | None,
+    ) -> dict[str, Any]:
+        self._raise_if_stopping()
+        data = self.emu.step(actions)
+        self._emit_frame(data, frame_sink)
+        return data
+
+    def _run_steps(
+        self,
+        steps: list[dict[str, Any]],
+        frame_sink: FrameSink | None,
+        presentation_sink: PresentationSink | None = None,
+    ) -> None:
         for step in steps:
-            for _ in range(step["wait"]):
-                self._data = self.emu.step([])
+            presentations = step.get("presentations", {})
+            for frame_number in range(1, step["wait"] + 1):
+                self._data = self._phase_step([], frame_sink)
+                presentation = presentations.get(frame_number)
+                if presentation_sink is not None and presentation is not None:
+                    presentation_sink(presentation)
             actions = [action.value for action in step["actions"]]
-            self._data = self.emu.step(actions)
+            self._data = self._phase_step(actions, frame_sink)
+            action_presentation = step.get("action_presentation")
+            if presentation_sink is not None and action_presentation is not None:
+                presentation_sink(action_presentation)
 
     def _write_u8(self, address_name: str, value: int) -> None:
         address = self.memory_addresses[address_name].address
@@ -376,6 +628,7 @@ class LocalSfiiiAdapter:
         p1_char: int,
         p2_char: int,
         p1_jab: int,
+        lock_characters: bool = True,
     ) -> list[int]:
         pressed: list[int] = []
         menu_state = int(self._data["menuState"])
@@ -392,19 +645,74 @@ class LocalSfiiiAdapter:
             cpu_confirm_elapsed >= 0
             and cpu_confirm_elapsed % _CPU_OPPONENT_CONFIRM_INTERVAL == 0
         ):
-            self._write_u8("characterP1", p1_char)
-            self._write_u8("characterP2", p2_char)
-            self._write_u8(
-                "characterSelectColorP2",
-                max(0, self.config.outfits[1] - 1),
-            )
+            if lock_characters:
+                self._write_u8("characterP1", p1_char)
+                self._write_u8("characterP2", p2_char)
+                self._write_u8(
+                    "characterSelectColorP2",
+                    max(0, self.config.outfits[1] - 1),
+                )
             pressed.append(p1_jab)
         return pressed
 
-    def _wait_for_boot_ready(self) -> None:
+    def _step_select(
+        self,
+        actions: dict[str, int],
+        frame_sink: FrameSink | None,
+    ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
+        selection_action = actions.get("selection", 0)
+        if not isinstance(selection_action, int):
+            selection_action = 0
+        player = 1
+        if not self._vs_cpu:
+            player1_state = int(self._data["characterSelectStateP1"])
+            player2_state = int(self._data["characterSelectStateP2"])
+            if player1_state >= 4 and player2_state < 4:
+                player = 2
+            elif player1_state >= 5:
+                player = 2
+        pressed = _action_values(player, selection_action)
+        self._data = self._phase_step(pressed, frame_sink)
+        player1_selected = int(self._data["characterSelectStateP1"]) >= 5
+        if self._vs_cpu:
+            menu_state = int(self._data["menuState"])
+            if menu_state in _CPU_OPPONENT_MENUS:
+                self._cpu_opponent_menu_seen = True
+            player2_selected = (
+                self._cpu_opponent_menu_seen and menu_state not in _CPU_OPPONENT_MENUS
+            )
+        else:
+            player2_selected = int(self._data["characterSelectStateP2"]) >= 5
+        if int(self._data["fighting"]) != 0:
+            player1_selected = True
+            player2_selected = True
+            self._selecting = False
+            self._match_identity = self.read_match_identity()
+            self.expected_health = {
+                "P1": int(self._data["healthP1"]),
+                "P2": int(self._data["healthP2"]),
+            }
+            self.expected_wins = {
+                "P1": int(self._data["winsP1"]),
+                "P2": int(self._data["winsP2"]),
+            }
+            self._data = self._sub_step([])
+            self._emit_frame(self._data, frame_sink)
+        observation = _normalize_local_observation(self._data)
+        info = {
+            "game_done": False,
+            "round_done": False,
+            "stage_done": False,
+            "selecting": self._selecting,
+            "player1_selected": player1_selected,
+            "player2_selected": player2_selected,
+        }
+        return observation, 0.0, False, False, info
+
+    def _wait_for_boot_ready(self, frame_sink: FrameSink | None) -> None:
         stable_frames = 0
         for _ in range(240):
-            self._data = self.emu.step([])
+            self._data = self._phase_step([], frame_sink)
             if (
                 int(self._data["characterSelectStateP1"]) == 0
                 and int(self._data["characterSelectStateP2"]) == 0
@@ -418,26 +726,26 @@ class LocalSfiiiAdapter:
         # This bounded wait is only a warm-up; later transitions enforce readiness.
         return
 
-    def _wait_for_character_select(self) -> None:
+    def _wait_for_character_select(self, frame_sink: FrameSink | None) -> None:
         from MAMEToolkit.sf_environment.Actions import Actions
 
-        players = ("P1",) if self.config.vs_cpu else ("P1", "P2")
+        players = ("P1",) if self._vs_cpu else ("P1", "P2")
         start_actions = [Actions.P1_START.value]
-        if not self.config.vs_cpu:
+        if not self._vs_cpu:
             start_actions.append(Actions.P2_START.value)
         for _ in range(240):
-            self._data = self.emu.step([])
+            self._data = self._phase_step([], frame_sink)
             states = [
                 int(self._data[f"characterSelectState{player}"]) for player in players
             ]
-            if all(state >= 2 for state in states):
+            if all(state == 2 for state in states):
                 return
             if any(state == 0 for state in states):
-                self._data = self.emu.step(start_actions)
-        mode = "1-player" if self.config.vs_cpu else "2-player"
+                self._data = self._phase_step(start_actions, frame_sink)
+        mode = "1-player" if self._vs_cpu else "2-player"
         raise TimeoutError(f"Timed out waiting for {mode} character select")
 
-    def _select_characters(self) -> None:
+    def _select_characters(self, frame_sink: FrameSink | None) -> None:
         from MAMEToolkit.sf_environment.Actions import Actions
 
         players = [
@@ -449,13 +757,20 @@ class LocalSfiiiAdapter:
                 (Actions.P1_JPUNCH if index == 0 else Actions.P2_JPUNCH).value,
             )
             for index, character in enumerate(self.config.characters)
-            if index == 0 or not self.config.vs_cpu
+            if index == 0 or not self._vs_cpu
         ]
         character_locked = {player: False for player, *_ in players}
         sa_locked = character_locked.copy()
+        character_visible_frames = {player: 0 for player, *_ in players}
+        sa_visible_frames = character_visible_frames.copy()
+        presentation_steps = max(
+            1,
+            int(_SELECTION_PRESENTATION_FRAMES / self.config.step_ratio),
+        )
+        selection_timeout_steps = presentation_steps * 2 + 240
 
-        for _ in range(240):
-            self._data = self.emu.step([])
+        for _ in range(selection_timeout_steps):
+            self._data = self._phase_step([], frame_sink)
             pressed = []
             states = {}
             for player, character, color, super_art, jab in players:
@@ -464,16 +779,20 @@ class LocalSfiiiAdapter:
                 self._write_u8(f"character{player}", character)
                 self._write_u8(f"characterSelectColor{player}", color)
                 if state == 2 and not character_locked[player]:
-                    pressed.append(jab)
-                    character_locked[player] = True
+                    character_visible_frames[player] += 1
+                    if character_visible_frames[player] >= presentation_steps:
+                        pressed.append(jab)
+                        character_locked[player] = True
                 if state >= 3:
                     self._write_u8(f"characterSelectSa{player}", super_art)
                 if state == 4 and not sa_locked[player]:
-                    pressed.append(jab)
-                    sa_locked[player] = True
+                    sa_visible_frames[player] += 1
+                    if sa_visible_frames[player] >= presentation_steps:
+                        pressed.append(jab)
+                        sa_locked[player] = True
 
             if pressed:
-                self._data = self.emu.step(pressed)
+                self._data = self._phase_step(pressed, frame_sink)
                 states = {
                     player: int(self._data[f"characterSelectState{player}"])
                     for player, *_ in players
@@ -484,29 +803,39 @@ class LocalSfiiiAdapter:
 
         raise TimeoutError("Timed out locking characters/super arts")
 
-    def _wait_for_fight_start(self) -> dict[str, Any]:
+    def _wait_for_fight_start(
+        self,
+        frame_sink: FrameSink | None,
+    ) -> dict[str, Any]:
+        interactive = self.config.interactive_select
         p1_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[0]]
         p2_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
         cpu_menus = None
         p1_jab = 0
-        if self.config.vs_cpu:
+        if self._vs_cpu:
             from MAMEToolkit.sf_environment.Actions import Actions
 
-            cpu_menus = _CpuMenuAdvanceState(pending_p1_states={2, 4})
+            pending = set() if interactive else {2, 4}
+            cpu_menus = _CpuMenuAdvanceState(pending_p1_states=pending)
             p1_jab = Actions.P1_JPUNCH.value
         for _ in range(900):
-            self._lock_matchup_characters()
+            if not interactive and (
+                int(self._data["characterP1"]) != p1_char
+                or int(self._data["characterP2"]) != p2_char
+            ):
+                self._lock_matchup_characters()
             pressed = (
                 self._advance_cpu_menus(
                     cpu_menus,
                     p1_char=p1_char,
                     p2_char=p2_char,
                     p1_jab=p1_jab,
+                    lock_characters=not interactive,
                 )
                 if cpu_menus is not None
                 else []
             )
-            self._data = self.emu.step(pressed)
+            self._data = self._phase_step(pressed, frame_sink)
             if int(self._data["fighting"]) != 0:
                 break
         else:
@@ -526,36 +855,59 @@ class LocalSfiiiAdapter:
             "P1": int(self._data["winsP1"]),
             "P2": int(self._data["winsP2"]),
         }
+        if interactive:
+            self._match_identity = {
+                "player1": self.read_player_identity("P1"),
+                "player2": self.read_player_identity("P2"),
+            }
         data = self._sub_step([])
-        actual_p1 = int(data["characterP1"])
-        actual_p2 = int(data["characterP2"])
-        if actual_p1 != p1_char or actual_p2 != p2_char:
-            raise RuntimeError(
-                "fight started with unexpected matchup "
-                f"(p1={actual_p1}, p2={actual_p2}; "
-                f"expected p1={p1_char}, p2={p2_char})"
-            )
+        self._emit_frame(data, frame_sink)
+        if not interactive:
+            actual_p1 = int(data["characterP1"])
+            actual_p2 = int(data["characterP2"])
+            if actual_p1 != p1_char or actual_p2 != p2_char:
+                raise RuntimeError(
+                    "fight started with unexpected matchup "
+                    f"(p1={actual_p1}, p2={actual_p2}; "
+                    f"expected p1={p1_char}, p2={p2_char})"
+                )
         return data
 
-    def _new_game(self) -> None:
-        self._wait_for_boot_ready()
-        if self.config.vs_cpu:
+    def _new_game(
+        self,
+        frame_sink: FrameSink | None,
+        presentation_sink: PresentationSink | None = None,
+    ) -> None:
+        self._wait_for_boot_ready(frame_sink)
+        if self._vs_cpu:
             self._run_steps(
-                _cpu_difficulty_steps(
-                    self.config.step_ratio, self.config.cpu_difficulty
-                )
+                _cpu_difficulty_steps(self.config.step_ratio, self._cpu_difficulty),
+                None,
             )
-            self._run_steps(_boot_steps(self.config.step_ratio, vs_cpu=True))
-            self._register_cpu_character_lock()
+            self._run_steps(
+                _boot_steps(self.config.step_ratio, vs_cpu=True),
+                frame_sink,
+                presentation_sink,
+            )
+            if not self.config.interactive_select:
+                self._register_cpu_character_lock()
         else:
-            self._run_steps(_boot_steps(self.config.step_ratio))
-        self._wait_for_character_select()
-        self._select_characters()
+            self._run_steps(
+                _boot_steps(self.config.step_ratio),
+                frame_sink,
+                presentation_sink,
+            )
+        self._wait_for_character_select(frame_sink)
         self.expected_health = {"P1": 0, "P2": 0}
         self.expected_wins = {"P1": 0, "P2": 0}
-        self._data = self._wait_for_fight_start()
+        if self.config.interactive_select:
+            self._selecting = True
+            return
+        self._select_characters(frame_sink)
+        self._data = self._wait_for_fight_start(frame_sink)
 
     def _sub_step(self, actions: list[Any]) -> dict[str, Any]:
+        self._raise_if_stopping()
         data = self.emu.step(actions)
 
         p1_diff = self.expected_health["P1"] - int(data["healthP1"])
@@ -570,18 +922,81 @@ class LocalSfiiiAdapter:
         data["reward"] = float(p2_diff - p1_diff)
         return data
 
-    def _run_till_victor(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _run_till_victor(
+        self,
+        data: dict[str, Any],
+        frame_sink: FrameSink | None,
+    ) -> dict[str, Any]:
         total_reward = float(data["reward"])
+        self._emit_frame(data, frame_sink)
         while self.expected_wins["P1"] == int(data["winsP1"]) and self.expected_wins[
             "P2"
         ] == int(data["winsP2"]):
             data = self._sub_step([])
+            self._emit_frame(data, frame_sink)
             total_reward += float(data["reward"])
         self.expected_wins = {
             "P1": int(data["winsP1"]),
             "P2": int(data["winsP2"]),
         }
         data["reward"] = total_reward
+        return data
+
+    def _wait_for_post_ko_black_frame(
+        self,
+        data: dict[str, Any],
+        frame_sink: FrameSink | None,
+    ) -> dict[str, Any]:
+        for _ in range(900):
+            if not data["frame"].any():
+                return data
+            data = self._sub_step([])
+            self._emit_frame(data, frame_sink)
+        raise TimeoutError("Timed out waiting for the post-KO black frame")
+
+    def _stream_terminal_sequence(
+        self,
+        data: dict[str, Any],
+        frame_sink: FrameSink | None,
+        *,
+        tournament_won: bool,
+        show_continue: bool,
+    ) -> dict[str, Any]:
+        frames_per_second = 60 / self.config.step_ratio
+        minimum_frames = round(
+            (_TOURNAMENT_WIN_MIN_SECONDS if tournament_won else _TERMINAL_MIN_SECONDS)
+            * frames_per_second
+        )
+        maximum_frames = round(_TERMINAL_MAX_SECONDS * frames_per_second)
+        idle_frames_needed = round(_TERMINAL_IDLE_SECONDS * frames_per_second)
+        black_frames_needed = max(1, round(0.25 * frames_per_second))
+        game_over_cue_frame = round(_GAME_OVER_CUE_SECONDS * frames_per_second)
+        idle_frames = 0
+        black_frames = 0
+
+        self._emit_presentation("continue" if show_continue else "winner")
+        for frame_number in range(maximum_frames):
+            data = self._sub_step([])
+            self._emit_frame(data, frame_sink)
+            if show_continue and frame_number == game_over_cue_frame:
+                self._emit_presentation("game_over")
+            if frame_number < minimum_frames:
+                continue
+
+            if data["frame"].any():
+                black_frames = 0
+            else:
+                black_frames += 1
+
+            idle = (
+                int(data["fighting"]) == 0
+                and int(data["characterSelectStateP1"]) == 0
+                and int(data["characterSelectStateP2"]) == 0
+            )
+            idle_frames = idle_frames + 1 if idle else 0
+            if black_frames >= black_frames_needed or idle_frames >= idle_frames_needed:
+                return data
+
         return data
 
 

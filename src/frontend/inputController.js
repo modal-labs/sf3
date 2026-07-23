@@ -1,7 +1,7 @@
 import { GameState } from "./gameState.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { WebRtcManager } from "./webRtcManager.js";
-import { isHumanParticipant } from "./participantOptions.js";
+import { hasHumanParticipant } from "./participantOptions.js";
 
 const createInputController = () => {
   const actions = {
@@ -56,19 +56,31 @@ const createInputController = () => {
 
   let combos = {};
   let specialMoves = {};
-  let pauseButtonPressed = false;
+  let gamepadWasSelecting = false;
+  let gamepadSelectionConfirmPressed = false;
 
   const getActionFromKeys = () => {
+    const state = GameState.get();
     const keyState = GameState.getKeyState();
+    const selecting = state.gamePhase === "selecting";
 
-    const attacks = {
-      LP: keyState["KeyJ"],
-      MP: keyState["KeyK"],
-      HP: keyState["KeyL"],
-      LK: keyState["KeyU"],
-      MK: keyState["KeyI"],
-      HK: keyState["KeyO"],
-    };
+    const attacks = selecting
+      ? {
+          LP: keyState["Enter"],
+          MP: false,
+          HP: false,
+          LK: false,
+          MK: false,
+          HK: false,
+        }
+      : {
+          LP: keyState["KeyJ"],
+          MP: keyState["KeyK"],
+          HP: keyState["KeyL"],
+          LK: keyState["KeyU"],
+          MK: keyState["KeyI"],
+          HK: keyState["KeyO"],
+        };
 
     if (attacks.LP && attacks.LK) return actions.LOW_PUNCH_LOW_KICK;
     if (attacks.MP && attacks.MK) return actions.MEDIUM_PUNCH_MEDIUM_KICK;
@@ -103,18 +115,24 @@ const createInputController = () => {
 
   const processGamepadInput = (currentState) => {
     const gameState = GameState.get();
-    const pausePressed = currentState.buttons[9] || false;
-    if (pausePressed && !pauseButtonPressed) {
-      pauseButtonPressed = true;
-      document.dispatchEvent(new Event("gamePauseToggle"));
+    if (!gameState.acceptsInput) {
       return;
     }
-    if (!pausePressed) {
-      pauseButtonPressed = false;
-    }
-    if (gameState.paused) return;
 
     const threshold = GamepadManager.gameplayThreshold;
+    const selecting = gameState.gamePhase === "selecting";
+    const selectionConfirmPressed = currentState.buttons[0] || false;
+    if (selecting && !gamepadWasSelecting) {
+      gamepadSelectionConfirmPressed = selectionConfirmPressed;
+    }
+    const selectionConfirm =
+      selecting &&
+      selectionConfirmPressed &&
+      !gamepadSelectionConfirmPressed;
+    gamepadSelectionConfirmPressed = selecting
+      ? selectionConfirmPressed
+      : false;
+    gamepadWasSelecting = selecting;
 
     const stickX = currentState.axes.left.x;
     const stickY = currentState.axes.left.y;
@@ -129,14 +147,23 @@ const createInputController = () => {
       down: stickY > threshold || currentState.buttons[13],
     };
 
-    const attacks = {
-      LP: currentState.buttons[0],
-      MP: currentState.buttons[1],
-      LK: currentState.buttons[2],
-      MK: currentState.buttons[3],
-      HK: currentState.buttons[4],
-      HP: currentState.buttons[5],
-    };
+    const attacks = selecting
+      ? {
+          LP: selectionConfirm,
+          MP: false,
+          LK: false,
+          MK: false,
+          HK: false,
+          HP: false,
+        }
+      : {
+          LP: currentState.buttons[0],
+          MP: currentState.buttons[1],
+          LK: currentState.buttons[2],
+          MK: currentState.buttons[3],
+          HK: currentState.buttons[4],
+          HP: currentState.buttons[5],
+        };
 
     let action = actions.NO_MOVE;
 
@@ -182,13 +209,21 @@ const createInputController = () => {
   };
 
   const handleActionFromInput = (action) => {
+    if (!GameState.get().acceptsInput) return;
     WebRtcManager.send("player_action", { action });
   };
 
   const handleKeyboardEvent = (e, isDown) => {
     const state = GameState.get();
-    if (!state.loaded || state.paused || !isHumanParticipant(state.player1Participant)) return;
-    if (e.code === "Escape") return;
+    if (
+      !state.loaded ||
+      !state.acceptsInput ||
+      (state.gamePhase !== "selecting" && !hasHumanParticipant(state))
+    )
+      return;
+    if (state.gamePhase === "selecting" && e.code === "Enter" && e.repeat) {
+      return;
+    }
 
     GameState.setKeyState(e.code, isDown);
     const action = getActionFromKeys();
@@ -212,7 +247,9 @@ const createInputController = () => {
       const gameState = GameState.get();
       if (
         gameState.loaded &&
-        isHumanParticipant(gameState.player1Participant)
+        gameState.acceptsInput &&
+        (gameState.gamePhase === "selecting" ||
+          hasHumanParticipant(gameState))
       ) {
         processGamepadInput(state);
       } else if (originalOnInput) {

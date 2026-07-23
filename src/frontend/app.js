@@ -3,71 +3,41 @@ import { AudioManager } from "./audioManager.js";
 import { GameState } from "./gameState.js";
 import { ScreenManager } from "./screenManager.js";
 import { InputController } from "./inputController.js";
-import { CharacterSelectionManager } from "./characterSelectionManager.js";
 import { GameController } from "./gameController.js";
 import { UIController } from "./uiController.js";
 import { GamepadManager } from "./gamepadManager.js";
 import { GamepadUINavigator } from "./gamepadUINavigator.js";
 import { WebRtcManager } from "./webRtcManager.js";
-import { gameplayUrl } from "./runtimeConfig.js";
 import { byId } from "./utils.js";
+import { GAME_SOURCE_SIZE } from "./constants.js";
 
 export const setCanvasSize = () => {
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const canvas = byId("game-canvas");
   if (canvas) {
-    // original = 384x224
-    if (isMobile) {
-      // 1.5x scale for mobile
-      canvas.width = 576;
-      canvas.height = 336;
-    } else {
-      // 2x scale for desktop
-      canvas.width = 768;
-      canvas.height = 448;
-    }
+    const scale = isMobile ? 2 : 3;
+    canvas.width = GAME_SOURCE_SIZE.width * scale;
+    canvas.height = GAME_SOURCE_SIZE.height * scale;
   }
 };
 
 const initApp = async () => {
+  AudioManager.init();
   WebRtcManager.init();
-  void fetch(gameplayUrl("/warm/default-participant"), {
-    mode: "cors",
-  }).catch(() => { });
 
   await AssetLoader.loadAllAssets();
 
-  AudioManager.init();
-
-  ScreenManager.initCoinScreen();
-  ScreenManager.initSplashScreen();
-  ScreenManager.showScreen(ScreenManager.screens.COIN);
-
-  CharacterSelectionManager.initCharacterGrid(AssetLoader.characters);
-  CharacterSelectionManager.selectCharacter("p1", "Ken");
-  CharacterSelectionManager.selectCharacter("p2", "Ryu");
-  CharacterSelectionManager.initOutfitGrid(null);
-  CharacterSelectionManager.setupPlayerBoxListeners();
-
   GamepadManager.init({
-    onStatusChange: (connected) => {
+    onStatusChange: () => {
       UIController.updateControlsDisplay();
       UIController.updateCombosDisplay(GameState.get().currentCharacter);
       UIController.updateSuperArtsDisplay(GameState.get().currentCharacter);
-      UIController.updateHelpIconVisibility();
+      ScreenManager.refreshVisibility();
       UIController.updateGamepadNavVisibility();
       GamepadUINavigator.updateGamepadSections(true);
-
-      const currentScreen = GameState.getCurrentScreen();
-      if (currentScreen === "splash") {
-        const muteButton = byId("mute-toggle");
-        if (muteButton) {
-          muteButton.classList.toggle("hidden", connected);
-        }
-      }
     },
-    onInput: () => { }, // will be set by InputController
-    onUIAction: () => { }, // will be set by GamepadUINavigator
+    onInput: () => {},
+    onUIAction: () => {},
   });
 
   GamepadManager.setUIActive(true);
@@ -77,37 +47,11 @@ const initApp = async () => {
   GameController.init();
   UIController.init();
   GamepadUINavigator.init();
-
-  GameState.subscribe((changeType) => {
-    if (changeType === "screenChange") {
-      const state = GameState.get();
-      if (state.currentScreen === "settings") {
-        const activePlayer = state.characterGrid.activePlayer;
-        const activeCharacter = state.characterGrid[activePlayer].character;
-
-        CharacterSelectionManager.updatePlayerBoxes();
-        CharacterSelectionManager.updateCharacterBorders();
-
-        if (activeCharacter) {
-          GameState.updateProperty("currentCharacter", activeCharacter);
-          UIController.updateCombosDisplay(activeCharacter);
-          UIController.updateSuperArtsDisplay(activeCharacter);
-          CharacterSelectionManager.initOutfitGrid(activeCharacter);
-        } else {
-          CharacterSelectionManager.initOutfitGrid(null);
-        }
-      }
-    }
-  });
+  ScreenManager.showScreen(ScreenManager.screens.LOBBY);
 
   window.addEventListener("beforeunload", () => {
     AudioManager.stopAll();
-    ScreenManager.cleanup();
     GameController.cleanup();
-  });
-
-  window.addEventListener("characterSelectionChanged", () => {
-    GamepadUINavigator.updateGamepadSections(true);
   });
 };
 

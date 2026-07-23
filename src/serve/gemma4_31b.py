@@ -5,7 +5,6 @@
 import json
 import time
 import uuid
-from pathlib import Path
 
 import modal
 
@@ -23,16 +22,17 @@ from src.utils import (
 app = modal.App("sf3-llm")
 
 sglang_image = (
-    modal.Image
-    .from_registry("modalresearch/sglang:nightly-dev-cu13-20260619-patched")
+    modal.Image.from_registry("modalresearch/sglang:nightly-dev-cu13-20260619-patched")
     .entrypoint([])
     .run_commands("rm -rf /root/.cache/huggingface")
-    .env({
-        "HF_XET_HIGH_PERFORMANCE": "1",
-        "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
-        "TORCHINDUCTOR_COMPILE_THREADS": "1",
-        "CUDA_ENABLE_COREDUMP_ON_EXCEPTION": "0",
-    })
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",
+            "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
+            "TORCHINDUCTOR_COMPILE_THREADS": "1",
+            "CUDA_ENABLE_COREDUMP_ON_EXCEPTION": "0",
+        }
+    )
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
@@ -49,9 +49,7 @@ max_inputs = max_num_seqs = 16
 gpu = "B200:1"
 
 
-def _unique_move_from_json_prefix(
-    raw: str, available_moves: list[str]
-) -> str | None:
+def _unique_move_from_json_prefix(raw: str, available_moves: list[str]) -> str | None:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError:

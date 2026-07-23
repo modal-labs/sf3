@@ -138,6 +138,7 @@ export const GamepadManager = {
     }
 
     const currentState = this.readState(gamepad);
+    this.state = currentState;
 
     if (this.uiActive) {
       this.processUIInput(currentState);
@@ -184,9 +185,7 @@ export const GamepadManager = {
     return value;
   },
 
-  processUIInput(currentState) {
-    const currentTime = Date.now();
-
+  getUIInput(currentState) {
     const directions = {
       left:
         currentState.axes.left.x < -this.uiThreshold ||
@@ -215,6 +214,12 @@ export const GamepadManager = {
     if (directions.up) inputY = -1;
     else if (directions.down) inputY = 1;
 
+    return { inputX, inputY, buttons };
+  },
+
+  processUIInput(currentState) {
+    const currentTime = Date.now();
+    const { inputX, inputY, buttons } = this.getUIInput(currentState);
     const hasInput =
       inputX !== 0 ||
       inputY !== 0 ||
@@ -257,6 +262,11 @@ export const GamepadManager = {
   },
 
   setUIActive(active) {
+    if (active && !this.uiActive) {
+      const { inputX, inputY, buttons } = this.getUIInput(this.state);
+      this.navState.lastInput = { x: inputX, y: inputY, ...buttons };
+      this.navState.holdStartTime = 0;
+    }
     this.uiActive = active;
   },
 

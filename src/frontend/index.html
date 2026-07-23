@@ -9,6 +9,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <title>Street Fighter III</title>
+    <link rel="icon" href="/logos/mobile.webp" type="image/webp" />
+    <link rel="apple-touch-icon" href="/logos/mobile.webp" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -51,79 +53,6 @@
                 "0%": { backgroundPosition: "-200% 0" },
                 "100%": { backgroundPosition: "200% 0" },
               },
-              "capcom-intro": {
-                "0%": {
-                  opacity: "0",
-                  transform: "scale(0.3) rotate(-180deg)",
-                  filter: "brightness(2) blur(10px)",
-                },
-                "20%": {
-                  opacity: "1",
-                  transform: "scale(1.2) rotate(0deg)",
-                  filter:
-                    "brightness(1.5) blur(0px) drop-shadow(0 0 50px #fff)",
-                },
-                "30%": {
-                  transform: "scale(0.9)",
-                  filter: "brightness(1) drop-shadow(0 0 20px #fff)",
-                },
-                "40%": {
-                  transform: "scale(1)",
-                  filter: "brightness(1) drop-shadow(0 0 30px #fff)",
-                },
-                "100%": {
-                  opacity: "1",
-                  transform: "scale(1)",
-                  filter:
-                    "brightness(1) drop-shadow(0 0 15px rgba(255,255,255,0.6))",
-                },
-              },
-              "static-flicker": {
-                "0%, 100%": { opacity: "0.03" },
-                "10%": { opacity: "0.04" },
-                "20%": { opacity: "0.02" },
-                "30%": { opacity: "0.05" },
-                "40%": { opacity: "0.03" },
-                "50%": { opacity: "0.02" },
-                "60%": { opacity: "0.04" },
-                "70%": { opacity: "0.03" },
-                "80%": { opacity: "0.05" },
-                "90%": { opacity: "0.02" },
-              },
-              "coin-insert": {
-                "0%": {
-                  transform: "translateY(0) scale(1)",
-                  opacity: "1",
-                  filter: "brightness(1)",
-                },
-                "20%": {
-                  transform: "translateY(-10px) scale(1.2)",
-                  filter: "brightness(1.5)",
-                },
-                "40%": {
-                  transform: "translateY(-5px) scale(1.1)",
-                  filter: "brightness(2) blur(2px)",
-                },
-                "60%": {
-                  transform: "translateY(5px) scale(0.9)",
-                  filter: "brightness(1.5) blur(0px)",
-                },
-                "100%": {
-                  transform: "translateY(200px) scale(0)",
-                  opacity: "0",
-                  filter: "brightness(0.5)",
-                },
-              },
-              "coin-shine": {
-                "0%, 100%": {
-                  boxShadow:
-                    "0 0 20px rgba(255, 215, 0, 0.6), inset 0 0 20px rgba(255, 215, 0, 0.3)",
-                },
-                "50%": {
-                  boxShadow:
-                    "0 0 40px rgba(255, 215, 0, 1), inset 0 0 30px rgba(255, 215, 0, 0.6)",
-                },
-              },
               "gamepad-pulse": {
                 "0%, 100%": {
                   filter: "drop-shadow(0 0 8px #ffd700) brightness(1)",
@@ -140,10 +69,6 @@
             animation: {
               "character-flash": "character-flash 0.2s 3",
               "skeleton-loading": "skeleton-loading 1.5s ease-in-out infinite",
-              "capcom-intro": "capcom-intro 6s ease-out forwards",
-              "static-flicker": "static-flicker 0.5s steps(10) infinite",
-              "coin-insert": "coin-insert 2s ease-in forwards",
-              "coin-shine": "coin-shine 2s ease-in-out infinite",
               "gamepad-pulse": "gamepad-pulse 1.5s ease-in-out infinite",
               "rotate-90": "rotate-90 2s ease-in-out infinite",
             },
@@ -156,30 +81,28 @@
         .panel {
           @apply p-6 lg:p-8 w-full bg-sf-darker rounded-lg flex flex-col justify-start items-center gap-6 lg:gap-8;
         }
-        .capcom-logo {
-          @apply animate-capcom-intro;
-          animation-fill-mode: forwards;
-          image-rendering: crisp-edges;
-          image-rendering: -webkit-crisp-edges;
-          image-rendering: pixelated;
+        .participant-card {
+          @apply w-full flex items-center gap-3 rounded-lg border-2 border-sf-dark bg-sf-darker p-3 text-left font-bold transition-all duration-200 hover:-translate-y-0.5 hover:bg-sf-dark;
         }
-        .static-noise {
-          background-image: repeating-linear-gradient(
-            0deg,
-            transparent,
-            transparent 2px,
-            rgba(255, 255, 255, 0.03) 2px,
-            rgba(255, 255, 255, 0.03) 4px
-          );
+        .participant-card img {
+          @apply size-10 shrink-0 object-contain p-1 lg:size-12;
         }
+        .participant-card-p1:hover,
+        .participant-card-p1[aria-pressed="true"] {
+          @apply border-sf-blue text-sf-blue shadow-[0_0_18px_rgba(0,128,255,0.35)];
+        }
+        .participant-card-p2:hover,
+        .participant-card-p2[aria-pressed="true"] {
+          @apply border-sf-red text-sf-red shadow-[0_0_18px_rgba(255,0,64,0.35)];
+        }
+        .participant-card[aria-pressed="true"] {
+          @apply bg-sf-dark;
+        }
+        .participant-card:focus-visible,
+        button:focus-visible,
         .gamepad-hover {
           @apply drop-shadow-[0_0_8px_#ffd700] animate-gamepad-pulse;
-        }
-        .gamepad-connected {
-          cursor: none !important;
-        }
-        .gamepad-connected * {
-          cursor: none !important;
+          outline: none;
         }
         .btn-rect {
           @apply py-4 lg:py-6 px-6 lg:px-8 bg-sf-darker border-2 font-bold text-base lg:text-xl rounded-lg shadow-lg hover:bg-sf-dark transition-all duration-200;
@@ -190,9 +113,6 @@
         .img-icon {
           @apply size-4 lg:size-6 filter invert;
         }
-        .dropdown {
-          @apply py-2 lg:py-3 pl-3 pr-6 lg:pr-9 w-full bg-sf-dark border-2 border-sf-green rounded-lg text-center appearance-none hover:bg-sf-darker hover:border-sf-green-dark transition-all duration-200;
-        }
         .game-ctrl {
           @apply py-1 px-3 bg-sf-dark border border-sf-green rounded-lg;
         }
@@ -202,24 +122,35 @@
         .text-glow {
           @apply [text-shadow:0_0_10px_currentColor];
         }
-        .portrait-box {
-          @apply size-16 lg:size-20 bg-sf-dark border-4 rounded-lg hover:opacity-80 transition-all duration-200 cursor-pointer;
+        #game-frame {
+          width: min(
+            calc(100vw - 9rem),
+            calc((100dvh - 2rem) * 1.7142857),
+            72rem
+          );
+          aspect-ratio: 12 / 7;
         }
-        .loading-placeholder {
-          @apply bg-gradient-to-r from-sf-dark via-sf-beige to-sf-dark bg-[length:200%_100%] animate-skeleton-loading;
+        #game-canvas {
+          width: 100%;
+          height: 100%;
+          @apply transition-opacity duration-300;
         }
-        .slider::-webkit-slider-thumb {
-          @apply appearance-none size-5 bg-sf-beige rounded-full shadow-lg cursor-pointer hover:bg-sf-beige-dark transition-all duration-200;
+        #game-screen.play-again-visible #game-canvas {
+          opacity: 0.35;
         }
-        .slider::-moz-range-thumb {
-          @apply appearance-none size-5 bg-sf-beige rounded-full shadow-lg cursor-pointer hover:bg-sf-beige-dark transition-all duration-200 border-0;
+        #start-game-btn[aria-disabled="true"] {
+          @apply cursor-not-allowed opacity-40;
+        }
+        body.gamepad-connected,
+        body.gamepad-connected * {
+          cursor: none !important;
         }
       }
     </style>
   </head>
 
   <body
-    class="font-mono bg-sf-dark text-sf-beige min-h-screen text-center flex flex-col text-sm lg:text-base"
+    class="font-mono bg-sf-dark text-sf-beige h-[100dvh] overflow-hidden text-center flex flex-col text-sm lg:text-base"
   >
     <div
       id="rotate-device"
@@ -249,7 +180,7 @@
         <div class="flex flex-col items-center gap-2">
           <div class="p-4 border-2 border-sf-gold rounded-lg">
             <img
-              src="/icons/keyboard.png"
+              src="/icons/keyboard.webp"
               alt="Keyboard"
               class="size-12 filter invert"
             />
@@ -260,7 +191,7 @@
         <div class="flex flex-col items-center gap-2">
           <div class="p-4 border-2 border-sf-gold rounded-lg">
             <img
-              src="/icons/gamepad.png"
+              src="/icons/gamepad.webp"
               alt="Gamepad"
               class="size-12 filter invert"
             />
@@ -271,29 +202,30 @@
     </div>
     <header
       id="game-header"
-      class="hidden p-6 lg:p-8 bg-sf-darker border-b-2 border-sf-green flex justify-between items-center gap-6 lg:gap-8"
+      class="hidden flex flex-none items-center justify-between gap-6 border-b-2 border-sf-green bg-sf-darker px-6 py-4 md:px-8 lg:px-10 lg:py-5"
     >
-      <h1
-        class="text-left text-2xl lg:text-4xl font-bold tracking-wider text-sf-green text-glow"
-      >
-        STREET FIGHTER III
-      </h1>
-      <div class="flex flex-col justify-center items-end gap-3 lg:gap-4">
-        <h2 class="text-lg lg:text-2xl text-sf-green">made with</h2>
+      <h1>
         <a
-          href="https://modal.com"
-          target="_blank"
-          rel="noopener"
-          id="modal-link"
-          class="hover:drop-shadow-sf-green transition-all duration-200"
+          href="/"
+          class="text-left text-2xl font-bold tracking-wider text-sf-green text-glow transition-all duration-200 hover:text-sf-green-dark lg:text-4xl"
+          aria-label="Street Fighter III home"
         >
-          <img
-            src="/modal.svg"
-            alt="Modal Logo"
-            class="h-6 lg:h-10 w-auto transition-all duration-200"
-          />
+          STREET FIGHTER III
         </a>
-      </div>
+      </h1>
+      <a
+        href="https://modal.com"
+        target="_blank"
+        rel="noopener"
+        id="modal-link"
+        class="transition-all duration-200 hover:drop-shadow-sf-green"
+      >
+        <img
+          src="/logos/modal.webp"
+          alt="Modal"
+          class="h-6 w-auto transition-all duration-200 lg:h-9"
+        />
+      </a>
     </header>
     <div class="fixed bottom-4 right-4 z-50 flex flex-col gap-3 items-end">
       <button
@@ -304,7 +236,7 @@
       >
         <img
           id="help-icon"
-          src="/icons/help.png"
+          src="/icons/help.webp"
           alt=""
           aria-hidden="true"
           class="img-icon"
@@ -336,13 +268,13 @@
     >
       <img
         id="gamepad-icon"
-        src="/icons/gamepad.png"
+        src="/icons/gamepad.webp"
         alt=""
         aria-hidden="true"
         class="img-icon"
       />
     </div>
-    <main class="relative flex-1 flex flex-col justify-center items-center">
+    <main class="relative min-h-0 flex-1 flex flex-col justify-center items-center">
       <div
         id="loading-screen"
         class="flex flex-col justify-center items-center gap-8"
@@ -358,49 +290,30 @@
         </h2>
       </div>
       <div
-        id="coin-screen"
-        class="hidden flex flex-col justify-center items-center"
-      >
-        <button
-          id="insert-coin-btn"
-          class="btn-rect border-sf-gold text-sf-gold text-glow hover:border-sf-gold-dark hover:text-sf-gold-dark animate-coin-shine"
-        >
-          INSERT COIN
-        </button>
-      </div>
-      <div id="splash-screen" class="hidden cursor-pointer">
-        <img
-          src="/capcom.svg"
-          alt="Capcom"
-          class="capcom-logo w-64 lg:w-96 h-auto z-10"
-        />
-        <div class="fixed inset-0 animate-static-flicker static-noise"></div>
-        <p
-          id="splash-skip-text"
-          class="fixed bottom-8 inset-x-0 text-sf-beige-dark text-sm animate-pulse"
-        >
-          Click anywhere to skip
-        </p>
-      </div>
-      <div
         id="help-overlay"
         class="hidden fixed inset-0 z-50 size-full bg-sf-darker/30 backdrop-blur-sm flex flex-col p-8 gap-8 overflow-y-auto"
       >
         <button
           id="help-overlay-close"
-          class="fixed bottom-4 right-4 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl"
+          class="fixed bottom-[4.5rem] right-4 btn-icon bg-sf-dark border-sf-green hover:bg-sf-darker hover:border-sf-green-dark hover:shadow-xl lg:bottom-20"
           type="button"
           aria-label="Close help"
         >
           <img
-            src="/icons/close.png"
+            src="/icons/close.webp"
             alt=""
             aria-hidden="true"
             class="img-icon"
           />
         </button>
-        <div class="flex justify-center items-start gap-6 lg:gap-8">
-          <div class="panel max-w-sm lg:max-w-xl border-2 border-sf-green">
+        <div
+          id="help-content"
+          class="flex flex-1 items-center justify-center gap-6 lg:gap-8"
+        >
+          <div
+            id="controls-panel"
+            class="panel max-w-sm border-2 border-sf-green lg:max-w-xl"
+          >
             <div
               id="gamepad-nav-section"
               class="w-full flex flex-col gap-6 lg:gap-8"
@@ -428,6 +341,18 @@
               <div
                 class="w-full flex flex-col gap-2 lg:gap-3 text-xs lg:text-sm"
               >
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl text-xs">Arrow Keys / D-Pad</span>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">
+                    Choose Fighter
+                  </h3>
+                </div>
+                <div class="flex justify-between items-center gap-4">
+                  <span class="game-ctrl text-xs">Enter / A</span>
+                  <h3 class="text-sf-gold text-xs lg:text-sm">
+                    Confirm Selection
+                  </h3>
+                </div>
                 <div class="flex justify-between items-center gap-4">
                   <span class="game-ctrl text-xs" id="movement-display"
                     >WASD / Arrow Keys</span
@@ -462,18 +387,13 @@
                   <span class="game-ctrl text-xs" id="hphk-display">L + O</span>
                   <h3 class="text-sf-gold text-xs lg:text-sm">HP + HK</h3>
                 </div>
-                <div class="flex justify-between items-center gap-4">
-                  <span class="game-ctrl text-xs" id="pause-display"
-                    >Esc / Click</span
-                  >
-                  <h3 class="text-sf-gold text-xs lg:text-sm">
-                    Pause / Resume
-                  </h3>
-                </div>
               </div>
             </div>
           </div>
-          <div class="panel max-w-sm lg:max-w-xl border-2 border-sf-green">
+          <div
+            id="character-help-panel"
+            class="hidden panel max-w-sm border-2 border-sf-green lg:max-w-xl"
+          >
             <div
               id="combos-section"
               class="w-full flex flex-col justify-center items-center gap-6 lg:gap-8"
@@ -507,297 +427,117 @@
         </div>
       </div>
       <div
-        id="settings-screen"
-        class="hidden p-8 size-full flex flex-col justify-center items-center gap-8"
+        id="lobby-screen"
+        class="hidden size-full min-h-0 flex flex-col overflow-y-auto p-4 md:p-6 lg:p-8"
       >
-        <button
-          id="start-game-btn"
-          class="btn-rect border-sf-green text-sf-green text-glow hover:border-sf-green-dark hover:text-sf-green-dark"
-          type="button"
-        >
-          Connecting to server...
-        </button>
         <div
-          class="panel w-full max-w-3xl lg:max-w-5xl border-2 border-sf-green"
+          class="mx-auto flex min-h-full w-full max-w-5xl flex-col items-center justify-center gap-5 lg:gap-7"
         >
-          <div class="flex justify-center items-center gap-6 lg:gap-8">
-            <div
-              id="p1-selection-box"
-              class="flex flex-col justify-center items-center gap-3 lg:gap-4"
+          <div class="flex flex-col items-center">
+            <button
+              id="start-game-btn"
+              class="btn-rect border-sf-green text-sf-green text-glow hover:border-sf-green-dark hover:text-sf-green-dark"
+              type="button"
+              aria-live="polite"
+              aria-disabled="true"
             >
-              <h2
-                id="participant-label-p1"
-                class="text-sf-blue text-base lg:text-xl text-glow"
-              >
-                YOU
-              </h2>
-              <div class="relative w-full max-w-[11rem]">
-                <select
-                  id="participant-select-p1"
-                  class="dropdown text-xs lg:text-sm"
-                  aria-label="Left participant"
-                ></select>
-                <span
-                  class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
-                >
-                  <svg
-                    class="size-3 lg:size-4"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M19 9l-7 7-7-7"
-                    />
-                  </svg>
-                </span>
-              </div>
-              <div
-                id="p1-selected-portrait"
-                class="portrait-box border-sf-blue"
-              >
-                <img
-                  src=""
-                  alt=""
-                  class="hidden size-full object-contain rounded-lg p-1"
-                />
-              </div>
-              <p id="p1-selected-name" class="text-sf-gold font-bold">-</p>
-            </div>
-            <div
-              id="p2-selection-box"
-              class="flex flex-col justify-center items-center gap-3 lg:gap-4"
-            >
-              <h2
-                id="participant-label-p2"
-                class="text-sf-red text-base lg:text-xl text-glow"
-              >
-                QWEN3.5-9B
-              </h2>
-              <div class="relative w-full max-w-[11rem]">
-                <select
-                  id="participant-select-p2"
-                  class="dropdown text-xs lg:text-sm"
-                  aria-label="Right participant"
-                ></select>
-                <span
-                  class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
-                >
-                  <svg
-                    class="size-3 lg:size-4"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M19 9l-7 7-7-7"
-                    />
-                  </svg>
-                </span>
-              </div>
-              <div
-                id="p2-selected-portrait"
-                class="portrait-box border-transparent"
-              >
-                <img
-                  src=""
-                  alt=""
-                  class="hidden size-full object-contain rounded-lg p-1"
-                />
-              </div>
-              <p id="p2-selected-name" class="text-sf-gold font-bold">-</p>
-            </div>
+              BOOTING EMULATOR...
+            </button>
           </div>
-          <div
-            id="character-grid"
-            class="relative grid grid-cols-10 gap-2"
-          ></div>
-        </div>
-        <button
-          id="toggle-options-btn"
-          class="btn-rect border-sf-gold text-sf-gold text-glow hover:border-sf-gold-dark hover:text-sf-gold-dark"
-          type="button"
-        >
-          SHOW OPTIONS
-        </button>
-        <div
-          id="options-panel"
-          class="hidden panel max-w-xl lg:max-w-3xl border-2 border-sf-green"
-        >
-          <div class="w-full flex flex-col gap-6 lg:gap-8">
-            <div class="flex flex-col justify-center items-center gap-4">
-              <div
-                id="difficulty-control"
-                class="relative w-full max-w-md flex flex-col gap-2"
+          <div class="grid w-full grid-cols-2 gap-3 md:gap-6 lg:gap-10">
+            <section
+              class="flex min-w-0 flex-col gap-3 rounded-xl border border-sf-blue/40 bg-sf-darker/50 p-3 md:p-5"
+              aria-labelledby="p1-heading"
+            >
+              <h2
+                id="p1-heading"
+                class="text-xl font-bold text-sf-blue text-glow lg:text-3xl"
               >
-                <input
-                  type="range"
-                  id="difficulty-slider"
-                  min="0"
-                  max="2"
-                  value="2"
-                  step="1"
-                  class="w-full h-2 bg-gradient-to-r from-sf-green via-sf-blue to-sf-red rounded-lg cursor-pointer slider appearance-none"
-                />
-                <div class="flex justify-between">
-                  <span id="difficulty-label-min" class="text-sf-green"
-                    >Basic</span
-                  >
-                  <span id="difficulty-label-mid" class="text-sf-blue"
-                    >Advanced</span
-                  >
-                  <span id="difficulty-label-max" class="text-sf-red"
-                    >Expert</span
-                  >
-                </div>
-                <p id="difficulty-description" class="text-sf-beige text-center">
-                  All moves available
-                </p>
-              </div>
-            </div>
-            <div class="flex justify-center items-center gap-8 lg:gap-12">
-              <div class="flex items-center gap-4">
-                <label class="text-sf-gold text-md lg:text-lg"
-                  >P1 Super Art</label
-                >
-                <div class="relative w-12 lg:w-16">
-                  <select id="super-art-select-p1" class="dropdown">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                  </select>
-                  <span
-                    class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
-                  >
-                    <svg
-                      class="size-3 lg:size-4"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </span>
-                </div>
-              </div>
-              <div class="flex items-center gap-4">
-                <label class="text-sf-gold text-md lg:text-lg"
-                  >P2 Super Art</label
-                >
-                <div class="relative w-12 lg:w-16">
-                  <select id="super-art-select-p2" class="dropdown">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                  </select>
-                  <span
-                    class="pointer-events-none absolute inset-y-0 right-3 flex justify-center items-center text-sf-gold"
-                  >
-                    <svg
-                      class="size-3 lg:size-4"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M19 9l-7 7-7-7"
-                      />
-                    </svg>
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div id="outfit-selection" class="w-full flex flex-col gap-4">
-              <p
-                id="outfit-player-indicator"
-                class="text-md lg:text-lg text-sf-beige"
-              >
-                Select a character to see outfits
-              </p>
+                P1
+              </h2>
               <div
-                id="outfit-grid"
-                class="relative grid grid-cols-6 gap-2 mx-auto"
+                id="participant-list-p1"
+                class="flex flex-col gap-2"
               ></div>
-            </div>
+            </section>
+            <section
+              class="flex min-w-0 flex-col gap-3 rounded-xl border border-sf-red/40 bg-sf-darker/50 p-3 md:p-5"
+              aria-labelledby="p2-heading"
+            >
+              <h2
+                id="p2-heading"
+                class="text-xl font-bold text-sf-red text-glow lg:text-3xl"
+              >
+                P2
+              </h2>
+              <div
+                id="participant-list-p2"
+                class="flex flex-col gap-2"
+              ></div>
+            </section>
           </div>
         </div>
       </div>
-      <div id="game-screen" class="hidden size-full">
-        <div class="flex items-center justify-center">
-          <div id="game-frame" class="relative inline-flex max-w-full">
-            <!-- 2x (768x448) on desktop, 1.5x (576x336) on mobile -->
-            <canvas
-              id="game-canvas"
-              width="768"
-              height="448"
-              class="bg-sf-darker border-2 border-sf-green rounded-lg hidden max-w-full h-auto"
-              style="image-rendering: pixelated; image-rendering: crisp-edges"
-            ></canvas>
-            <button
-              id="pause-overlay"
-              class="hidden absolute inset-0 z-10 flex-col items-center justify-center gap-4 bg-sf-darker/70 rounded-lg"
-              type="button"
-              aria-label="Resume game"
-            >
-              <h2 class="text-2xl lg:text-4xl text-sf-gold text-glow">
-                PAUSED
-              </h2>
-              <p class="text-sf-beige-dark">
-                <span id="pause-overlay-controls"
-                  >Press Esc or click to continue</span
-                >
-              </p>
-            </button>
-          </div>
+      <div
+        id="game-screen"
+        class="hidden size-full min-h-0 flex items-center justify-center px-[4.5rem] py-4 md:px-24 lg:px-28"
+      >
+        <div id="game-frame" class="relative shrink-0">
+          <canvas
+            id="game-canvas"
+            width="1152"
+            height="672"
+            class="block rounded-lg border-2 border-sf-green bg-sf-darker"
+            style="image-rendering: pixelated; image-rendering: crisp-edges"
+            aria-label="Game screen. Use arrow keys to choose a fighter and Enter to confirm."
+            role="img"
+          ></canvas>
           <div
             id="canvas-loading-overlay"
-            class="flex flex-col items-center justify-center gap-8"
+            class="hidden absolute inset-0 z-20 flex-col items-center justify-center gap-6 rounded-lg bg-sf-darker/95 p-6"
           >
             <div class="spinner size-12 lg:size-16"></div>
             <h2
               id="canvas-loading-status"
-              class="text-xl lg:text-2xl text-sf-green text-glow animate-pulse"
+              class="text-lg text-sf-green text-glow animate-pulse lg:text-2xl"
               aria-live="polite"
               role="status"
             >
-              Loading game...
+              STARTING GAME...
             </h2>
+          </div>
+          <div
+            id="play-again-controls"
+            class="pointer-events-none hidden absolute inset-0 z-30 items-center justify-center p-4"
+          >
+            <div
+              class="pointer-events-auto panel mx-4 max-w-xl min-h-[11rem] justify-between border-2 border-sf-green lg:min-h-[13rem]"
+            >
+              <h2
+                id="game-result"
+                class="text-xl text-sf-green text-glow lg:text-3xl"
+                aria-live="polite"
+              ></h2>
+              <button
+                id="play-again-btn"
+                class="btn-rect border-sf-green text-sf-green text-glow hover:border-sf-green-dark hover:text-sf-green-dark"
+                type="button"
+              >
+                PLAY AGAIN
+              </button>
+            </div>
           </div>
         </div>
       </div>
       <div
-        id="win-screen"
-        class="hidden panel max-w-xs border-2 border-sf-green"
-      >
-        <h1 id="winner-text" class="text-xl lg:text-2xl text-glow"></h1>
-        <button
-          id="play-again-btn"
-          class="btn-rect border-sf-green text-sf-green text-glow hover:border-sf-green-dark hover:text-sf-green-dark"
-          type="button"
-        >
-          PLAY AGAIN
-        </button>
-      </div>
-      <div
         id="error-screen"
-        class="hidden panel max-w-xs border-2 border-sf-red"
+        class="hidden panel mx-4 max-w-xl border-2 border-sf-red"
       >
-        <div class="p-4 max-w-[16rem] bg-sf-dark rounded-lg">
-          <pre id="error-details" class="text-left overflow-x-auto"></pre>
+        <div class="w-full rounded-lg bg-sf-dark p-4">
+          <pre
+            id="error-details"
+            class="whitespace-pre-wrap break-words text-left"
+          ></pre>
         </div>
         <button
           id="error-back-btn"

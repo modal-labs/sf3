@@ -1,4 +1,3 @@
-import { byId } from "./utils.js";
 import { gameplayWebSocketUrl } from "./runtimeConfig.js";
 
 const iceServerTimeoutMs = 3000;
@@ -17,6 +16,9 @@ export const WebRtcManager = {
   pendingMessages: [],
   pendingRemoteStream: null,
   pendingOutbound: [],
+  pendingDisconnect: null,
+  pendingIceCandidates: [],
+  signalingChain: Promise.resolve(),
 
   init(callbacks = {}) {
     this.onMessage = callbacks.onMessage || null;
@@ -34,14 +36,15 @@ export const WebRtcManager = {
       this.pendingRemoteStream = null;
     }
 
-    if (this.hasStarted) {
+    if (this.onDisconnect && this.pendingDisconnect) {
+      const message = this.pendingDisconnect;
+      this.pendingDisconnect = null;
+      this.onDisconnect(message);
       return;
     }
 
-    const startButton = byId("start-game-btn");
-    if (startButton) {
-      startButton.disabled = true;
-      startButton.classList.add("opacity-50");
+    if (this.hasStarted) {
+      return;
     }
 
     this.hasStarted = true;
@@ -128,7 +131,12 @@ export const WebRtcManager = {
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onmessage = (event) => {
-      this.handleSignalingMessage(String(event.data));
+      this.signalingChain = this.signalingChain
+        .then(() => this.handleSignalingMessage(String(event.data)))
+        .catch((error) => {
+          console.error("WebRTC signaling error", error);
+          this.handleDisconnect("Connection Error");
+        });
     };
     this.ws.onclose = () => {
       if (!this.peer || this.peer.connectionState !== "connected") {
@@ -201,17 +209,23 @@ export const WebRtcManager = {
       await this.peer.setRemoteDescription(
         new RTCSessionDescription({ type: "answer", sdp: message.sdp })
       );
+      while (this.pendingIceCandidates.length > 0) {
+        await this.peer.addIceCandidate(this.pendingIceCandidates.shift());
+      }
       return;
     }
 
     if (message.type === "ice_candidate" && this.peer && message.candidate) {
-      await this.peer.addIceCandidate(
-        new RTCIceCandidate({
-          candidate: message.candidate.candidate_sdp,
-          sdpMid: message.candidate.sdpMid,
-          sdpMLineIndex: message.candidate.sdpMLineIndex,
-        })
-      );
+      const candidate = new RTCIceCandidate({
+        candidate: message.candidate.candidate_sdp,
+        sdpMid: message.candidate.sdpMid,
+        sdpMLineIndex: message.candidate.sdpMLineIndex,
+      });
+      if (!this.peer.remoteDescription) {
+        this.pendingIceCandidates.push(candidate);
+        return;
+      }
+      await this.peer.addIceCandidate(candidate);
     }
   },
 
@@ -243,40 +257,55 @@ export const WebRtcManager = {
     }
   },
 
+  closeTransports() {
+    const dataChannel = this.dataChannel;
+    const peer = this.peer;
+    const ws = this.ws;
+    this.dataChannel = null;
+    this.peer = null;
+    this.ws = null;
+
+    if (dataChannel) {
+      dataChannel.onopen = null;
+      dataChannel.onmessage = null;
+      dataChannel.onclose = null;
+      dataChannel.close();
+    }
+    if (peer) {
+      peer.onicecandidate = null;
+      peer.ontrack = null;
+      peer.onconnectionstatechange = null;
+      peer.close();
+    }
+    if (ws) {
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+    }
+  },
+
   close() {
     this.onDisconnect = null;
-    if (this.dataChannel) {
-      this.dataChannel.close();
-      this.dataChannel = null;
-    }
-    if (this.peer) {
-      this.peer.close();
-      this.peer = null;
-    }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.closeTransports();
     this.turnResolver = null;
     this.hasStarted = false;
     this.pendingMessages = [];
     this.pendingRemoteStream = null;
     this.pendingOutbound = [];
+    this.pendingDisconnect = null;
+    this.pendingIceCandidates = [];
+    this.signalingChain = Promise.resolve();
   },
 
   handleDisconnect(message) {
-    this.updateStartButton("Connection Lost");
-    this.onDisconnect?.(message);
-  },
-
-  updateStartButton(text) {
-    const startButton = byId("start-game-btn");
-    if (!startButton || startButton.textContent?.includes("START GAME")) {
+    this.hasStarted = false;
+    this.closeTransports();
+    if (this.onDisconnect) {
+      this.onDisconnect(message);
       return;
     }
-    startButton.textContent = text;
-    startButton.disabled = true;
-    startButton.classList.add("opacity-50");
+    this.pendingDisconnect = message;
   },
 
   generateShortId() {

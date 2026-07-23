@@ -5,7 +5,6 @@
 import re
 import time
 import uuid
-from pathlib import Path
 
 import modal
 
