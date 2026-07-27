@@ -45,6 +45,7 @@ model_revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 
 max_inputs = max_num_seqs = 16
 gpu = "B200:1"
+eval_gpu = "H200:1"
 
 
 def _unique_move_from_prefix(raw: str, available_moves: list[str]) -> str | None:
@@ -105,10 +106,12 @@ class Qwen35Server:
     @modal.enter()
     async def enter(self):
         import sglang as sgl
+        import torch
 
         load_path = self.ckpt_path or model_name
         revision = None if self.ckpt_path else model_revision
-        print(f"Loading model from {load_path}")
+        blackwell = torch.cuda.get_device_capability()[0] >= 10
+        print(f"Loading model from {load_path} (blackwell={blackwell})")
 
         self.llm = sgl.Engine(
             model_path=str(load_path),
@@ -119,11 +122,11 @@ class Qwen35Server:
             cuda_graph_max_bs_decode=max_inputs * 2,
             mem_fraction_static=0.7,
             grammar_backend="xgrammar",
-            attention_backend="trtllm_mha",
+            attention_backend="trtllm_mha" if blackwell else "fa3",
             linear_attn_prefill_backend="flashinfer",
             linear_attn_decode_backend="flashinfer",
             mamba_ssm_dtype="bfloat16",
-            mm_attention_backend="fa4",
+            mm_attention_backend="fa4" if blackwell else "fa3",
             trust_remote_code=True,
         )
         self.tokenizer = self.llm.tokenizer_manager.tokenizer

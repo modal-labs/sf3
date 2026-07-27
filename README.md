@@ -41,7 +41,10 @@ For demos, prepend web app commands with `SF3_WARM_MODELS=1`.
 
 ```bash
 # Alternate between rounds of collecting self-play data and training the LLM
-modal run -m src.training.qwen35_35ba3b
+modal run --detach -m src.training.qwen35_35ba3b
+
+# Evaluate all model + cpu matchups on every character combination
+modal run --detach -m src.eval
 
 # Test model latency
 modal run -m src.serve.qwen35_9b
