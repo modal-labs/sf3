@@ -1,7 +1,13 @@
+import base64
+import os
 import random
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from textwrap import dedent
+from typing import Any, Literal, Sequence, TypedDict
+
+import modal
 
 SEED = 42
 random.seed(SEED)
@@ -12,6 +18,116 @@ ROUTING_REGION = "us-east"
 CONTAINER_REGION = "us-east"
 MINUTES = 60
 GB = 1024
+
+
+class ParticipantSpec(TypedDict):
+    label: str
+    kind: Literal["human", "cpu", "model"]
+    seats: tuple[str, ...]
+
+
+PARTICIPANT_SPECS: dict[str, ParticipantSpec] = {
+    "human": {
+        "label": "YOU",
+        "kind": "human",
+        "seats": ("P1",),
+    },
+    "cpu": {
+        "label": "CPU",
+        "kind": "cpu",
+        "seats": ("P2",),
+    },
+    "qwen35_9b": {
+        "label": "QWEN3.5-9B",
+        "kind": "model",
+        "seats": ("P1", "P2"),
+    },
+    "gemma4_31b": {
+        "label": "GEMMA4-31B",
+        "kind": "model",
+        "seats": ("P1", "P2"),
+    },
+    "ministral3_14b": {
+        "label": "MINISTRAL3-14B",
+        "kind": "model",
+        "seats": ("P1", "P2"),
+    },
+}
+PARTICIPANT_LABELS = {
+    participant: spec["label"] for participant, spec in PARTICIPANT_SPECS.items()
+}
+DEFAULT_PLAYER1_PARTICIPANT = "human"
+DEFAULT_PLAYER2_PARTICIPANT = "qwen35_9b"
+DEFAULT_CPU_DIFFICULTY = 8
+
+
+def is_model_participant(participant: str) -> bool:
+    spec = PARTICIPANT_SPECS.get(participant)
+    return spec is not None and spec["kind"] == "model"
+
+
+def normalize_participant(participant: str, *, seat: str) -> str:
+    default = (
+        DEFAULT_PLAYER1_PARTICIPANT if seat == "P1" else DEFAULT_PLAYER2_PARTICIPANT
+    )
+    spec = PARTICIPANT_SPECS.get(participant)
+    if spec is None or seat not in spec["seats"]:
+        return default
+    return participant
+
+
+def normalize_game_participants(game_settings: dict) -> tuple[str, str]:
+    player1_participant = normalize_participant(
+        game_settings.get("player1Participant", DEFAULT_PLAYER1_PARTICIPANT),
+        seat="P1",
+    )
+    player2_participant = normalize_participant(
+        game_settings.get("player2Participant", DEFAULT_PLAYER2_PARTICIPANT),
+        seat="P2",
+    )
+    game_settings["player1Participant"] = player1_participant
+    game_settings["player2Participant"] = player2_participant
+    return player1_participant, player2_participant
+
+
+def create_gameplay_image(
+    *,
+    include_web: bool = False,
+    extra_python_packages: Sequence[str] = (),
+) -> modal.Image:
+    apt_packages = ["ffmpeg", "libturbojpeg-dev"]
+    python_packages = [
+        "MAMEToolkit==1.1.0",
+        "numpy==2.3.1",
+        "PyTurboJPEG==1.8.2",
+        *extra_python_packages,
+    ]
+    if include_web:
+        python_packages = [
+            "aiortc",
+            "av",
+            "fastapi[standard]==0.116.1",
+            *python_packages,
+            "websockets==15.0.1",
+        ]
+
+    return (
+        modal.Image.debian_slim(python_version="3.12")
+        .apt_install(*apt_packages)
+        .env(
+            {
+                "SDL_VIDEODRIVER": "dummy",
+                "SDL_AUDIODRIVER": "dummy",
+                "SF3_WARM_MODELS": os.environ.get("SF3_WARM_MODELS", "0"),
+                "XDG_RUNTIME_DIR": "/tmp",
+            }
+        )
+        .uv_pip_install(*python_packages)
+        .add_local_file(
+            Path(__file__).parent.parent / "assets" / "engine" / "sfiii3n.zip",
+            "/root/sfiii3n.zip",
+        )
+    )
 
 
 def _exec_subprocess(cmd: list[str]) -> None:
@@ -103,11 +219,6 @@ def mirror_moves(moves):
 def create_move_dict(moves_list):
     return {"left": moves_list, "right": mirror_moves(moves_list)}
 
-
-CLOSE_IN_MOVES = {
-    "Move Closer": create_move_dict([MOVES["Right"]] * 4),
-    "Jump Closer": create_move_dict([MOVES["Right+Up"]] * 4),
-}
 
 COMBOS = {
     "Alex": {
@@ -1699,14 +1810,7 @@ SPECIAL_MOVES = {
 
 
 BASE_META_INSTRUCTIONS = {
-    "Move Away": create_move_dict([MOVES["Right"]] * 8),
-    "Jump Away": create_move_dict([MOVES["Right+Up"]] * 4),
-    **CLOSE_IN_MOVES,
-    **{
-        move_name: create_move_dict([move_nb])
-        for move_name, move_nb in MOVES.items()
-        if "Punch" in move_name or "Kick" in move_name
-    },
+    move_name: create_move_dict([move_nb]) for move_name, move_nb in MOVES.items()
 }
 
 
@@ -1754,6 +1858,54 @@ class PlayerState:
     super_bar: int
 
 
+class FrameEncoder:
+    """Caches the JPEG data URL of the most recent frame. Needs the gameplay image."""
+
+    def __init__(self) -> None:
+        import numpy
+        from turbojpeg import TJPF_RGB, TJSAMP_420, TurboJPEG
+
+        self._numpy = numpy
+        self._pixel_format = TJPF_RGB
+        self._subsample = TJSAMP_420
+        self._encoder = TurboJPEG()
+        self._frame = None
+        self._data_url = ""
+
+    def data_url(self, frame: Any) -> str:
+        if self._frame is not frame:
+            jpeg = self._encoder.encode(
+                self._numpy.ascontiguousarray(frame),
+                quality=85,
+                pixel_format=self._pixel_format,
+                jpeg_subsample=self._subsample,
+            )
+            self._frame = frame
+            self._data_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode(
+                "utf-8"
+            )
+        return self._data_url
+
+
+def player_state(
+    observation: dict[str, Any],
+    settings: dict[str, Any],
+    player: str,
+) -> PlayerState:
+    raw = observation[player]
+    return PlayerState(
+        character=settings["character"],
+        super_art=settings["superArt"],
+        wins=int(raw["wins"][0]),
+        side=int(raw["side"]),
+        stunned=bool(raw["stunned"]),
+        stun_bar=int(raw["stun_bar"][0]),
+        health=int(raw["health"][0]),
+        super_count=int(raw["super_count"][0]),
+        super_bar=int(raw["super_bar"][0]),
+    )
+
+
 NEXT_MOVE_PROMPT = "Your next move is:"
 
 
@@ -1761,25 +1913,10 @@ def create_messages(
     player1: PlayerState,
     player2: PlayerState,
     frames: list[str],
-    prev_player1=None,
-    prev_player2=None,
-    recent_moves=None,
 ) -> tuple[list[dict], list[str]]:
-    past_info_available = (
-        prev_player1 is not None
-        and prev_player2 is not None
-        and recent_moves is not None
-    )
-
     available_moves = get_available_instructions_for_character(
         player2.character, player2.super_art, player2.super_count
     )
-    if past_info_available:
-        # encourage close-in moves to avoid spamming + distancing
-        filtered_recent_moves = list(set(recent_moves) - set(CLOSE_IN_MOVES.keys()))
-        available_moves = [m for m in available_moves if m not in filtered_recent_moves]
-        if not available_moves:
-            available_moves = list(CLOSE_IN_MOVES.keys())
     moves_prompt = "You may only use the following moves:\n"
     moves_prompt += chr(10).join("- " + move for move in available_moves)
 
@@ -1790,7 +1927,7 @@ def create_messages(
                 f"""
                 You are the most aggressive Street Fighter III 3rd strike player in the world.
 
-                Your character: {player2.character}, opponent character: {player1.character}, best of 3: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds
+                Your character: {player2.character}, opponent character: {player1.character}, first to 2 rounds: you've won {player2.wins} rounds, opponent has won {player1.wins} rounds
                 {moves_prompt}
 
                 Simply respond with ONLY the EXACT name of the best move without any surrounding formatting or additional text.
@@ -1814,6 +1951,27 @@ def create_messages(
             ],
         },
     ], available_moves
+
+
+async def generate_move(
+    chat: Any,
+    controlled: PlayerState,
+    opponent: PlayerState,
+    frame_url: str,
+) -> tuple[list[int], str]:
+    messages, available_moves = create_messages(
+        opponent,
+        controlled,
+        [frame_url],
+    )
+    return await chat(
+        messages,
+        controlled.character,
+        controlled.super_art,
+        controlled.super_count,
+        controlled.side,
+        available_moves,
+    )
 
 
 def est_super_ct(super_bar: int) -> int:
@@ -1915,6 +2073,3 @@ def resolve_move_with_fallback(
     if move_sequence is not None:
         return move_sequence, move_name
     return [0], "No-Move"
-
-
-RECENT_MOVE_LIMIT = 8

@@ -47,6 +47,7 @@ draft_model_revision = "eabd648301ce28583cc14757912e5e0f84e152e1"
 
 max_inputs = max_num_seqs = 16
 gpu = "B200:1"
+eval_gpu = gpu
 
 
 def _unique_move_from_json_prefix(raw: str, available_moves: list[str]) -> str | None:

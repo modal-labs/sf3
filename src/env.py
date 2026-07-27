@@ -350,10 +350,10 @@ class LocalSfiiiAdapter:
         self._data: dict[str, Any] = {}
         self.expected_health = {"P1": 0, "P2": 0}
         self.expected_wins = {"P1": 0, "P2": 0}
-        self._reset_called = False
         self._closed = False
+        self._reset_called = False
         self._stop_requested = threading.Event()
-        self._cpu_character_lock_installed = False
+        self._matchup_character_lock_installed = False
         self._cpu_opponent_menu_seen = False
         self._selecting = False
         self._vs_cpu = config.vs_cpu
@@ -400,6 +400,7 @@ class LocalSfiiiAdapter:
             "game_done": False,
             "round_done": False,
             "stage_done": False,
+            "winner": None,
         }
 
     def reset(
@@ -426,6 +427,7 @@ class LocalSfiiiAdapter:
             "game_done": False,
             "round_done": False,
             "stage_done": False,
+            "winner": None,
         }
 
     def step(
@@ -444,6 +446,7 @@ class LocalSfiiiAdapter:
         round_done = False
         stage_done = False
         game_done = False
+        winner = None
 
         if int(raw["fighting"]) == 0:
             # Equal health at the fighting edge is time-over or double KO.
@@ -454,7 +457,7 @@ class LocalSfiiiAdapter:
             round_done = True
             p1_won_match = int(raw["winsP1"]) >= 2
             p2_won_match = int(raw["winsP2"]) >= 2
-            tournament_mode = self._vs_cpu and self.config.interactive_select
+            tournament_mode = self._vs_cpu
             tournament_won = (
                 tournament_mode
                 and p1_won_match
@@ -466,6 +469,15 @@ class LocalSfiiiAdapter:
                 if tournament_mode
                 else p1_won_match or p2_won_match
             )
+            if game_done:
+                if tournament_mode:
+                    winner = "P1" if tournament_won else "P2"
+                else:
+                    # double KO on the deciding round awards the round to both
+                    # fighters at once, so rank on wins -> remaining health
+                    p1_score = (int(raw["winsP1"]), int(raw["healthP1"]))
+                    p2_score = (int(raw["winsP2"]), int(raw["healthP2"]))
+                    winner = "P2" if p2_score > p1_score else "P1"
             if stage_done:
                 self._data = self._wait_for_post_ko_black_frame(raw, frame_sink)
                 self._emit_presentation("winner")
@@ -497,6 +509,7 @@ class LocalSfiiiAdapter:
             "round_done": round_done,
             "stage_done": stage_done,
             "selecting": False,
+            "winner": winner,
         }
         return observation, reward, game_done, False, info
 
@@ -593,42 +606,94 @@ class LocalSfiiiAdapter:
             if presentation_sink is not None and action_presentation is not None:
                 presentation_sink(action_presentation)
 
-    def _write_u8(self, address_name: str, value: int) -> None:
-        address = self.memory_addresses[address_name].address
-        self.emu.console.writeln(f"mem:write_u8({address}, {int(value)})")
-
-    def _register_cpu_character_lock(self) -> None:
-        if self._cpu_character_lock_installed:
-            return
-        address = self.memory_addresses["characterP2"].address
-        character = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
-        # Story mode assigns its route opponent during the frame after pre-step writes.
-        # Install after boot/difficulty inputs so the service menu is untouched.
-        self.emu.console.writeln(
-            "function lockConfiguredCpuCharacter() "
-            f"mem:write_u8({address}, {character}) "
-            "end"
-        )
-        self.emu.console.writeln(
-            'emu.register_frame(lockConfiguredCpuCharacter, "configured-cpu-character")'
-        )
-        self._cpu_character_lock_installed = True
-
-    def _lock_matchup_characters(self) -> None:
-        for player, character in enumerate(self.config.characters, start=1):
-            self._write_u8(
+    def _matchup_character_assignments(self) -> tuple[tuple[str, int], ...]:
+        character_count = 1 if self._vs_cpu else len(self.config.characters)
+        return tuple(
+            (
                 f"characterP{player}",
                 CHARACTER_NAME_TO_LOCAL_ID[character],
             )
+            for player, character in enumerate(
+                self.config.characters[:character_count], start=1
+            )
+        )
+
+    def _matchup_lock_command(self) -> str:
+        statements = [
+            (
+                "local p1State = mem:read_u8("
+                f"{self.memory_addresses['characterSelectStateP1'].address})"
+            ),
+            "if p1State >= 2 then configuredMatchupSeenSelect = true end",
+            "if not configuredMatchupSeenSelect then return end",
+            (
+                "local fighting = mem:read_u8("
+                f"{self.memory_addresses['fighting'].address})"
+            ),
+            (
+                "if fighting == 0 then configuredMatchupFightFrames = 0 "
+                "else configuredMatchupFightFrames = "
+                "configuredMatchupFightFrames + 1 end"
+            ),
+            (
+                "if fighting ~= 0 and configuredMatchupFightFrames > "
+                f"{self.config.step_ratio * 2} then return end"
+            ),
+        ]
+        for address_name, character in self._matchup_character_assignments():
+            player = address_name[-2:]
+            state = f"state{player}"
+            statements.extend(
+                [
+                    (
+                        f"local {state} = mem:read_u8("
+                        f"{self.memory_addresses[f'characterSelectState{player}'].address})"
+                    ),
+                    (
+                        f"mem:write_u8({self.memory_addresses[address_name].address}, "
+                        f"{character})"
+                    ),
+                    (
+                        f"if {state} >= 2 then mem:write_u8("
+                        f"{self.memory_addresses[f'characterSelectColor{player}'].address}, "
+                        f"{max(0, self.config.outfits[int(player[1]) - 1] - 1)}) end"
+                    ),
+                    (
+                        f"if {state} >= 3 then mem:write_u8("
+                        f"{self.memory_addresses[f'characterSelectSa{player}'].address}, "
+                        f"{max(0, self.config.super_arts[int(player[1]) - 1] - 1)}) end"
+                    ),
+                ]
+            )
+        body = "; ".join(statements)
+        return (
+            "configuredMatchupSeenSelect = false; "
+            "configuredMatchupFightFrames = 0; "
+            f"function lockConfiguredMatchup() {body} end; "
+            'emu.register_frame(lockConfiguredMatchup, "configured-matchup")'
+        )
+
+    def _register_matchup_character_lock(self) -> None:
+        if self._matchup_character_lock_installed or self.config.interactive_select:
+            return
+        command = self._matchup_lock_command()
+        # console.writeln() drains MAME's shared stdout queue for 0.5s and raises on
+        # any output, which would steal the frame data Emulator.step() reads back.
+        self.emu.console.process.stdin.write(command.encode("utf-8") + b"\n")
+        self.emu.console.process.stdin.flush()
+        self._matchup_character_lock_installed = True
+
+    def _matchup_characters_locked(self, data: Mapping[str, Any]) -> bool:
+        return all(
+            int(data[address_name]) == character
+            for address_name, character in self._matchup_character_assignments()
+        )
 
     def _advance_cpu_menus(
         self,
         state: _CpuMenuAdvanceState,
         *,
-        p1_char: int,
-        p2_char: int,
         p1_jab: int,
-        lock_characters: bool = True,
     ) -> list[int]:
         pressed: list[int] = []
         menu_state = int(self._data["menuState"])
@@ -645,13 +710,6 @@ class LocalSfiiiAdapter:
             cpu_confirm_elapsed >= 0
             and cpu_confirm_elapsed % _CPU_OPPONENT_CONFIRM_INTERVAL == 0
         ):
-            if lock_characters:
-                self._write_u8("characterP1", p1_char)
-                self._write_u8("characterP2", p2_char)
-                self._write_u8(
-                    "characterSelectColorP2",
-                    max(0, self.config.outfits[1] - 1),
-                )
             pressed.append(p1_jab)
         return pressed
 
@@ -706,6 +764,7 @@ class LocalSfiiiAdapter:
             "selecting": self._selecting,
             "player1_selected": player1_selected,
             "player2_selected": player2_selected,
+            "winner": None,
         }
         return observation, 0.0, False, False, info
 
@@ -751,17 +810,14 @@ class LocalSfiiiAdapter:
         players = [
             (
                 f"P{index + 1}",
-                CHARACTER_NAME_TO_LOCAL_ID[character],
-                max(0, self.config.outfits[index] - 1),
-                max(0, self.config.super_arts[index] - 1),
                 (Actions.P1_JPUNCH if index == 0 else Actions.P2_JPUNCH).value,
             )
-            for index, character in enumerate(self.config.characters)
+            for index, _ in enumerate(self.config.characters)
             if index == 0 or not self._vs_cpu
         ]
-        character_locked = {player: False for player, *_ in players}
+        character_locked = {player: False for player, _ in players}
         sa_locked = character_locked.copy()
-        character_visible_frames = {player: 0 for player, *_ in players}
+        character_visible_frames = {player: 0 for player, _ in players}
         sa_visible_frames = character_visible_frames.copy()
         presentation_steps = max(
             1,
@@ -773,18 +829,14 @@ class LocalSfiiiAdapter:
             self._data = self._phase_step([], frame_sink)
             pressed = []
             states = {}
-            for player, character, color, super_art, jab in players:
+            for player, jab in players:
                 state = int(self._data[f"characterSelectState{player}"])
                 states[player] = state
-                self._write_u8(f"character{player}", character)
-                self._write_u8(f"characterSelectColor{player}", color)
                 if state == 2 and not character_locked[player]:
                     character_visible_frames[player] += 1
                     if character_visible_frames[player] >= presentation_steps:
                         pressed.append(jab)
                         character_locked[player] = True
-                if state >= 3:
-                    self._write_u8(f"characterSelectSa{player}", super_art)
                 if state == 4 and not sa_locked[player]:
                     sa_visible_frames[player] += 1
                     if sa_visible_frames[player] >= presentation_steps:
@@ -795,10 +847,9 @@ class LocalSfiiiAdapter:
                 self._data = self._phase_step(pressed, frame_sink)
                 states = {
                     player: int(self._data[f"characterSelectState{player}"])
-                    for player, *_ in players
+                    for player, _ in players
                 }
             if all(state == 5 for state in states.values()):
-                self._lock_matchup_characters()
                 return
 
         raise TimeoutError("Timed out locking characters/super arts")
@@ -808,6 +859,7 @@ class LocalSfiiiAdapter:
         frame_sink: FrameSink | None,
     ) -> dict[str, Any]:
         interactive = self.config.interactive_select
+        tournament_mode = self._vs_cpu
         p1_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[0]]
         p2_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
         cpu_menus = None
@@ -818,26 +870,28 @@ class LocalSfiiiAdapter:
             pending = set() if interactive else {2, 4}
             cpu_menus = _CpuMenuAdvanceState(pending_p1_states=pending)
             p1_jab = Actions.P1_JPUNCH.value
+        locked_fighting_frames = 0
         for _ in range(900):
-            if not interactive and (
-                int(self._data["characterP1"]) != p1_char
-                or int(self._data["characterP2"]) != p2_char
-            ):
-                self._lock_matchup_characters()
             pressed = (
                 self._advance_cpu_menus(
                     cpu_menus,
-                    p1_char=p1_char,
-                    p2_char=p2_char,
                     p1_jab=p1_jab,
-                    lock_characters=not interactive,
                 )
                 if cpu_menus is not None
                 else []
             )
             self._data = self._phase_step(pressed, frame_sink)
-            if int(self._data["fighting"]) != 0:
+            if int(self._data["fighting"]) == 0:
+                locked_fighting_frames = 0
+                continue
+            if interactive:
                 break
+            if self._matchup_characters_locked(self._data):
+                locked_fighting_frames += 1
+                if locked_fighting_frames >= 2:
+                    break
+            else:
+                locked_fighting_frames = 0
         else:
             raise TimeoutError(
                 "Timed out waiting for fight start "
@@ -855,22 +909,21 @@ class LocalSfiiiAdapter:
             "P1": int(self._data["winsP1"]),
             "P2": int(self._data["winsP2"]),
         }
-        if interactive:
-            self._match_identity = {
-                "player1": self.read_player_identity("P1"),
-                "player2": self.read_player_identity("P2"),
-            }
         data = self._sub_step([])
         self._emit_frame(data, frame_sink)
-        if not interactive:
+        if not interactive and not self._matchup_characters_locked(data):
             actual_p1 = int(data["characterP1"])
             actual_p2 = int(data["characterP2"])
-            if actual_p1 != p1_char or actual_p2 != p2_char:
-                raise RuntimeError(
-                    "fight started with unexpected matchup "
-                    f"(p1={actual_p1}, p2={actual_p2}; "
-                    f"expected p1={p1_char}, p2={p2_char})"
-                )
+            expected_p2 = "rotating" if tournament_mode else str(p2_char)
+            raise RuntimeError(
+                "fight started with unexpected matchup "
+                f"(p1={actual_p1}, p2={actual_p2}; "
+                f"expected p1={p1_char}, p2={expected_p2})"
+            )
+        self._match_identity = {
+            "player1": self.read_player_identity("P1"),
+            "player2": self.read_player_identity("P2"),
+        }
         return data
 
     def _new_game(
@@ -889,14 +942,14 @@ class LocalSfiiiAdapter:
                 frame_sink,
                 presentation_sink,
             )
-            if not self.config.interactive_select:
-                self._register_cpu_character_lock()
         else:
             self._run_steps(
                 _boot_steps(self.config.step_ratio),
                 frame_sink,
                 presentation_sink,
             )
+        if not self.config.interactive_select:
+            self._register_matchup_character_lock()
         self._wait_for_character_select(frame_sink)
         self.expected_health = {"P1": 0, "P2": 0}
         self.expected_wins = {"P1": 0, "P2": 0}

@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import mimetypes
 import os
 import queue
@@ -7,90 +6,44 @@ import time
 from contextlib import asynccontextmanager
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import modal
 
 from src.env import EnvironmentConfig, create_environment
-from src.serve.gemma4_31b import Gemma4Server
-from src.serve.gemma4_31b import app as gemma4_app
-from src.serve.ministral3_14b import Ministral3Server
-from src.serve.ministral3_14b import app as ministral3_app
-from src.serve.qwen35_9b import Qwen35Server
-from src.serve.qwen35_9b import app as qwen35_app
+from src.serve import MODELS
 from src.utils import (
     COMBOS,
     CONTAINER_REGION,
+    DEFAULT_CPU_DIFFICULTY,
+    DEFAULT_PLAYER1_PARTICIPANT,
+    DEFAULT_PLAYER2_PARTICIPANT,
     MINUTES,
-    RECENT_MOVE_LIMIT,
+    PARTICIPANT_LABELS,
     ROUTING_REGION,
     SPECIAL_MOVES,
-    PlayerState,
-    create_messages,
+    FrameEncoder,
+    create_gameplay_image,
+    generate_move,
+    is_model_participant,
+    normalize_game_participants,
+    player_state,
 )
 
 mimetypes.add_type("image/webp", ".webp")
 
 # Modal setup
 
-# web app
-app = (
-    modal.App(name="sf3")
-    .include(gemma4_app)
-    .include(ministral3_app)
-    .include(qwen35_app)
-)
+app = modal.App(name="sf3")
+for model in MODELS.values():
+    app.include(model.app)
 
-PARTICIPANT_SPECS: dict[str, dict[str, Any]] = {
-    "human": {
-        "label": "YOU",
-        "seats": ("P1",),
-        "server_cls": None,
-    },
-    "cpu": {
-        "label": "CPU",
-        "seats": ("P2",),
-        "server_cls": None,
-    },
-    "qwen35_9b": {
-        "label": "QWEN3.5-9B",
-        "seats": ("P1", "P2"),
-        "server_cls": Qwen35Server,
-    },
-    "gemma4_31b": {
-        "label": "GEMMA4-31B",
-        "seats": ("P1", "P2"),
-        "server_cls": Gemma4Server,
-    },
-    "ministral3_14b": {
-        "label": "MINISTRAL3-14B",
-        "seats": ("P1", "P2"),
-        "server_cls": Ministral3Server,
-    },
-}
-PARTICIPANT_LABELS = {
-    participant: spec["label"] for participant, spec in PARTICIPANT_SPECS.items()
-}
-DEFAULT_PLAYER1_PARTICIPANT = "human"
-DEFAULT_PLAYER2_PARTICIPANT = "qwen35_9b"
-DEFAULT_CPU_DIFFICULTY = 8
 VERSUS_START_OFFSET_FRAMES = 30
 CONTROL_MESSAGE_QUEUE_LIMIT = 128
 SESSION_TASK_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 
 
-def participant_has_model_server(participant: str) -> bool:
-    spec = PARTICIPANT_SPECS.get(participant)
-    return spec is not None and spec["server_cls"] is not None
-
-
-def is_cpu_participant(participant: str) -> bool:
-    return participant == "cpu"
-
-
 local_assets_dir = Path(__file__).parent.parent / "assets"
-local_engine_dir = local_assets_dir / "engine"
 
 remote_frontend_dir = "/root/frontend"
 remote_icons_dir = "/root/icons"
@@ -117,58 +70,7 @@ static_image = (
     )
 )
 
-gameplay_image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install(
-        "ffmpeg",
-        "libturbojpeg-dev",
-    )
-    .env(
-        {
-            "SDL_VIDEODRIVER": "dummy",
-            "SDL_AUDIODRIVER": "dummy",
-            "SF3_WARM_MODELS": os.environ.get("SF3_WARM_MODELS", "0"),
-            "XDG_RUNTIME_DIR": "/tmp",
-        }
-    )
-    .uv_pip_install(
-        "aiortc",
-        "av",
-        "fastapi[standard]==0.116.1",
-        "MAMEToolkit==1.1.0",
-        "numpy==2.3.1",
-        "PyTurboJPEG==1.8.2",
-        "websockets==15.0.1",
-    )
-    .add_local_file(
-        local_engine_dir / "sfiii3n.zip",
-        "/root/sfiii3n.zip",
-    )
-)
-
-
-def normalize_participant(participant: str, *, seat: str) -> str:
-    default = (
-        DEFAULT_PLAYER1_PARTICIPANT if seat == "P1" else DEFAULT_PLAYER2_PARTICIPANT
-    )
-    spec = PARTICIPANT_SPECS.get(participant)
-    if spec is None or seat not in spec["seats"]:
-        return default
-    return participant
-
-
-def normalize_game_participants(game_settings: dict) -> tuple[str, str]:
-    player1_participant = normalize_participant(
-        game_settings.get("player1Participant", DEFAULT_PLAYER1_PARTICIPANT),
-        seat="P1",
-    )
-    player2_participant = normalize_participant(
-        game_settings.get("player2Participant", DEFAULT_PLAYER2_PARTICIPANT),
-        seat="P2",
-    )
-    game_settings["player1Participant"] = player1_participant
-    game_settings["player2Participant"] = player2_participant
-    return player1_participant, player2_participant
+gameplay_image = create_gameplay_image(include_web=True)
 
 
 @app.cls(
@@ -192,19 +94,16 @@ class Web:
         self.participant_boot_tasks = {}
         if os.environ.get("SF3_WARM_MODELS") != "1":
             return
-        for participant, spec in PARTICIPANT_SPECS.items():
-            server_cls = spec["server_cls"]
-            if server_cls is None:
-                continue
+        for participant, model in MODELS.items():
             try:
-                server_cls().update_autoscaler(min_containers=1)
+                model.server().update_autoscaler(min_containers=1)
             except Exception as exc:
                 label = PARTICIPANT_LABELS.get(participant, participant)
                 print(f"Could not keep {label} warm: {exc!r}")
 
     async def create_participant_server(self, participant: str):
-        server_cls = PARTICIPANT_SPECS.get(participant, {}).get("server_cls")
-        if server_cls is None:
+        model = MODELS.get(participant)
+        if model is None:
             raise ValueError(f"Unsupported participant: {participant}")
 
         server = self.participant_servers.get(participant)
@@ -217,7 +116,7 @@ class Web:
             async def boot():
                 label = PARTICIPANT_LABELS.get(participant, participant)
                 print(f"Creating {label}...")
-                server = server_cls()
+                server = model.server()
                 await asyncio.wait_for(
                     server.boot.remote.aio(),
                     timeout=60 * MINUTES,
@@ -255,7 +154,6 @@ class Web:
         from fastapi.middleware.gzip import GZipMiddleware
         from fastapi.responses import JSONResponse
         from starlette.websockets import WebSocketState
-        from turbojpeg import TJPF_RGB, TJSAMP_420, TurboJPEG
 
         web_app = FastAPI()
         web_app.add_middleware(
@@ -442,12 +340,6 @@ class Web:
                 self.selection_current_action = 0
                 self.actions = {"agent_0": 0, "agent_1": 0}
                 self.action_generation = 0
-
-                self.prev_player1_state = None
-                self.prev_player2_state = None
-
-                self.player1_recent_move_names = []
-                self.player2_recent_move_names = []
 
                 # communication
 
@@ -654,8 +546,6 @@ class Web:
                 self.game_state = create_initial_game_state()
                 self.observation = None
                 self.info = None
-                self.player1_recent_move_names = []
-                self.player2_recent_move_names = []
                 self.invalidate_actions()
 
             async def hold_finished(self):
@@ -664,8 +554,6 @@ class Web:
                 self.start_requested = False
                 self.observation = None
                 self.info = None
-                self.player1_recent_move_names = []
-                self.player2_recent_move_names = []
                 self.invalidate_actions()
 
             async def fail_game(self, message: str):
@@ -710,34 +598,12 @@ class Web:
             await websocket.accept()
 
             session = GameSession()
-            jpeg_enc = TurboJPEG()
-            frame_cache = {"frame": None, "jpeg_bytes": None, "data_url": None}
+            frame_encoder = FrameEncoder()
             video_track = GameVideoTrack(session.stop_event.is_set)
             control_channel = None
             control_channel_ready = asyncio.Event()
             control_message_queue = asyncio.Queue(maxsize=CONTROL_MESSAGE_QUEUE_LIMIT)
             pc = RTCPeerConnection(configuration=build_rtc_configuration())
-
-            def get_frame_jpeg_bytes(frame: np.ndarray) -> bytes:
-                if frame_cache["frame"] is not frame:
-                    frame_cache["frame"] = frame
-                    frame_cache["jpeg_bytes"] = jpeg_enc.encode(
-                        np.ascontiguousarray(frame),
-                        quality=85,
-                        pixel_format=TJPF_RGB,
-                        jpeg_subsample=TJSAMP_420,
-                    )
-                    frame_cache["data_url"] = None
-                return frame_cache["jpeg_bytes"]
-
-            def get_frame_data_url(frame: np.ndarray) -> str:
-                jpeg_bytes = get_frame_jpeg_bytes(frame)
-                if frame_cache["data_url"] is None:
-                    frame_cache["data_url"] = (
-                        "data:image/jpeg;base64,"
-                        + base64.b64encode(jpeg_bytes).decode("utf-8")
-                    )
-                return frame_cache["data_url"]
 
             async def prefetch_required_servers(
                 player1_participant: str, player2_participant: str
@@ -745,7 +611,7 @@ class Web:
                 tasks = [
                     self.create_participant_server(participant)
                     for participant in {player1_participant, player2_participant}
-                    if participant_has_model_server(participant)
+                    if is_model_participant(participant)
                 ]
                 if tasks:
                     await asyncio.gather(*tasks)
@@ -1049,39 +915,6 @@ class Web:
                     },
                 )
 
-            async def get_participant_move(
-                participant: str,
-                controlled_player: PlayerState,
-                controlled_settings: dict,
-                controlled_obs: dict,
-                opponent_player: PlayerState,
-                prev_controlled_player: PlayerState | None,
-                prev_opponent_player: PlayerState | None,
-                recent_moves,
-                frames: list[str],
-            ) -> tuple[list[int], str]:
-                messages, available_moves = create_messages(
-                    opponent_player,
-                    controlled_player,
-                    frames,
-                    prev_opponent_player,
-                    prev_controlled_player,
-                    recent_moves,
-                )
-
-                server = await self.create_participant_server(participant)
-                return await asyncio.wait_for(
-                    server.chat.remote.aio(
-                        messages,
-                        controlled_settings["character"],
-                        controlled_settings["superArt"],
-                        controlled_obs["super_count"][0],
-                        controlled_obs["side"],
-                        available_moves,
-                    ),
-                    timeout=1 * MINUTES,
-                )
-
             def human_floor_wait_ms(n_buttons: int, generation_ms: float) -> float:
                 if n_buttons < 1:
                     return 0.0
@@ -1098,79 +931,36 @@ class Web:
                     or "frame" not in obs
                 ):
                     return None
-                p1_settings = session.game_settings["player1"]
-                p2_settings = session.game_settings["player2"]
-                obs_p1 = obs["P1"]
-                obs_p2 = obs["P2"]
-                player1 = PlayerState(
-                    character=p1_settings["character"],
-                    super_art=p1_settings["superArt"],
-                    wins=obs_p1["wins"][0],
-                    side=obs_p1["side"],
-                    stunned=obs_p1["stunned"],
-                    stun_bar=obs_p1["stun_bar"][0],
-                    health=obs_p1["health"][0],
-                    super_count=obs_p1["super_count"][0],
-                    super_bar=obs_p1["super_bar"][0],
+                player1 = player_state(
+                    obs,
+                    session.game_settings["player1"],
+                    "P1",
                 )
-                player2 = PlayerState(
-                    character=p2_settings["character"],
-                    super_art=p2_settings["superArt"],
-                    wins=obs_p2["wins"][0],
-                    side=obs_p2["side"],
-                    stunned=obs_p2["stunned"],
-                    stun_bar=obs_p2["stun_bar"][0],
-                    health=obs_p2["health"][0],
-                    super_count=obs_p2["super_count"][0],
-                    super_bar=obs_p2["super_bar"][0],
+                player2 = player_state(
+                    obs,
+                    session.game_settings["player2"],
+                    "P2",
                 )
-                frames = [get_frame_data_url(obs["frame"])]
-                return (
-                    p1_settings,
-                    p2_settings,
-                    obs_p1,
-                    obs_p2,
-                    player1,
-                    player2,
-                    frames,
-                )
+                return player1, player2, frame_encoder.data_url(obs["frame"])
 
             async def generate_robot_move(player_number, participant, snapshot):
-                (
-                    p1_settings,
-                    p2_settings,
-                    obs_p1,
-                    obs_p2,
-                    player1,
-                    player2,
-                    frames,
-                ) = snapshot
+                player1, player2, frame_url = snapshot
                 if player_number == 1:
                     args = (
                         player1,
-                        p1_settings,
-                        obs_p1,
                         player2,
-                        session.prev_player1_state,
-                        session.prev_player2_state,
-                        session.player1_recent_move_names,
                     )
                 else:
                     args = (
                         player2,
-                        p2_settings,
-                        obs_p2,
                         player1,
-                        session.prev_player2_state,
-                        session.prev_player1_state,
-                        session.player2_recent_move_names,
                     )
 
                 started_at = time.perf_counter()
-                moves, move_name = await get_participant_move(
-                    participant,
-                    *args,
-                    frames,
+                server = await self.create_participant_server(participant)
+                moves, move_name = await asyncio.wait_for(
+                    generate_move(server.chat.remote.aio, *args, frame_url),
+                    timeout=1 * MINUTES,
                 )
                 generation_ms = (time.perf_counter() - started_at) * 1000.0
                 return player_number, moves, move_name, generation_ms
@@ -1198,12 +988,8 @@ class Web:
                         player1_participant, player2_participant = (
                             normalize_game_participants(session.game_settings)
                         )
-                        player1_is_model = participant_has_model_server(
-                            player1_participant
-                        )
-                        player2_is_model = participant_has_model_server(
-                            player2_participant
-                        )
+                        player1_is_model = is_model_participant(player1_participant)
+                        player2_is_model = is_model_participant(player2_participant)
                         if not (player1_is_model or player2_is_model):
                             continue
                         if (
@@ -1252,26 +1038,11 @@ class Web:
                         for player_number, moves, move_name, _ in results:
                             if player_number == 1:
                                 next_buttons = session.player1_next_buttons
-                                recent_move_names = session.player1_recent_move_names
                             else:
                                 next_buttons = session.player2_next_buttons
-                                recent_move_names = session.player2_recent_move_names
                             session.enqueue_buttons(next_buttons, moves)
-                            recent_move_names.append(move_name)
-                            if len(recent_move_names) > RECENT_MOVE_LIMIT:
-                                recent_move_names.pop(0)
 
-                        (
-                            _,
-                            _,
-                            _,
-                            _,
-                            player1,
-                            player2,
-                            _,
-                        ) = snapshot
-                        session.prev_player1_state = player1
-                        session.prev_player2_state = player2
+                        player1, player2, _ = snapshot
 
                 except WebSocketDisconnect:
                     session.request_stop()
@@ -1426,7 +1197,7 @@ class Web:
                             normalize_game_participants(session.game_settings)
                         )
                         human_player_number = session.human_player_number()
-                        vs_cpu = is_cpu_participant(player2_participant)
+                        vs_cpu = player2_participant == "cpu"
                         model_ready_task = asyncio.create_task(
                             prefetch_required_servers(
                                 player1_participant,
@@ -1632,10 +1403,6 @@ class Web:
                                 if session.info.get("stage_done", False):
                                     identity = session.env.read_match_identity()
                                     session.apply_match_identity(identity)
-                                    session.prev_player1_state = None
-                                    session.prev_player2_state = None
-                                    session.player1_recent_move_names = []
-                                    session.player2_recent_move_names = []
                                 session.accepts_input = human_player_number is not None
                                 session.sync_round_number()
                                 session.game_state["status"] = "running"

@@ -49,7 +49,8 @@ model_name = "mistralai/Ministral-3-14B-Instruct-2512"
 model_revision = "1e4bed9a74c1d8af713dd9e2545d69020ced05dc"
 
 max_inputs = max_num_seqs = 64
-gpu = "b200"
+gpu = "B200:1"
+eval_gpu = "H200:1"
 
 
 @app.cls(
