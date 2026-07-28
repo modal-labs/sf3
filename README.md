@@ -41,9 +41,9 @@ For demos, prepend web app commands with `SF3_WARM_MODELS=1`.
 
 ```bash
 # evaluate llms +/- cpu on every character matchup
-modal run --detach -m src.eval --base
-modal run --detach -m src.eval --ckpt-path /checkpoints/.../r0_hf
-modal run --detach -m src.eval  # latest checkpoint
+modal run --detach -m src.eval.main --base
+modal run --detach -m src.eval.main --ckpt-path /checkpoints/.../r0_hf
+modal run --detach -m src.eval.main  # latest checkpoint
 
 # multi-round rl post-training
 modal run --detach -m src.train.main

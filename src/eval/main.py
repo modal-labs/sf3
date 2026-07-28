@@ -33,7 +33,7 @@ cache_volume = modal.Volume.from_name("sf3-llm-eval-cache", create_if_missing=Tr
 eval_image = create_gameplay_image(extra_python_packages=("matplotlib==3.11.1",))
 
 with eval_image.imports():
-    from src.eval_plots import write_tournament_plots
+    from src.eval.plot import write_tournament_plots
 
 
 CHARACTERS = tuple(combinations(CHARACTER_MAPPING.values(), 2))
