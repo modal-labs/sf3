@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 import uuid
+from collections import deque
 from itertools import combinations, product
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from src.utils import (
     MAX_CPU_DIFFICULTY,
     MINUTES,
     PARTICIPANT_LABELS,
+    RECENT_MOVE_LIMIT,
     ROUTING_REGION,
     FrameEncoder,
     create_gameplay_image,
@@ -115,6 +117,7 @@ async def play_game(
     if player1 == "cpu":
         raise ValueError("CPU tournaments require CPU in P2")
     vs_cpu = player2 == "cpu"
+    recent = [deque(maxlen=RECENT_MOVE_LIMIT), deque(maxlen=RECENT_MOVE_LIMIT)]
     observation, _ = initial_reset
     while True:
         identity = env.read_match_identity()
@@ -134,6 +137,7 @@ async def play_game(
                             fighters[seat],
                             fighters[1 - seat],
                             frame_url,
+                            recent[seat],
                         )
                     )
                     for seat in request_seats
@@ -146,6 +150,7 @@ async def play_game(
         buttons = [[0], [0]]
         for seat, (move_buttons, move_name) in zip(request_seats, generated):
             buttons[seat] = move_buttons
+            recent[seat].append(move_name)
         n_steps = max(map(len, buttons))
         actions = zip(
             buttons[0] + [0] * (n_steps - len(buttons[0])),
@@ -163,6 +168,9 @@ async def play_game(
             if terminated or truncated or info.get("round_done"):
                 break
 
+        if info.get("round_done"):
+            for moves in recent:
+                moves.clear()
         if not (terminated or truncated):
             continue
         if truncated or not info.get("game_done"):

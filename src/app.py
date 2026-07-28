@@ -3,6 +3,7 @@ import mimetypes
 import os
 import queue
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from fractions import Fraction
 from pathlib import Path
@@ -20,6 +21,7 @@ from src.utils import (
     DEFAULT_PLAYER2_PARTICIPANT,
     MINUTES,
     PARTICIPANT_LABELS,
+    RECENT_MOVE_LIMIT,
     ROUTING_REGION,
     SPECIAL_MOVES,
     FrameEncoder,
@@ -349,12 +351,19 @@ class Web:
                 self.actions = {"agent_0": 0, "agent_1": 0}
                 self.action_generation = 0
 
+                self.player1_recent_move_names = deque(maxlen=RECENT_MOVE_LIMIT)
+                self.player2_recent_move_names = deque(maxlen=RECENT_MOVE_LIMIT)
+
                 # communication
 
                 self.outbound_message_queue = asyncio.Queue()
                 self.stop_event = asyncio.Event()
                 self.cleanup_tasks = set()
                 self.env_operation_task = None
+
+            def clear_recent_move_history(self):
+                self.player1_recent_move_names.clear()
+                self.player2_recent_move_names.clear()
 
             def request_stop(self):
                 self.stop_event.set()
@@ -552,6 +561,7 @@ class Web:
                 self.game_state = create_initial_game_state()
                 self.observation = None
                 self.info = None
+                self.clear_recent_move_history()
                 self.invalidate_actions()
 
             async def hold_finished(self):
@@ -560,6 +570,7 @@ class Web:
                 self.start_requested = False
                 self.observation = None
                 self.info = None
+                self.clear_recent_move_history()
                 self.invalidate_actions()
 
             async def fail_game(self, message: str):
@@ -948,16 +959,20 @@ class Web:
                         player1,
                         player2,
                     )
+                    recent_moves = session.player1_recent_move_names
                 else:
                     args = (
                         player2,
                         player1,
                     )
+                    recent_moves = session.player2_recent_move_names
 
                 started_at = time.perf_counter()
                 server = await self.create_participant_server(participant)
                 moves, move_name = await asyncio.wait_for(
-                    generate_move(server.chat.remote.aio, *args, frame_url),
+                    generate_move(
+                        server.chat.remote.aio, *args, frame_url, recent_moves
+                    ),
                     timeout=1 * MINUTES,
                 )
                 generation_ms = (time.perf_counter() - started_at) * 1000.0
@@ -1036,11 +1051,12 @@ class Web:
                         for player_number, moves, move_name, _ in results:
                             if player_number == 1:
                                 next_buttons = session.player1_next_buttons
+                                recent_move_names = session.player1_recent_move_names
                             else:
                                 next_buttons = session.player2_next_buttons
+                                recent_move_names = session.player2_recent_move_names
                             session.enqueue_buttons(next_buttons, moves)
-
-                        player1, player2, _ = snapshot
+                            recent_move_names.append(move_name)
 
                 except WebSocketDisconnect:
                     session.request_stop()
@@ -1398,6 +1414,7 @@ class Web:
                                     break
                             elif session.info.get("round_done", False):
                                 session.invalidate_actions()
+                                session.clear_recent_move_history()
                                 if session.info.get("stage_done", False):
                                     identity = session.env.read_match_identity()
                                     session.apply_match_identity(identity)

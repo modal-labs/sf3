@@ -1502,9 +1502,21 @@ SPECIAL_MOVES = {
 # instructions
 
 
-BASE_META_INSTRUCTIONS = {
-    move_name: create_move_dict([move_nb]) for move_name, move_nb in MOVES.items()
+CLOSE_IN_MOVES = {
+    "Move Closer": create_move_dict([MOVES["Right"]] * 4),
+    "Jump Closer": create_move_dict([MOVES["Right+Up"]] * 4),
 }
+
+BASE_META_INSTRUCTIONS = {
+    **CLOSE_IN_MOVES,
+    **{
+        move_name: create_move_dict([move_nb])
+        for move_name, move_nb in MOVES.items()
+        if "Punch" in move_name or "Kick" in move_name
+    },
+}
+
+RECENT_MOVE_LIMIT = 8
 
 
 def get_available_instructions_for_character(
@@ -1615,10 +1627,17 @@ def create_messages(
     player1: PlayerState,
     player2: PlayerState,
     frames: list[str],
+    recent_moves=None,
 ) -> tuple[list[dict], list[str]]:
     available_moves = get_available_instructions_for_character(
         player2.character, player2.super_art, player2.super_count
     )
+    if recent_moves is not None:
+        # encourage close-in moves to avoid spamming + distancing
+        filtered_recent_moves = list(set(recent_moves) - set(CLOSE_IN_MOVES.keys()))
+        available_moves = [m for m in available_moves if m not in filtered_recent_moves]
+        if not available_moves:
+            available_moves = list(CLOSE_IN_MOVES.keys())
     moves_prompt = "You may only use the following moves:\n"
     moves_prompt += chr(10).join("- " + move for move in available_moves)
 
@@ -1660,11 +1679,13 @@ async def generate_move(
     controlled: PlayerState,
     opponent: PlayerState,
     frame_url: str,
+    recent_moves: Sequence[str] | None = None,
 ) -> tuple[list[int], str]:
     messages, available_moves = create_messages(
         opponent,
         controlled,
         [frame_url],
+        recent_moves,
     )
     return await chat(
         messages,
