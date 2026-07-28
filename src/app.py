@@ -15,7 +15,7 @@ from src.serve import MODELS
 from src.utils import (
     COMBOS,
     CONTAINER_REGION,
-    DEFAULT_CPU_DIFFICULTY,
+    MAX_CPU_DIFFICULTY,
     DEFAULT_PLAYER1_PARTICIPANT,
     DEFAULT_PLAYER2_PARTICIPANT,
     MINUTES,
@@ -51,7 +51,8 @@ remote_logos_dir = "/root/logos"
 remote_sounds_dir = "/root/sounds"
 
 static_image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image
+    .debian_slim(python_version="3.12")
     .uv_pip_install(
         "fastapi[standard]==0.116.1",
     )
@@ -70,7 +71,14 @@ static_image = (
     )
 )
 
-gameplay_image = create_gameplay_image(include_web=True)
+gameplay_image = create_gameplay_image(
+    extra_python_packages=(
+        "aiortc",
+        "av",
+        "fastapi[standard]==0.116.1",
+        "websockets==15.0.1",
+    )
+)
 
 
 @app.cls(
@@ -427,12 +435,10 @@ class Web:
 
             async def send_game_state(self):
                 self.sync_accepts_input_state()
-                await self.outbound_message_queue.put(
-                    {
-                        "type": "game_state",
-                        "data": make_json_safe(self.game_state),
-                    }
-                )
+                await self.outbound_message_queue.put({
+                    "type": "game_state",
+                    "data": make_json_safe(self.game_state),
+                })
 
             async def handle_inbound_message(self, data):
                 message_type = data.get("type", "unknown")
@@ -629,16 +635,14 @@ class Web:
                         return
                     if websocket.client_state == WebSocketState.DISCONNECTED:
                         return
-                    await websocket.send_json(
-                        {
-                            "type": "ice_candidate",
-                            "candidate": {
-                                "candidate_sdp": candidate.to_sdp(),
-                                "sdpMid": candidate.sdpMid,
-                                "sdpMLineIndex": candidate.sdpMLineIndex,
-                            },
-                        }
-                    )
+                    await websocket.send_json({
+                        "type": "ice_candidate",
+                        "candidate": {
+                            "candidate_sdp": candidate.to_sdp(),
+                            "sdpMid": candidate.sdpMid,
+                            "sdpMLineIndex": candidate.sdpMLineIndex,
+                        },
+                    })
                 except Exception:
                     print(f"Error sending ICE candidate: {traceback.format_exc()}")
 
@@ -732,13 +736,11 @@ class Web:
                             )
                             answer = await pc.createAnswer()
                             await pc.setLocalDescription(answer)
-                            await websocket.send_json(
-                                {
-                                    "type": "answer",
-                                    "sdp": pc.localDescription.sdp,
-                                    "peer_id": "server",
-                                }
-                            )
+                            await websocket.send_json({
+                                "type": "answer",
+                                "sdp": pc.localDescription.sdp,
+                                "peer_id": "server",
+                            })
                             continue
 
                         if message_type == "ice_candidate":
@@ -811,18 +813,14 @@ class Web:
                 try:
                     while not session.stop_event.is_set():
                         if websocket.client_state != WebSocketState.DISCONNECTED:
-                            await websocket.send_json(
-                                {
-                                    "type": "heartbeat",
-                                    "peer_id": "server",
-                                }
-                            )
-                        await session.outbound_message_queue.put(
-                            {
+                            await websocket.send_json({
                                 "type": "heartbeat",
-                                "data": {},
-                            }
-                        )
+                                "peer_id": "server",
+                            })
+                        await session.outbound_message_queue.put({
+                            "type": "heartbeat",
+                            "data": {},
+                        })
                         try:
                             await asyncio.wait_for(
                                 session.stop_event.wait(),
@@ -1059,7 +1057,7 @@ class Web:
                     step_ratio=1,
                     render_mode="rgb_array",
                     vs_cpu=False,
-                    cpu_difficulty=DEFAULT_CPU_DIFFICULTY,
+                    cpu_difficulty=MAX_CPU_DIFFICULTY,
                     interactive_select=True,
                 )
                 environment_task = asyncio.create_task(
@@ -1223,7 +1221,7 @@ class Web:
                             ) = await session.run_env_operation(
                                 session.env.start_interactive_game,
                                 vs_cpu=vs_cpu,
-                                cpu_difficulty=DEFAULT_CPU_DIFFICULTY,
+                                cpu_difficulty=MAX_CPU_DIFFICULTY,
                                 frame_sink=stream_phase_frame,
                                 presentation_sink=send_presentation,
                             )
@@ -1516,15 +1514,13 @@ def resolve_gameplay_base_url(
                 ("--sf3.modal.run", f"--gameplay.{ROUTING_REGION}.modal.run"),
             ):
                 if netloc.endswith(static_suffix):
-                    return urlunsplit(
-                        (
-                            parsed.scheme,
-                            netloc[: -len(static_suffix)] + gameplay_suffix,
-                            "",
-                            "",
-                            "",
-                        )
-                    )
+                    return urlunsplit((
+                        parsed.scheme,
+                        netloc[: -len(static_suffix)] + gameplay_suffix,
+                        "",
+                        "",
+                        "",
+                    ))
         except ValueError:
             pass
 

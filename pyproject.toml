@@ -4,4 +4,10 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["modal==1.4.3", "python-dotenv==1.2.1"]
+dependencies = [
+    "modal==1.5.2",
+    "modal-training-gym",
+]
+
+[tool.uv.sources]
+modal-training-gym = { git = "https://github.com/modal-projects/training-gym.git", branch = "main" }

@@ -1,9 +1,5 @@
-# https://modal.com/docs/examples/sglang_low_latency
-# https://huggingface.co/Qwen/Qwen3.5-9B
-# https://cookbook.sglang.io/autoregressive/Qwen/Qwen3.6
-
 import time
-import uuid
+from pathlib import Path
 
 import modal
 
@@ -19,20 +15,23 @@ from src.utils import (
     resolve_move_with_fallback,
 )
 
-app = modal.App("sf3-llm")
+APP_NAME = "sf3-qwen3-vl-8b"
+
+app = modal.App(APP_NAME)
+
+model_name = "Qwen/Qwen3-VL-8B-Instruct"
+model_revision = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 
 sglang_image = (
-    modal.Image.from_registry("modalresearch/sglang:nightly-dev-cu13-20260619-patched")
+    modal.Image
+    .from_registry("lmsysorg/sglang:v0.5.12.post1-cu130")
     .entrypoint([])
     .run_commands("rm -rf /root/.cache/huggingface /root/.cache/flashinfer")
-    .env(
-        {
-            "HF_XET_HIGH_PERFORMANCE": "1",
-            "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
-            "TORCHINDUCTOR_COMPILE_THREADS": "1",
-            "CUDA_ENABLE_COREDUMP_ON_EXCEPTION": "0",
-        }
-    )
+    .uv_pip_install("qwen-vl-utils==0.0.14")
+    .env({
+        "HF_XET_HIGH_PERFORMANCE": "1",
+        "TORCHINDUCTOR_COMPILE_THREADS": "1",
+    })
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
@@ -40,43 +39,49 @@ flashinfer_cache_vol = modal.Volume.from_name(
     "sf3-flashinfer-cache", create_if_missing=True
 )
 
-model_name = "Qwen/Qwen3.5-9B"
-model_revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
+CHECKPOINTS_MOUNT = "/checkpoints"
+# training-gym's slime launcher names this volume
+# f"slime-{recipe_class_name.lower()}-checkpoints".
+CHECKPOINTS_VOLUME = "slime-qwen3_vl_8b_recipe-checkpoints"
+
+cache_volumes = {
+    "/root/.cache/huggingface": hf_cache_vol,
+    "/root/.cache/flashinfer": flashinfer_cache_vol,
+    CHECKPOINTS_MOUNT: modal.Volume.from_name(
+        CHECKPOINTS_VOLUME, create_if_missing=True
+    ).with_mount_options(read_only=True),
+}
+
+
+def latest_hf_export_on_volume() -> str | None:
+    exports = list(Path(CHECKPOINTS_MOUNT).glob("*/*_hf"))
+    return str(max(exports, key=lambda path: path.stat().st_mtime)) if exports else None
+
 
 max_inputs = max_num_seqs = 32
 gpu = "B200:1"
-eval_gpu = "H200:1"
-
-
-def _unique_move_from_prefix(raw: str, available_moves: list[str]) -> str | None:
-    if not raw:
-        return None
-    matches = [move for move in available_moves if move.startswith(raw)]
-    return matches[0] if len(matches) == 1 else None
+eval_gpu = "H100:1"
 
 
 @app.cls(
     image=sglang_image,
-    volumes={
-        "/root/.cache/huggingface": hf_cache_vol,
-        "/root/.cache/flashinfer": flashinfer_cache_vol,
-    },
-    secrets=[modal.Secret.from_name("huggingface-secret")],
     gpu=gpu,
     region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
+    volumes=cache_volumes,
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     scaledown_window=60 * MINUTES,
     timeout=60 * MINUTES,
 )
 @modal.concurrent(max_inputs=max_inputs, target_inputs=max_inputs // 2)
-class Qwen35Server:
+class Qwen3VLServer:
     ckpt_path: str = modal.parameter(default="")
 
     def prepare_request(self, messages: list[dict]) -> tuple[str, list[str]]:
         images = [
             item["image"]
             for message in messages
-            if isinstance(message["content"], list)
+            if isinstance(message.get("content"), list)
             for item in message["content"]
             if item.get("type") == "image"
         ]
@@ -92,31 +97,21 @@ class Qwen35Server:
     @modal.enter()
     async def enter(self):
         import sglang as sgl
-        import torch
 
-        load_path = self.ckpt_path or model_name
+        load_path = self.ckpt_path or latest_hf_export_on_volume() or model_name
         revision = model_revision if load_path == model_name else None
-        blackwell = torch.cuda.get_device_capability()[0] >= 10
-        print(f"Loading model from {load_path} (blackwell={blackwell})")
-
+        print(f"Loading model from {load_path}")
         self.llm = sgl.Engine(
             model_path=str(load_path),
             revision=revision,
             context_length=MAX_CONTEXT_LEN,
             chunked_prefill_size=8192,
             max_running_requests=max_num_seqs,
-            cuda_graph_max_bs_decode=max_inputs * 2,
-            mem_fraction_static=0.7,
+            cuda_graph_max_bs=max_inputs * 2,
+            mem_fraction_static=0.9,
             grammar_backend="xgrammar",
-            attention_backend="trtllm_mha" if blackwell else "fa3",
-            linear_attn_prefill_backend="flashinfer",
-            linear_attn_decode_backend="flashinfer",
-            mamba_ssm_dtype="bfloat16",
-            mm_attention_backend="fa4" if blackwell else "fa3",
-            trust_remote_code=True,
         )
         self.tokenizer = self.llm.tokenizer_manager.tokenizer
-
         self.sampling_params = {
             "temperature": 0.7,
             "top_p": 0.8,
@@ -133,10 +128,9 @@ class Qwen35Server:
             **self.sampling_params,
             "regex": move_regex(available_moves),
         }
-
-        _ = await self.llm.async_generate(
+        await self.llm.async_generate(
             prompt,
-            image_data=images,
+            image_data=images or None,
             sampling_params=warmup_params,
         )
 
@@ -158,47 +152,16 @@ class Qwen35Server:
             available_moves = get_available_instructions_for_character(
                 character, super_art, super_count
             )
-
-        sampling_params = {
-            **self.sampling_params,
-            "regex": move_regex(available_moves),
-        }
         prompt, images = self.prepare_request(messages)
-        request_id = uuid.uuid4().hex
-        generator = await self.llm.async_generate(
+        output = await self.llm.async_generate(
             prompt,
-            image_data=images,
-            sampling_params=sampling_params,
-            stream=True,
-            rid=request_id,
+            image_data=images or None,
+            sampling_params={
+                **self.sampling_params,
+                "regex": move_regex(available_moves),
+            },
         )
-        last_output = None
-        move_name = None
-        try:
-            async for output in generator:
-                last_output = output
-                if output["meta_info"].get("finish_reason") is not None:
-                    break
-                move_name = _unique_move_from_prefix(
-                    output["text"].strip(), available_moves
-                )
-                if move_name is not None:
-                    break
-        finally:
-            try:
-                if (
-                    last_output is None
-                    or last_output["meta_info"].get("finish_reason") is None
-                ):
-                    self.llm.tokenizer_manager.abort_request(request_id)
-            finally:
-                await generator.aclose()
-
-        if last_output is None:
-            raise RuntimeError("SGLang stream produced no output")
-
-        if move_name is None:
-            move_name = last_output["text"].strip()
+        move_name = output["text"].strip()
 
         move_sequence, resolved_move_name = resolve_move_with_fallback(
             character, move_name, side
@@ -212,9 +175,9 @@ class Qwen35Server:
         self.llm.shutdown()
 
 
-@app.function(routing_region=ROUTING_REGION, timeout=15 * MINUTES)
-async def test_qwen35(n_samples: int):
-    llm = Qwen35Server()
+@app.function(routing_region=ROUTING_REGION, timeout=60 * MINUTES)
+async def test_qwen3(n_samples: int, ckpt_path: str = ""):
+    llm = Qwen3VLServer(ckpt_path=ckpt_path)
     await llm.boot.remote.aio()
 
     ms_per_move = []
@@ -245,5 +208,5 @@ async def test_qwen35(n_samples: int):
 
 
 @app.local_entrypoint()
-async def main(n_samples: int = 100):
-    await test_qwen35.remote.aio(n_samples)
+async def main(n_samples: int = 100, ckpt_path: str = ""):
+    await test_qwen3.remote.aio(n_samples, ckpt_path=ckpt_path)

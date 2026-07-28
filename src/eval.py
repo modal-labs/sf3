@@ -11,11 +11,11 @@ from typing import Any
 import modal
 
 from src.env import EnvironmentConfig, create_environment
-from src.serve import MODELS
+from src.serve import MODELS, POLICY_MODEL_KEY
 from src.utils import (
     CHARACTER_MAPPING,
     CONTAINER_REGION,
-    DEFAULT_CPU_DIFFICULTY,
+    MAX_CPU_DIFFICULTY,
     MINUTES,
     PARTICIPANT_LABELS,
     ROUTING_REGION,
@@ -195,7 +195,7 @@ async def play_match(
                         super_arts=(1, 1),
                         step_ratio=6,
                         vs_cpu=vs_cpu,
-                        cpu_difficulty=DEFAULT_CPU_DIFFICULTY,
+                        cpu_difficulty=MAX_CPU_DIFFICULTY,
                     )
                 )
             )
@@ -250,14 +250,23 @@ async def play_match(
     timeout=MATCH_TIMEOUT,
     retries=MATCH_RETRIES,
 )
-async def execute_match(job: dict[str, Any], checkpoint_name: str) -> dict[str, Any]:
+async def execute_match(
+    job: dict[str, Any],
+    checkpoint_name: str,
+    base: bool = False,
+    ckpt_path: str = "",
+) -> dict[str, Any]:
     chats = {}
     model_boots = []
     for player in job["pair"]:
         if player == "cpu":
             continue
         spec = MODELS[player]
-        server = spec.server.with_options(gpu=spec.eval_gpu)()
+        if player == POLICY_MODEL_KEY:
+            player_ckpt_path = spec.version["model"] if base else ckpt_path
+        else:
+            player_ckpt_path = ""
+        server = spec.server.with_options(gpu=spec.eval_gpu)(ckpt_path=player_ckpt_path)
         chats[player] = server.chat.remote.aio
         model_boots.append(server.boot.remote.aio)
 
@@ -287,7 +296,7 @@ async def execute_match(job: dict[str, Any], checkpoint_name: str) -> dict[str, 
     routing_region=ROUTING_REGION,
     timeout=ORCHESTRATE_TIMEOUT,
 )
-async def orchestrate() -> dict[str, Any]:
+async def orchestrate(base: bool = False, ckpt_path: str = "") -> dict[str, Any]:
     players = list((*MODELS, "cpu"))
     run_id = f"{time.strftime('%Y%m%d_%H%M%S')}-{uuid.uuid4().hex[:8]}"
     run_output_dir = f"{OUTPUT_DIR}/{run_id}"
@@ -303,16 +312,18 @@ async def orchestrate() -> dict[str, Any]:
             combinations(players, 2), enumerate(CHARACTERS)
         )
     ]
+    ckpt_selection = "base" if base else (ckpt_path if ckpt_path else "latest")
     config = {
         "run_id": run_id,
         "players": players,
         "characters": list(CHARACTERS),
-        "cpu_difficulty": DEFAULT_CPU_DIFFICULTY,
+        "cpu_difficulty": MAX_CPU_DIFFICULTY,
         "llm_match_format": "one_fight_first_to_two_rounds",
         "matches_per_pair": len(CHARACTERS),
         "models": {
             player: MODELS[player].version for player in players if player != "cpu"
         },
+        "ckpt_selection": ckpt_selection,
         "output_dir": run_output_dir,
         "schedule": jobs,
     }
@@ -320,37 +331,35 @@ async def orchestrate() -> dict[str, Any]:
     outcomes: list[Any] = [None] * len(jobs)
     completed = failed = 0
     print(f"run_id: {run_id}")
+    print(f"ckpt_selection: {ckpt_selection}")
     print(f"n_matches: {len(jobs)}")
 
-    async def capture(index: int, job: dict[str, Any]) -> tuple[int, Any]:
-        try:
-            return index, await execute_match.remote.aio(job, checkpoint_name)
-        except Exception as exc:
-            return index, exc
-
-    tasks = [asyncio.create_task(capture(index, job)) for index, job in enumerate(jobs)]
-    try:
-        for task in asyncio.as_completed(tasks):
-            index, outcome = await task
-            outcomes[index] = outcome
-            if isinstance(outcome, BaseException):
-                failed += 1
-                print(
-                    f"Match failed: {jobs[index]['match_id']}: "
-                    f"{type(outcome).__name__}: {outcome}",
-                    flush=True,
-                )
-            else:
-                completed += 1
+    index = 0
+    async for outcome in execute_match.map.aio(
+        jobs,
+        kwargs={
+            "checkpoint_name": checkpoint_name,
+            "base": base,
+            "ckpt_path": ckpt_path,
+        },
+        return_exceptions=True,
+    ):
+        outcomes[index] = outcome
+        if isinstance(outcome, BaseException):
+            failed += 1
             print(
-                f"Progress: completed={completed} failed={failed} "
-                f"pending={len(jobs) - completed - failed}",
+                f"Match failed: {jobs[index]['match_id']}: "
+                f"{type(outcome).__name__}: {outcome}",
                 flush=True,
             )
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        else:
+            completed += 1
+        index += 1
+        print(
+            f"Progress: completed={completed} failed={failed} "
+            f"pending={len(jobs) - completed - failed}",
+            flush=True,
+        )
 
     # worker can checkpoint its result and still fail on the way home so double-check
 
@@ -475,6 +484,6 @@ async def orchestrate() -> dict[str, Any]:
 
 
 @app.local_entrypoint()
-async def main() -> None:
-    call = await orchestrate.spawn.aio()
+async def main(base: bool = False, ckpt_path: str = "") -> None:
+    call = await orchestrate.spawn.aio(base=base, ckpt_path=ckpt_path)
     print(f"call_id={call.object_id}", flush=True)
