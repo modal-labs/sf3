@@ -2,7 +2,6 @@
 # https://huggingface.co/Qwen/Qwen3.5-9B
 # https://cookbook.sglang.io/autoregressive/Qwen/Qwen3.6
 
-import re
 import time
 import uuid
 
@@ -16,6 +15,7 @@ from src.utils import (
     ROUTING_REGION,
     create_random_messages,
     get_available_instructions_for_character,
+    move_regex,
     resolve_move_with_fallback,
 )
 
@@ -43,7 +43,7 @@ flashinfer_cache_vol = modal.Volume.from_name(
 model_name = "Qwen/Qwen3.5-9B"
 model_revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 
-max_inputs = max_num_seqs = 16
+max_inputs = max_num_seqs = 32
 gpu = "B200:1"
 eval_gpu = "H200:1"
 
@@ -68,7 +68,7 @@ def _unique_move_from_prefix(raw: str, available_moves: list[str]) -> str | None
     scaledown_window=60 * MINUTES,
     timeout=60 * MINUTES,
 )
-@modal.concurrent(max_inputs=max_inputs)
+@modal.concurrent(max_inputs=max_inputs, target_inputs=max_inputs // 2)
 class Qwen35Server:
     ckpt_path: str = modal.parameter(default="")
 
@@ -89,27 +89,13 @@ class Qwen35Server:
         )
         return prompt, images
 
-    @staticmethod
-    def _move_regex(available_moves: list[str]) -> str:
-        return (
-            "(?:"
-            + "|".join(
-                sorted(
-                    (re.escape(move).replace(r"\ ", " ") for move in available_moves),
-                    key=len,
-                    reverse=True,
-                )
-            )
-            + ")"
-        )
-
     @modal.enter()
     async def enter(self):
         import sglang as sgl
         import torch
 
         load_path = self.ckpt_path or model_name
-        revision = None if self.ckpt_path else model_revision
+        revision = model_revision if load_path == model_name else None
         blackwell = torch.cuda.get_device_capability()[0] >= 10
         print(f"Loading model from {load_path} (blackwell={blackwell})")
 
@@ -145,7 +131,7 @@ class Qwen35Server:
         prompt, images = self.prepare_request(messages)
         warmup_params = {
             **self.sampling_params,
-            "regex": self._move_regex(available_moves),
+            "regex": move_regex(available_moves),
         }
 
         _ = await self.llm.async_generate(
@@ -175,7 +161,7 @@ class Qwen35Server:
 
         sampling_params = {
             **self.sampling_params,
-            "regex": self._move_regex(available_moves),
+            "regex": move_regex(available_moves),
         }
         prompt, images = self.prepare_request(messages)
         request_id = uuid.uuid4().hex

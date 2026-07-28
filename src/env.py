@@ -260,6 +260,7 @@ class GameEnvironment(Protocol):
         *,
         vs_cpu: bool,
         cpu_difficulty: int,
+        auto_select: bool = False,
         frame_sink: FrameSink | None = None,
         presentation_sink: PresentationSink | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]: ...
@@ -356,6 +357,9 @@ class LocalSfiiiAdapter:
         self._matchup_character_lock_installed = False
         self._cpu_opponent_menu_seen = False
         self._selecting = False
+        # Per-game: one auto-selected game must not stop a later game on the
+        # same adapter from parking in the character-select UI.
+        self._interactive_select = config.interactive_select
         self._vs_cpu = config.vs_cpu
         self._cpu_difficulty = config.cpu_difficulty
         self._match_identity: dict[str, dict[str, Any]] | None = None
@@ -376,6 +380,7 @@ class LocalSfiiiAdapter:
         *,
         vs_cpu: bool,
         cpu_difficulty: int,
+        auto_select: bool = False,
         frame_sink: FrameSink | None = None,
         presentation_sink: PresentationSink | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -385,7 +390,9 @@ class LocalSfiiiAdapter:
             raise RuntimeError(
                 "Interactive game requested from an automated environment"
             )
-
+        # auto_select reuses the automated selection and character-lock path so
+        # the configured matchup is seated without any UI cursor input.
+        self._interactive_select = not auto_select
         self._vs_cpu = vs_cpu
         self._cpu_difficulty = max(1, min(8, int(cpu_difficulty)))
         self._match_identity = None
@@ -415,6 +422,7 @@ class LocalSfiiiAdapter:
                 "for each game"
             )
         self._reset_called = True
+        self._interactive_select = self.config.interactive_select
         self._vs_cpu = self.config.vs_cpu
         self._cpu_difficulty = self.config.cpu_difficulty
         self._match_identity = None
@@ -674,7 +682,7 @@ class LocalSfiiiAdapter:
         )
 
     def _register_matchup_character_lock(self) -> None:
-        if self._matchup_character_lock_installed or self.config.interactive_select:
+        if self._matchup_character_lock_installed or self._interactive_select:
             return
         command = self._matchup_lock_command()
         # console.writeln() drains MAME's shared stdout queue for 0.5s and raises on
@@ -858,7 +866,7 @@ class LocalSfiiiAdapter:
         self,
         frame_sink: FrameSink | None,
     ) -> dict[str, Any]:
-        interactive = self.config.interactive_select
+        interactive = self._interactive_select
         tournament_mode = self._vs_cpu
         p1_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[0]]
         p2_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
@@ -948,12 +956,12 @@ class LocalSfiiiAdapter:
                 frame_sink,
                 presentation_sink,
             )
-        if not self.config.interactive_select:
+        if not self._interactive_select:
             self._register_matchup_character_lock()
         self._wait_for_character_select(frame_sink)
         self.expected_health = {"P1": 0, "P2": 0}
         self.expected_wins = {"P1": 0, "P2": 0}
-        if self.config.interactive_select:
+        if self._interactive_select:
             self._selecting = True
             return
         self._select_characters(frame_sink)

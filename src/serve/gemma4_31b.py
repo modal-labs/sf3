@@ -78,7 +78,7 @@ def _unique_move_from_json_prefix(raw: str, available_moves: list[str]) -> str |
     scaledown_window=60 * MINUTES,
     timeout=60 * MINUTES,
 )
-@modal.concurrent(max_inputs=max_inputs)
+@modal.concurrent(max_inputs=max_inputs, target_inputs=max_inputs // 2)
 class Gemma4Server:
     ckpt_path: str = modal.parameter(default="")
 
@@ -108,7 +108,7 @@ class Gemma4Server:
         import sglang as sgl
 
         load_path = self.ckpt_path or model_name
-        revision = None if self.ckpt_path else model_revision
+        revision = model_revision if load_path == model_name else None
         print(f"Loading model from {load_path}")
 
         self.llm = sgl.Engine(

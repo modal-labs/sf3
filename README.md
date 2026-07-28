@@ -7,15 +7,15 @@ An interactive Street Fighter 3 web game against RL-trained LLMs.
 ### Setup
 
 ```bash
-# Clone repository
+# clone repository
 git clone https://github.com/modal-labs/sf3.git
 cd sf3
 
-# Install dependencies
+# install dependencies
 uv sync
 source .venv/bin/activate
 
-# Set up Modal
+# set up Modal
 modal setup
 ```
 
@@ -40,21 +40,26 @@ modal secret create wandb-secret WANDB_API_KEY=your-key
 For demos, prepend web app commands with `SF3_WARM_MODELS=1`.
 
 ```bash
-# Alternate between rounds of collecting self-play data and training the LLM
-modal run --detach -m src.training.qwen35_35ba3b
+# evaluate llms +/- cpu on every character matchup
+modal run --detach -m src.eval --base
+modal run --detach -m src.eval --ckpt-path /checkpoints/.../r0_hf
+modal run --detach -m src.eval  # latest checkpoint
 
-# Evaluate all model + cpu matchups on every character combination
-modal run --detach -m src.eval
+# multi-round rl post-training
+modal run --detach -m src.train.main
 
-# Test model latency
+# test the trained model's latency
+modal run -m src.serve.qwen3_vl_8b
+
+# test the base models' latencies
 modal run -m src.serve.qwen35_9b
 modal run -m src.serve.gemma4_31b
 modal run -m src.serve.ministral3_14b
 
-# Serve the web app
+# serve the web app
 modal serve -m src.app
 
-# Deploy the web app
+# deploy the web app
 modal deploy -m src.app
 ```
 
@@ -68,6 +73,10 @@ modal deploy -m src.app
 - The methodology for measuring LLM latencies in `src/serve/` was fixed, alongside an updated diagram:
 
 ![Latency](./assets/readme/latency.webp "Latency diagram")
+
+- CPU opponents were added, and non-learnable frames (e.g., coin screen, character selection, etc.) were recovered.
+
+- Training migrated to [Modal Training Gym](https://github.com/modal-projects/training-gym).
 
 </details>
 

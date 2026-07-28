@@ -11,6 +11,12 @@ export const PARTICIPANT_SPECS = {
     logo: "/logos/cpu.webp",
     seats: ["P2"],
   },
+  qwen3_vl_8b: {
+    label: "QWEN3-VL-8B",
+    kind: "model",
+    logo: "/logos/qwen.webp",
+    seats: ["P1", "P2"],
+  },
   qwen35_9b: {
     label: "QWEN3.5-9B",
     kind: "model",

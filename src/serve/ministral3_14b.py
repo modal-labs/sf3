@@ -67,7 +67,7 @@ eval_gpu = "H200:1"
     scaledown_window=60 * MINUTES,
     timeout=60 * MINUTES,
 )
-@modal.concurrent(max_inputs=max_inputs)
+@modal.concurrent(max_inputs=max_inputs, target_inputs=max_inputs // 2)
 class Ministral3Server:
     ckpt_path: str = modal.parameter(default="")
 
@@ -143,7 +143,7 @@ class Ministral3Server:
         from vllm.v1.engine.async_llm import AsyncLLM
 
         load_path = self.ckpt_path or model_name
-        revision = None if self.ckpt_path else model_revision
+        revision = model_revision if load_path == model_name else None
         print(f"Loading model from {load_path}")
 
         self.SamplingParams = SamplingParams
