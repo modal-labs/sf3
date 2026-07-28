@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import random
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from copy import copy
@@ -21,6 +22,7 @@ from src.utils import (
     HEALTH_MAX,
     MAX_CPU_DIFFICULTY,
     MAX_TOKENS,
+    RECENT_MOVE_LIMIT,
     FrameEncoder,
     create_gameplay_image,
     create_messages,
@@ -185,6 +187,7 @@ async def _play_fight(
     stages_cleared = 0
     frame_encoder = FrameEncoder()
     opponent_buttons: list[int] = []
+    recent = [deque(maxlen=RECENT_MOVE_LIMIT), deque(maxlen=RECENT_MOVE_LIMIT)]
     try:
         observation, _info = await asyncio.to_thread(env.reset)
         while True:
@@ -195,15 +198,18 @@ async def _play_fight(
             frame = frame_encoder.data_url(pixels)
             player1 = player_state(observation, p1_identity, "P1")
             player2 = player_state(observation, env.read_player_identity("P2"), "P2")
-            messages, available = create_messages(player2, player1, [frame])
+            messages, available = create_messages(
+                player2, player1, [frame], recent[0]
+            )
 
             async def next_opponent_buttons() -> list[int]:
                 if opponent_buttons:
                     return opponent_buttons
                 if server is not None:
-                    buttons, _ = await generate_move(
-                        server.chat.remote.aio, player2, player1, frame
+                    buttons, move_name = await generate_move(
+                        server.chat.remote.aio, player2, player1, frame, recent[1]
                     )
+                    recent[1].append(move_name)
                     return buttons
                 if kind == "cpu":
                     # the emulator drives P2 itself at cpu_difficulty
@@ -228,8 +234,10 @@ async def _play_fight(
             except BaseExceptionGroup as error:
                 contract = error.subgroup(TokenContractError)
                 raise (contract or error).exceptions[0] from error
+            policy_move = policy.result()
+            recent[0].append(policy_move)
             buttons, _ = resolve_move_with_fallback(
-                policy_character, policy.result(), player1.side
+                policy_character, policy_move, player1.side
             )
             opponent_buttons = bot.result()
 
@@ -244,6 +252,8 @@ async def _play_fight(
             stages_cleared += clears
             if round_done:
                 opponent_buttons.clear()
+                for moves in recent:
+                    moves.clear()
             if end_reason is not None:
                 cleared = stages_cleared + (1 if end_reason is EndReason.WON else 0)
                 return FightResult(end_reason, health_return, cleared)
