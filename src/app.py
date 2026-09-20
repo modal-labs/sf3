@@ -40,7 +40,6 @@ app = modal.App(name="sf3")
 for model in MODELS.values():
     app.include(model.app)
 
-VERSUS_START_OFFSET_FRAMES = 30
 CONTROL_MESSAGE_QUEUE_LIMIT = 128
 SESSION_TASK_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 
@@ -924,12 +923,12 @@ class Web:
                     event_loop.call_soon_threadsafe(begin_non_fight_phase, generation)
                 video_track.queue_frame(np.ascontiguousarray(frame))
 
-            def send_presentation(name: str):
+            def send_presentation(name: str, **fields):
                 event_loop.call_soon_threadsafe(
                     session.outbound_message_queue.put_nowait,
                     {
                         "type": "presentation",
-                        "data": {"name": name},
+                        "data": {"name": name, **fields},
                     },
                 )
 
@@ -1014,21 +1013,12 @@ class Web:
                         player2_is_model = is_model_participant(player2_participant)
                         if not (player1_is_model or player2_is_model):
                             continue
-                        if (
-                            player1_is_model
-                            and player2_is_model
-                            and (
-                                session.player1_next_buttons
-                                or session.player2_next_buttons
-                            )
-                        ):
-                            continue
 
                         snapshot = snapshot_robot_observation()
                         if snapshot is None:
                             continue
                         requests = []
-                        if player1_is_model:
+                        if player1_is_model and not session.player1_next_buttons:
                             requests.append(
                                 generate_robot_move(
                                     1,
@@ -1036,7 +1026,7 @@ class Web:
                                     snapshot,
                                 )
                             )
-                        if player2_is_model:
+                        if player2_is_model and not session.player2_next_buttons:
                             requests.append(
                                 generate_robot_move(
                                     2,
@@ -1044,6 +1034,8 @@ class Web:
                                     snapshot,
                                 )
                             )
+                        if not requests:
+                            continue
 
                         results = await asyncio.gather(*requests)
                         if action_generation != session.action_generation:
@@ -1232,7 +1224,6 @@ class Web:
                         )
                         models_loading_frames_remaining = None
                         models_ready_checked = False
-                        versus_frames_after_lock = None
 
                         session.game_running = True
                         session.accepts_input = False
@@ -1330,11 +1321,7 @@ class Web:
                                 and session.info.get("player1_selected")
                                 and session.info.get("player2_selected")
                             )
-                            if (
-                                both_selected_while_selecting
-                                and versus_frames_after_lock is None
-                            ):
-                                versus_frames_after_lock = 0
+                            if both_selected_while_selecting:
                                 if (
                                     not models_ready_checked
                                     and models_loading_frames_remaining is None
@@ -1342,13 +1329,10 @@ class Web:
                                     models_loading_frames_remaining = (
                                         models_loading_delay_frames
                                     )
-                                session.accepts_input = False
-                                session.invalidate_actions()
-                                selection_changed = True
-                            if versus_frames_after_lock == VERSUS_START_OFFSET_FRAMES:
-                                send_presentation("versus")
-                            if versus_frames_after_lock is not None:
-                                versus_frames_after_lock += 1
+                                if session.accepts_input:
+                                    session.accepts_input = False
+                                    session.invalidate_actions()
+                                    selection_changed = True
                             if selection_changed:
                                 await session.send_game_state()
 
