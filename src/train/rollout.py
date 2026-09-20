@@ -97,9 +97,9 @@ def prompt_token_ids(
     if count is None:
         from qwen_vl_utils import process_vision_info
 
-        images, _videos = process_vision_info([
-            {"role": "user", "content": [{"type": "image", "image": frame}]}
-        ])
+        images, _videos = process_vision_info(
+            [{"role": "user", "content": [{"type": "image", "image": frame}]}]
+        )
         processed = processor(text=prompt_text, images=images, return_tensors="pt")
         token_ids = [int(token) for token in processed["input_ids"][0].tolist()]
         pad_id = tokenizer.convert_tokens_to_ids(IMAGE_PAD)
@@ -140,10 +140,12 @@ def _step_buttons(env, buttons: list[int], opponent_buttons: list[int]):
     stages_cleared = 0
 
     for button in buttons:
-        observation, reward, terminated, _truncated, info = env.step({
-            "agent_0": button,
-            "agent_1": opponent_buttons.pop(0) if opponent_buttons else 0,
-        })
+        observation, reward, terminated, _truncated, info = env.step(
+            {
+                "agent_0": button,
+                "agent_1": opponent_buttons.pop(0) if opponent_buttons else 0,
+            }
+        )
         total_reward += float(reward)
         if info.get("stage_done"):
             stages_cleared += 1
@@ -198,9 +200,7 @@ async def _play_fight(
             frame = frame_encoder.data_url(pixels)
             player1 = player_state(observation, p1_identity, "P1")
             player2 = player_state(observation, env.read_player_identity("P2"), "P2")
-            messages, available = create_messages(
-                player2, player1, [frame], recent[0]
-            )
+            messages, available = create_messages(player2, player1, [frame], recent[0])
 
             async def next_opponent_buttons() -> list[int]:
                 if opponent_buttons:
@@ -413,9 +413,9 @@ async def sf3_generate(args, sample, sampling_params):
 def _frame_vision_inputs(image_processor, frame: str) -> dict:
     from qwen_vl_utils import process_vision_info
 
-    images, _videos = process_vision_info([
-        {"role": "user", "content": [{"type": "image", "image": frame}]}
-    ])
+    images, _videos = process_vision_info(
+        [{"role": "user", "content": [{"type": "image", "image": frame}]}]
+    )
     return image_processor(images=images, return_tensors="pt")
 
 

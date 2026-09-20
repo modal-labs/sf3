@@ -11,3 +11,9 @@ dependencies = [
 
 [tool.uv.sources]
 modal-training-gym = { git = "https://github.com/modal-projects/training-gym.git", branch = "main" }
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.7.0",
+    "ruff==0.11.13",
+]

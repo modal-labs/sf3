@@ -23,15 +23,16 @@ model_name = "Qwen/Qwen3-VL-8B-Instruct"
 model_revision = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 
 sglang_image = (
-    modal.Image
-    .from_registry("lmsysorg/sglang:v0.5.12.post1-cu130")
+    modal.Image.from_registry("lmsysorg/sglang:v0.5.12.post1-cu130")
     .entrypoint([])
     .run_commands("rm -rf /root/.cache/huggingface /root/.cache/flashinfer")
     .uv_pip_install("qwen-vl-utils==0.0.14")
-    .env({
-        "HF_XET_HIGH_PERFORMANCE": "1",
-        "TORCHINDUCTOR_COMPILE_THREADS": "1",
-    })
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",
+            "TORCHINDUCTOR_COMPILE_THREADS": "1",
+        }
+    )
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)

@@ -14,6 +14,7 @@ cd sf3
 # install dependencies
 uv sync
 source .venv/bin/activate
+uv run pre-commit install
 
 # set up Modal
 modal setup

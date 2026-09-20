@@ -53,8 +53,7 @@ remote_logos_dir = "/root/logos"
 remote_sounds_dir = "/root/sounds"
 
 static_image = (
-    modal.Image
-    .debian_slim(python_version="3.12")
+    modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install(
         "fastapi[standard]==0.116.1",
     )
@@ -444,10 +443,12 @@ class Web:
 
             async def send_game_state(self):
                 self.sync_accepts_input_state()
-                await self.outbound_message_queue.put({
-                    "type": "game_state",
-                    "data": make_json_safe(self.game_state),
-                })
+                await self.outbound_message_queue.put(
+                    {
+                        "type": "game_state",
+                        "data": make_json_safe(self.game_state),
+                    }
+                )
 
             async def handle_inbound_message(self, data):
                 message_type = data.get("type", "unknown")
@@ -646,14 +647,16 @@ class Web:
                         return
                     if websocket.client_state == WebSocketState.DISCONNECTED:
                         return
-                    await websocket.send_json({
-                        "type": "ice_candidate",
-                        "candidate": {
-                            "candidate_sdp": candidate.to_sdp(),
-                            "sdpMid": candidate.sdpMid,
-                            "sdpMLineIndex": candidate.sdpMLineIndex,
-                        },
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "ice_candidate",
+                            "candidate": {
+                                "candidate_sdp": candidate.to_sdp(),
+                                "sdpMid": candidate.sdpMid,
+                                "sdpMLineIndex": candidate.sdpMLineIndex,
+                            },
+                        }
+                    )
                 except Exception:
                     print(f"Error sending ICE candidate: {traceback.format_exc()}")
 
@@ -747,11 +750,13 @@ class Web:
                             )
                             answer = await pc.createAnswer()
                             await pc.setLocalDescription(answer)
-                            await websocket.send_json({
-                                "type": "answer",
-                                "sdp": pc.localDescription.sdp,
-                                "peer_id": "server",
-                            })
+                            await websocket.send_json(
+                                {
+                                    "type": "answer",
+                                    "sdp": pc.localDescription.sdp,
+                                    "peer_id": "server",
+                                }
+                            )
                             continue
 
                         if message_type == "ice_candidate":
@@ -824,14 +829,18 @@ class Web:
                 try:
                     while not session.stop_event.is_set():
                         if websocket.client_state != WebSocketState.DISCONNECTED:
-                            await websocket.send_json({
+                            await websocket.send_json(
+                                {
+                                    "type": "heartbeat",
+                                    "peer_id": "server",
+                                }
+                            )
+                        await session.outbound_message_queue.put(
+                            {
                                 "type": "heartbeat",
-                                "peer_id": "server",
-                            })
-                        await session.outbound_message_queue.put({
-                            "type": "heartbeat",
-                            "data": {},
-                        })
+                                "data": {},
+                            }
+                        )
                         try:
                             await asyncio.wait_for(
                                 session.stop_event.wait(),
@@ -1531,13 +1540,15 @@ def resolve_gameplay_base_url(
                 ("--sf3.modal.run", f"--gameplay.{ROUTING_REGION}.modal.run"),
             ):
                 if netloc.endswith(static_suffix):
-                    return urlunsplit((
-                        parsed.scheme,
-                        netloc[: -len(static_suffix)] + gameplay_suffix,
-                        "",
-                        "",
-                        "",
-                    ))
+                    return urlunsplit(
+                        (
+                            parsed.scheme,
+                            netloc[: -len(static_suffix)] + gameplay_suffix,
+                            "",
+                            "",
+                            "",
+                        )
+                    )
         except ValueError:
             pass
 
