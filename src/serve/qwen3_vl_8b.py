@@ -9,9 +9,10 @@ from src.utils import (
     MAX_TOKENS,
     MINUTES,
     ROUTING_REGION,
+    TEMPERATURE,
+    TOP_P,
     create_random_messages,
     get_available_instructions_for_character,
-    move_regex,
     resolve_move_with_fallback,
 )
 
@@ -23,15 +24,16 @@ model_name = "Qwen/Qwen3-VL-8B-Instruct"
 model_revision = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 
 sglang_image = (
-    modal.Image
-    .from_registry("lmsysorg/sglang:v0.5.12.post1-cu130")
+    modal.Image.from_registry("lmsysorg/sglang:v0.5.12.post1-cu130")
     .entrypoint([])
     .run_commands("rm -rf /root/.cache/huggingface /root/.cache/flashinfer")
     .uv_pip_install("qwen-vl-utils==0.0.14")
-    .env({
-        "HF_XET_HIGH_PERFORMANCE": "1",
-        "TORCHINDUCTOR_COMPILE_THREADS": "1",
-    })
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",
+            "TORCHINDUCTOR_COMPILE_THREADS": "1",
+        }
+    )
 )
 
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
@@ -109,29 +111,20 @@ class Qwen3VLServer:
             max_running_requests=max_num_seqs,
             cuda_graph_max_bs=max_inputs * 2,
             mem_fraction_static=0.9,
-            grammar_backend="xgrammar",
         )
         self.tokenizer = self.llm.tokenizer_manager.tokenizer
         self.sampling_params = {
-            "temperature": 0.7,
-            "top_p": 0.8,
-            "top_k": 20,
-            "min_p": 0.0,
-            "presence_penalty": 1.5,
-            "repetition_penalty": 1.0,
+            "temperature": TEMPERATURE,
+            "top_p": TOP_P,
             "max_new_tokens": MAX_TOKENS,
         }
 
-        messages, _, _, _, _, available_moves = create_random_messages()
+        messages, *_ = create_random_messages()
         prompt, images = self.prepare_request(messages)
-        warmup_params = {
-            **self.sampling_params,
-            "regex": move_regex(available_moves),
-        }
         await self.llm.async_generate(
             prompt,
             image_data=images or None,
-            sampling_params=warmup_params,
+            sampling_params=self.sampling_params,
         )
 
     @modal.method()
@@ -156,19 +149,13 @@ class Qwen3VLServer:
         output = await self.llm.async_generate(
             prompt,
             image_data=images or None,
-            sampling_params={
-                **self.sampling_params,
-                "regex": move_regex(available_moves),
-            },
+            sampling_params=self.sampling_params,
         )
         move_name = output["text"].strip()
-
-        move_sequence, resolved_move_name = resolve_move_with_fallback(
-            character, move_name, side
-        )
-        if resolved_move_name == "No-Move":
+        if move_name not in available_moves:
             print(f"Invalid move: {move_name}")
-        return move_sequence, resolved_move_name
+            move_name = "No-Move"
+        return resolve_move_with_fallback(character, move_name, side)
 
     @modal.exit()
     async def exit(self):
