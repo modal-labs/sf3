@@ -303,8 +303,10 @@ class LocalSfiiiAdapter:
                 f"Expected {_ROM_SHA256}, got {actual_sha256}"
             )
 
+        from MAMEToolkit import emulator
         from MAMEToolkit.emulator import Address, Emulator
 
+        Path(emulator.__file__).with_name("mame").joinpath("pipes").mkdir(exist_ok=True)
         self.config = config
         self.memory_addresses = {
             "fighting": Address("0x02011389", "u8"),
@@ -637,15 +639,12 @@ class LocalSfiiiAdapter:
                 presentation_sink(action_presentation)
 
     def _matchup_character_assignments(self) -> tuple[tuple[str, int], ...]:
-        character_count = 1 if self._vs_cpu else len(self.config.characters)
         return tuple(
             (
                 f"characterP{player}",
                 CHARACTER_NAME_TO_LOCAL_ID[character],
             )
-            for player, character in enumerate(
-                self.config.characters[:character_count], start=1
-            )
+            for player, character in enumerate(self.config.characters, start=1)
         )
 
     def _matchup_lock_command(self) -> str:
@@ -893,7 +892,6 @@ class LocalSfiiiAdapter:
         frame_sink: FrameSink | None,
     ) -> dict[str, Any]:
         interactive = self._interactive_select
-        tournament_mode = self._vs_cpu
         p1_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[0]]
         p2_char = CHARACTER_NAME_TO_LOCAL_ID[self.config.characters[1]]
         cpu_menus = None
@@ -948,11 +946,10 @@ class LocalSfiiiAdapter:
         if not interactive and not self._matchup_characters_locked(data):
             actual_p1 = int(data["characterP1"])
             actual_p2 = int(data["characterP2"])
-            expected_p2 = "rotating" if tournament_mode else str(p2_char)
             raise RuntimeError(
                 "fight started with unexpected matchup "
                 f"(p1={actual_p1}, p2={actual_p2}; "
-                f"expected p1={p1_char}, p2={expected_p2})"
+                f"expected p1={p1_char}, p2={p2_char})"
             )
         self._match_identity = {
             "player1": self.read_player_identity("P1"),

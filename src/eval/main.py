@@ -39,6 +39,8 @@ with eval_image.imports():
 
 
 CHARACTERS = tuple(combinations(CHARACTER_MAPPING.values(), 2))
+CPU_PLAYERS = {f"cpu:{level}" for level in range(1, MAX_CPU_DIFFICULTY + 1)}
+DEFAULT_PLAYERS = (*MODELS, f"cpu:{MAX_CPU_DIFFICULTY}")
 K_FACTOR, INITIAL_RATING = 16.0, 1200.0
 OUTPUT_DIR = "tournaments"
 
@@ -57,6 +59,24 @@ RETRYABLE_MAME_ENVIRONMENT_ERRORS = (
     "Timed out waiting for fight start",
     "Timed out waiting for the post-KO black frame",
 )
+
+
+def validate_players(players: tuple[str, ...]) -> tuple[str, ...]:
+    unknown = [
+        player
+        for player in players
+        if player not in MODELS
+        and player not in CPU_PLAYERS
+        and not player.startswith("/")
+    ]
+    if unknown:
+        raise ValueError(f"Unknown players: {unknown}")
+    if len(players) < 2 or len(set(players)) != len(players):
+        raise ValueError(f"Need at least two unique players: {players}")
+    if len(CPU_PLAYERS.intersection(players)) > 1:
+        raise ValueError(f"At most one CPU player is allowed: {players}")
+    # the CPU can only play P2, so it goes last in every pair
+    return tuple(sorted(players, key=lambda player: player in CPU_PLAYERS))
 
 
 def valid_match_outcome(outcome: Any, job: dict[str, Any]) -> bool:
@@ -113,12 +133,14 @@ async def play_game(
     chats: dict[str, Any],
     encoder: FrameEncoder,
     initial_reset: tuple[dict[str, Any], dict[str, Any]],
-) -> str:
-    if player1 == "cpu":
+) -> tuple[str, list[float]]:
+    if player1 in CPU_PLAYERS:
         raise ValueError("CPU tournaments require CPU in P2")
-    vs_cpu = player2 == "cpu"
+    vs_cpu = player2 in CPU_PLAYERS
     recent = [deque(maxlen=RECENT_MOVE_LIMIT), deque(maxlen=RECENT_MOVE_LIMIT)]
     observation, _ = initial_reset
+    hp_diff = 0.0
+    p1_round_hp_diffs: list[float] = []
     while True:
         identity = env.read_match_identity()
         fighters = [
@@ -160,27 +182,32 @@ async def play_game(
         terminated = truncated = False
         info: dict[str, Any] = {}
         for p1_button, p2_button in actions:
-            observation, _, terminated, truncated, info = await call_environment(
+            observation, reward, terminated, truncated, info = await call_environment(
                 env,
                 env.step,
                 {"agent_0": p1_button, "agent_1": p2_button},
             )
+            hp_diff += reward
             if terminated or truncated or info.get("round_done"):
                 break
 
         if info.get("round_done"):
+            p1_round_hp_diffs.append(hp_diff)
+            hp_diff = 0.0
             for moves in recent:
                 moves.clear()
+        if info.get("stage_done") and not terminated:
+            return player1, p1_round_hp_diffs
         if not (terminated or truncated):
             continue
         if truncated or not info.get("game_done"):
             raise RuntimeError("Episode ended without normal game completion")
         seat_winner = info.get("winner")
         if seat_winner == "draw":
-            return "draw"
+            return "draw", p1_round_hp_diffs
         if seat_winner not in {"P1", "P2"}:
             raise RuntimeError(f"Environment returned invalid winner: {seat_winner!r}")
-        return player1 if seat_winner == "P1" else player2
+        return player1 if seat_winner == "P1" else player2, p1_round_hp_diffs
 
 
 async def play_match(
@@ -190,7 +217,7 @@ async def play_match(
 ) -> dict[str, Any]:
     a, b = job["pair"]
     match_idx = job["match_idx"]
-    vs_cpu = b == "cpu"
+    vs_cpu = b in CPU_PLAYERS
     # alternate seats between LLMs so the P1 side advantage cancels out
     player1, player2 = (a, b) if vs_cpu or match_idx % 2 == 0 else (b, a)
     deadline = asyncio.timeout(MATCH_DEADLINE)
@@ -205,7 +232,9 @@ async def play_match(
                         super_arts=(1, 1),
                         step_ratio=6,
                         vs_cpu=vs_cpu,
-                        cpu_difficulty=MAX_CPU_DIFFICULTY,
+                        cpu_difficulty=int(b.removeprefix("cpu:"))
+                        if vs_cpu
+                        else MAX_CPU_DIFFICULTY,
                     )
                 )
             )
@@ -225,7 +254,7 @@ async def play_match(
                     await close_environment(env)
                 raise
             try:
-                winner = await play_game(
+                winner, p1_round_hp_diffs = await play_game(
                     env,
                     player1,
                     player2,
@@ -247,9 +276,9 @@ async def play_match(
         "match_id": job["match_id"],
         "match_idx": match_idx,
         "pair": [a, b],
-        "mode": "cpu_tournament" if vs_cpu else "ft2_rounds",
         "player1": player1,
         "winner": winner,
+        "p1_round_hp_diffs": p1_round_hp_diffs,
     }
 
 
@@ -261,32 +290,22 @@ async def play_match(
     retries=MATCH_RETRIES,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
-async def execute_match(
-    job: dict[str, Any],
-    checkpoint_name: str,
-    base: bool = False,
-    ckpt_path: str = "",
-) -> dict[str, Any]:
+async def execute_match(job: dict[str, Any]) -> dict[str, Any]:
     chats = {}
     model_boots = []
     for player in job["pair"]:
-        if player == "cpu":
+        if player in CPU_PLAYERS:
             continue
-        spec = MODELS[player]
-        if player == POLICY_MODEL_KEY:
-            player_ckpt_path = spec.version["model"] if base else ckpt_path
-        else:
-            player_ckpt_path = ""
-        server = spec.server.with_options(gpu=spec.eval_gpu)(ckpt_path=player_ckpt_path)
+        spec = MODELS.get(player, MODELS[POLICY_MODEL_KEY])
+        # the policy server loads the latest fine-tuned export when ckpt_path is empty
+        ckpt_path = player if player.startswith("/") else spec.version["model"]
+        server = spec.server.with_options(gpu=spec.eval_gpu)(ckpt_path=ckpt_path)
         chats[player] = server.chat.remote.aio
         model_boots.append(server.boot.remote.aio)
 
     for attempt in range(MATCH_ENVIRONMENT_ATTEMPTS):
         try:
-            result = await play_match(job, chats, model_boots)
-            checkpoint = modal.Dict.from_name(checkpoint_name, create_if_missing=True)
-            await checkpoint.put.aio(f"match:{job['match_id']}", result)
-            return result
+            return await play_match(job, chats, model_boots)
         except (OSError, TimeoutError) as exc:
             retryable = any(
                 marker in str(exc) for marker in RETRYABLE_MAME_ENVIRONMENT_ERRORS
@@ -307,11 +326,10 @@ async def execute_match(
     routing_region=ROUTING_REGION,
     timeout=ORCHESTRATE_TIMEOUT,
 )
-async def orchestrate(base: bool = False, ckpt_path: str = "") -> dict[str, Any]:
-    players = list((*MODELS, "cpu"))
+async def orchestrate(players: tuple[str, ...] = DEFAULT_PLAYERS) -> dict[str, Any]:
+    players = validate_players(tuple(players))
     run_id = f"{time.strftime('%Y%m%d_%H%M%S')}-{uuid.uuid4().hex[:8]}"
     run_output_dir = f"{OUTPUT_DIR}/{run_id}"
-    checkpoint_name = f"sf3-eval-{run_id}"
     jobs = [
         {
             "match_id": f"{run_id}-{a}-{b}-{match_idx}",
@@ -323,38 +341,30 @@ async def orchestrate(base: bool = False, ckpt_path: str = "") -> dict[str, Any]
             combinations(players, 2), enumerate(CHARACTERS)
         )
     ]
-    ckpt_selection = "base" if base else (ckpt_path if ckpt_path else "latest")
     config = {
         "run_id": run_id,
         "players": players,
         "characters": list(CHARACTERS),
-        "cpu_difficulty": MAX_CPU_DIFFICULTY,
         "llm_match_format": "one_fight_first_to_two_rounds",
         "matches_per_pair": len(CHARACTERS),
         "models": {
-            player: MODELS[player].version for player in players if player != "cpu"
+            player: {"model": player}
+            if player.startswith("/")
+            else MODELS[player].version
+            for player in players
+            if player not in CPU_PLAYERS
         },
-        "ckpt_selection": ckpt_selection,
         "output_dir": run_output_dir,
         "schedule": jobs,
     }
-    checkpoint = modal.Dict.from_name(checkpoint_name, create_if_missing=True)
     outcomes: list[Any] = [None] * len(jobs)
     completed = failed = 0
     print(f"run_id: {run_id}")
-    print(f"ckpt_selection: {ckpt_selection}")
+    print(f"players: {players}")
     print(f"n_matches: {len(jobs)}")
 
     index = 0
-    async for outcome in execute_match.map.aio(
-        jobs,
-        kwargs={
-            "checkpoint_name": checkpoint_name,
-            "base": base,
-            "ckpt_path": ckpt_path,
-        },
-        return_exceptions=True,
-    ):
+    async for outcome in execute_match.map.aio(jobs, return_exceptions=True):
         outcomes[index] = outcome
         if isinstance(outcome, BaseException):
             failed += 1
@@ -371,24 +381,6 @@ async def orchestrate(base: bool = False, ckpt_path: str = "") -> dict[str, Any]
             f"pending={len(jobs) - completed - failed}",
             flush=True,
         )
-
-    # worker can checkpoint its result and still fail on the way home so double-check
-
-    failed_indexes = [
-        index
-        for index, outcome in enumerate(outcomes)
-        if isinstance(outcome, BaseException)
-    ]
-    if failed_indexes:
-        reconciled = await asyncio.gather(
-            *(
-                checkpoint.get.aio(f"match:{jobs[index]['match_id']}")
-                for index in failed_indexes
-            )
-        )
-        for index, outcome in zip(failed_indexes, reconciled):
-            if valid_match_outcome(outcome, jobs[index]):
-                outcomes[index] = outcome
 
     # build report
 
@@ -428,13 +420,27 @@ async def orchestrate(base: bool = False, ckpt_path: str = "") -> dict[str, Any]
         a, b = match["pair"]
         summary = pair_results.setdefault(
             (a, b),
-            {"pair": [a, b], "matches": 0, "wins": {a: 0, b: 0}, "draws": 0},
+            {
+                "pair": [a, b],
+                "matches": 0,
+                "wins": {a: 0, b: 0},
+                "draws": 0,
+                "rounds": 0,
+                "round_wins": {a: 0, b: 0},
+                "hp_diff_sum": 0.0,
+            },
         )
         summary["matches"] += 1
         if match["winner"] == "draw":
             summary["draws"] += 1
         else:
             summary["wins"][match["winner"]] += 1
+        for p1_hp_diff in match["p1_round_hp_diffs"]:
+            hp_diff = p1_hp_diff if match["player1"] == a else -p1_hp_diff
+            summary["rounds"] += 1
+            summary["round_wins"][a] += hp_diff > 0
+            summary["round_wins"][b] += hp_diff < 0
+            summary["hp_diff_sum"] += hp_diff
     pair_summaries = sorted(
         pair_results.values(),
         key=lambda summary: (
@@ -442,29 +448,40 @@ async def orchestrate(base: bool = False, ckpt_path: str = "") -> dict[str, Any]
             player_index[summary["pair"][1]],
         ),
     )
-    win_rate_matrix = {
-        player: {
-            opponent: None if player == opponent else 0.0
-            for opponent in config["players"]
+    win_rate_matrix, round_win_rate_matrix = (
+        {
+            player: {
+                opponent: None if player == opponent else 0.0
+                for opponent in config["players"]
+            }
+            for player in config["players"]
         }
-        for player in config["players"]
-    }
+        for _ in range(2)
+    )
     for summary in pair_summaries:
         a, b = summary["pair"]
         summary["match_win_rates"] = {
             a: summary["wins"][a] / summary["matches"],
             b: summary["wins"][b] / summary["matches"],
         }
+        summary["round_win_rates"] = {
+            a: summary["round_wins"][a] / summary["rounds"],
+            b: summary["round_wins"][b] / summary["rounds"],
+        }
+        summary["mean_hp_diff"] = summary["hp_diff_sum"] / summary["rounds"]
         win_rate_matrix[a][b] = summary["match_win_rates"][a]
         win_rate_matrix[b][a] = summary["match_win_rates"][b]
+        round_win_rate_matrix[a][b] = summary["round_win_rates"][a]
+        round_win_rate_matrix[b][a] = summary["round_win_rates"][b]
     report["pair_results"] = pair_summaries
     report["win_rate_matrix"] = win_rate_matrix
+    report["round_win_rate_matrix"] = round_win_rate_matrix
     order = sorted(ratings, key=lambda player: (-ratings[player], player_index[player]))
     report["rankings"] = [
         {
             "rank": rank,
             "player": player,
-            "label": PARTICIPANT_LABELS[player],
+            "label": PARTICIPANT_LABELS.get(player, Path(player).name),
             "elo": round(ratings[player], 4),
         }
         for rank, player in enumerate(order, 1)
@@ -497,6 +514,7 @@ async def orchestrate(base: bool = False, ckpt_path: str = "") -> dict[str, Any]
 
 
 @app.local_entrypoint()
-async def main(base: bool = False, ckpt_path: str = "") -> None:
-    call = await orchestrate.spawn.aio(base=base, ckpt_path=ckpt_path)
+async def main(players: str = ",".join(DEFAULT_PLAYERS)) -> None:
+    players = validate_players(tuple(players.split(",")))
+    call = await orchestrate.spawn.aio(players=players)
     print(f"call_id={call.object_id}", flush=True)

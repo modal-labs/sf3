@@ -45,9 +45,8 @@ Prepend web app commands with `SF3_WARM_MODELS=1` to avoid cold-starts.
 
 ```bash
 # evaluate llms +/- cpu on every character matchup
-modal run --detach -m src.eval.main --base
-modal run --detach -m src.eval.main --ckpt-path /checkpoints/.../iter_0000010_hf
-modal run --detach -m src.eval.main  # latest checkpoint
+modal run --detach -m src.eval.main  # every base llm and cpu:8
+modal run --detach -m src.eval.main --players "qwen3_vl_8b,cpu:1,/checkpoints/.../iter_0000010_hf"
 
 # rl post-training
 python -m src.train.main

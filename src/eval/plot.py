@@ -93,11 +93,49 @@ def write_elo_plot(report: dict[str, Any], path: Path) -> None:
     save_figure(figure, path)
 
 
-def write_win_rate_plot(report: dict[str, Any], path: Path) -> None:
+def write_hp_diff_plot(report: dict[str, Any], path: Path) -> None:
+    labels = {row["player"]: row["label"] for row in report["rankings"]}
+    pairs = report["pair_results"]
+    names = [f"{labels[a]} vs {labels[b]}" for a, b in (pair["pair"] for pair in pairs)]
+    hp_diffs = [pair["mean_hp_diff"] for pair in pairs]
+    limit = max(map(abs, hp_diffs), default=0.0) or 1.0
+
+    figure = Figure(figsize=(9.0, max(3.0, len(pairs) * 0.8 + 1.5)))
+    FigureCanvasAgg(figure)
+    axes = figure.subplots()
+    apply_dark_style(figure, axes)
+    bars = axes.barh(
+        range(len(pairs)),
+        hp_diffs,
+        color=[HEATMAP_COLORS[-1 if hp_diff > 0 else 0] for hp_diff in hp_diffs],
+        edgecolor=BORDER_PRIMARY,
+        linewidth=0.8,
+    )
+    axes.bar_label(
+        bars,
+        labels=[f"{hp_diff:+.1f}" for hp_diff in hp_diffs],
+        padding=4,
+        color=TEXT_PRIMARY,
+    )
+    axes.axvline(0, color=TEXT_SECONDARY, linewidth=1)
+    axes.set_yticks(range(len(pairs)), labels=names)
+    axes.invert_yaxis()
+    axes.set_xlim(-limit * 1.25, limit * 1.25)
+    axes.set_xlabel("Mean HP diff per round")
+    axes.set_title("Tournament HP Diff per Round")
+    axes.grid(axis="x", color=BORDER_DIVIDER, linewidth=0.8)
+    axes.set_axisbelow(True)
+    figure.tight_layout()
+    save_figure(figure, path)
+
+
+def write_win_rate_plot(
+    report: dict[str, Any], path: Path, key: str, title: str, colorbar_label: str
+) -> None:
     rankings = report["rankings"]
     players = [row["player"] for row in rankings]
     labels = [row["label"] for row in rankings]
-    win_rates = report["win_rate_matrix"]
+    win_rates = report[key]
     matrix = [
         [
             float("nan")
@@ -123,7 +161,7 @@ def write_win_rate_plot(report: dict[str, Any], path: Path) -> None:
         interpolation="nearest",
     )
     colorbar = figure.colorbar(image, ax=axes, fraction=0.046, pad=0.04)
-    colorbar.set_label("Win rate", color=TEXT_PRIMARY)
+    colorbar.set_label(colorbar_label, color=TEXT_PRIMARY)
     colorbar.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
     colorbar.set_ticklabels(["0%", "25%", "50%", "75%", "100%"])
     colorbar.ax.yaxis.set_tick_params(color=TEXT_SECONDARY, labelcolor=TEXT_SECONDARY)
@@ -140,7 +178,7 @@ def write_win_rate_plot(report: dict[str, Any], path: Path) -> None:
     axes.set_yticks(range(len(players)), labels=labels)
     axes.set_xlabel("Opponent")
     axes.set_ylabel("Player")
-    axes.set_title("Tournament Match Win Rates")
+    axes.set_title(title)
     boundaries = [index - 0.5 for index in range(len(players) + 1)]
     axes.set_xticks(boundaries, minor=True)
     axes.set_yticks(boundaries, minor=True)
@@ -159,7 +197,26 @@ def write_win_rate_plot(report: dict[str, Any], path: Path) -> None:
 
 
 def write_tournament_plots(report: dict[str, Any], output_dir: Path) -> list[Path]:
-    paths = [output_dir / "elo.png", output_dir / "win_rate_matrix.png"]
+    paths = [
+        output_dir / "elo.png",
+        output_dir / "win_rate_matrix.png",
+        output_dir / "round_win_rate_matrix.png",
+        output_dir / "hp_diff.png",
+    ]
     write_elo_plot(report, paths[0])
-    write_win_rate_plot(report, paths[1])
+    write_win_rate_plot(
+        report,
+        paths[1],
+        "win_rate_matrix",
+        "Tournament Match Win Rates",
+        "Win rate",
+    )
+    write_win_rate_plot(
+        report,
+        paths[2],
+        "round_win_rate_matrix",
+        "Tournament Round Win Rates",
+        "Round win rate",
+    )
+    write_hp_diff_plot(report, paths[3])
     return paths
