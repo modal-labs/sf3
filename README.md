@@ -69,6 +69,15 @@ modal deploy -m src.app
 ## Changelog
 
 <details>
+<summary>Fall 2026</summary>
+
+### Updates
+
+- Reconnecting to gameplay for each tab is supported by [Sticky Sessions](https://modal.com/docs/guide/sticky-sessions).
+
+</details>
+
+<details>
 <summary>Summer 2026</summary>
 
 ### Updates
@@ -78,8 +87,7 @@ modal deploy -m src.app
 ![Latency](./assets/readme/latency.webp "Latency diagram")
 
 - CPU opponents were added, and non-learnable frames (e.g., coin screen, character selection, etc.) were recovered.
-
-- Training migrated to [Modal Training Gym](https://github.com/modal-projects/training-gym).
+- Training was migrated to [Modal Dojo](https://dojo.modal.dev/).
 
 </details>
 
