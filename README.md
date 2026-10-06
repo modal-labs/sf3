@@ -23,7 +23,7 @@ modal setup
 ```
 
 Obtain a copy of SF3, then store it as `assets/engine/sfiii3n.zip`. Then, upload it to a Modal Volume for the deploy GH workflow:
- 
+
 ```bash
 modal volume create sf3-rom
 modal volume put sf3-rom assets/engine/sfiii3n.zip
@@ -51,7 +51,7 @@ modal run --detach -m src.eval.main  # every base llm and cpu:8
 modal run --detach -m src.eval.main --players "qwen3_vl_8b,cpu:1,/checkpoints/.../iter_0000010_hf"
 
 # rl post-training
-python -m src.train.main
+uv run -m src.train.main
 
 # test the trained model's latency
 modal run -m src.serve.qwen3_vl_8b

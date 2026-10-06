@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "modal==1.6.1",
-    "modal-training-gym",
+    "modal-dojo",
 ]
 
 [tool.uv]
 override-dependencies = ["modal==1.6.1"]
 
 [tool.uv.sources]
-modal-training-gym = { git = "https://github.com/modal-projects/training-gym.git", branch = "main" }
+modal-dojo = { git = "https://github.com/modal-projects/modal-dojo.git", branch = "main" }

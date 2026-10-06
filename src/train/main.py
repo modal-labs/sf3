@@ -2,7 +2,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import modal
-from modal_training_gym import (
+from modal_dojo import (
     OnlineRollout,
     Qwen3_VL_8B,
     Qwen3_VL_8B_Recipe,
@@ -14,7 +14,7 @@ from src.eval.main import app as eval_app
 from src.eval.main import cache_volume, orchestrate
 from src.serve import POLICY_MODEL_KEY
 from src.serve.qwen3_vl_8b import CHECKPOINTS_MOUNT
-from src.train.rollout import sf3_generate, sf3_rollout
+from src.train.rollout import sf3_generate
 from src.utils import MAX_TOKENS, TEMPERATURE, TOP_P, create_gameplay_image
 
 NUM_ROLLOUTS = 100
@@ -26,7 +26,6 @@ GLOBAL_BATCH_SIZE = ROLLOUT_BATCH_SIZE * N_SAMPLES_PER_PROMPT
 model = Qwen3_VL_8B()
 recipe = Qwen3_VL_8B_Recipe(
     custom_generate_function=sf3_generate,
-    rollout_function=sf3_rollout,
     dynamic_sampling_filter_path="src.train.rollout.sf3_valid_group",
     image_overlay=lambda image: create_gameplay_image(
         base_image=image,
@@ -45,7 +44,6 @@ recipe = Qwen3_VL_8B_Recipe(
     extra_config={
         **Qwen3_VL_8B_Recipe().extra_config,
         "micro_batch_size": 8,
-        "rewards_normalization": False,
         "custom_megatron_init_path": "src.train.rollout.megatron_init",
     },
 )

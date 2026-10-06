@@ -5,7 +5,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from itertools import zip_longest
 
-from modal_training_gym import Qwen3_VL_8B
+from modal_dojo import Qwen3_VL_8B
 
 from src.env import EnvironmentConfig, create_environment
 from src.utils import (
@@ -24,11 +24,15 @@ ROSTER = tuple(CHARACTER_MAPPING.values())
 OUTFIT = SUPER_ART = 1
 FRAME_KEY = "sf3_frame"
 IMAGE_PAD = "<|image_pad|>"
+
 GAMMA = 0.9
 INVALID_MOVE_PENALTY = 20 / HEALTH_MAX
-CPU_FRACTION = 0.2
-_cpu_difficulty = 1
-_cpu_wins: dict[int, bool] = {}
+CPU_FRACTION = 0.5
+MIN_CPU_RESULTS = 10
+
+_cpu_results = {
+    difficulty: deque(maxlen=50) for difficulty in range(1, MAX_CPU_DIFFICULTY + 1)
+}
 _executor = ThreadPoolExecutor(max_workers=256)
 _fights: dict[tuple[int, int], asyncio.Task] = {}
 _image_tokens_by_frame_size: dict[tuple[int, int], int] = {}
@@ -100,10 +104,30 @@ async def _move(
     return move, available
 
 
+def _cpu_win_rate(results):
+    return (sum(results) + 1) / (len(results) + 2)
+
+
+def _sample_cpu_difficulty():
+    # PFSP-style: https://www.nature.com/articles/s41586-019-1724-z
+    hardest_won = max(
+        (
+            d
+            for d, r in _cpu_results.items()
+            if len(r) >= MIN_CPU_RESULTS and _cpu_win_rate(r) >= 0.5
+        ),
+        default=0,
+    )
+    levels = range(1, min(hardest_won + 1, MAX_CPU_DIFFICULTY) + 1)
+    rates = [_cpu_win_rate(_cpu_results[d]) for d in levels]
+    return random.choices(levels, [p * (1 - p) for p in rates])[0]
+
+
 async def _play_fight(args, sample, sampling_params):
     vs_cpu = sample.group_index % args.rollout_batch_size < round(
         CPU_FRACTION * args.rollout_batch_size
     )
+    difficulty = _sample_cpu_difficulty() if vs_cpu else MAX_CPU_DIFFICULTY
     seats = (0,) if vs_cpu else (0, 1)
     characters = random.sample(ROSTER, 2)
     identities = [{"character": c, "superArt": SUPER_ART} for c in characters]
@@ -115,7 +139,7 @@ async def _play_fight(args, sample, sampling_params):
             super_arts=(SUPER_ART, SUPER_ART),
             step_ratio=6,
             vs_cpu=vs_cpu,
-            cpu_difficulty=_cpu_difficulty,
+            cpu_difficulty=difficulty,
         ),
     )
     try:
@@ -180,7 +204,9 @@ async def _play_fight(args, sample, sampling_params):
     finally:
         await asyncio.to_thread(env.close)
     if vs_cpu:
-        _cpu_wins[sample.group_index] = info["stage_done"] or info["winner"] == "P1"
+        results = _cpu_results[difficulty]
+        results.append(info["stage_done"] or info["winner"] == "P1")
+        print(f"cpu {difficulty}: {_cpu_win_rate(results):.2f} over {len(results)}")
     returns, G = [0.0] * len(damage), 0.0
     for t in reversed(range(len(damage))):
         if t + 1 < len(damage) and rounds[t + 1] != rounds[t]:
@@ -221,23 +247,6 @@ async def sf3_generate(args, sample, sampling_params):
         traceback.print_exc()
         sample.status = Sample.Status.ABORTED
         return [sample]
-
-
-def sf3_rollout(args, rollout_id, data_source, evaluation=False):
-    from slime.rollout.sglang_rollout import generate_rollout
-
-    global _cpu_difficulty
-    output = generate_rollout(args, rollout_id, data_source, evaluation)
-    if evaluation:
-        return output
-    wins = list(_cpu_wins.values())
-    _cpu_wins.clear()
-    if not wins:
-        return output
-    if all(wins):
-        _cpu_difficulty = min(_cpu_difficulty + 1, MAX_CPU_DIFFICULTY)
-    print(f"cpu difficulty {_cpu_difficulty}: won {sum(wins)}/{len(wins)} cpu fights")
-    return output
 
 
 def _image(frame):

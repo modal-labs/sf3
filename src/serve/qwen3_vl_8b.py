@@ -42,9 +42,7 @@ flashinfer_cache_vol = modal.Volume.from_name(
 )
 
 CHECKPOINTS_MOUNT = "/checkpoints"
-# training-gym's slime launcher names this volume
-# f"slime-{recipe_class_name.lower()}-checkpoints".
-CHECKPOINTS_VOLUME = "slime-qwen3_vl_8b_recipe-checkpoints"
+CHECKPOINTS_VOLUME = "slime-qwen3_vl_8b_recipe-checkpoints"  # from Modal Dojo
 
 cache_volumes = {
     "/root/.cache/huggingface": hf_cache_vol,
