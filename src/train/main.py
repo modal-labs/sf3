@@ -1,6 +1,6 @@
 import time
 
-from modal_training_gym import (
+from modal_dojo import (
     OnlineRollout,
     Qwen3_VL_8B,
     Qwen3_VL_8B_Recipe,

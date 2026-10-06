@@ -51,7 +51,7 @@ modal run --detach -m src.eval.main  # every base llm and cpu:8
 modal run --detach -m src.eval.main --players "qwen3_vl_8b,cpu:1,/checkpoints/.../iter_0000010_hf"
 
 # rl post-training
-python -m src.train.main
+uv run -m src.train.main
 
 # test the trained model's latency
 modal run -m src.serve.qwen3_vl_8b
@@ -89,7 +89,7 @@ modal deploy -m src.app
 ![Latency](./assets/readme/latency.webp "Latency diagram")
 
 - CPU opponents were added, and non-learnable frames (e.g., coin screen, character selection, etc.) were recovered.
-- Training migrated to [Modal Training Gym](https://github.com/modal-projects/training-gym).
+- Training was migrated to [Modal Dojo](https://dojo.modal.dev/).
 
 </details>
 

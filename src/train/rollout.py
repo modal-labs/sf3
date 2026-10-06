@@ -4,7 +4,7 @@ import traceback
 from collections import deque
 from itertools import zip_longest
 
-from modal_training_gym import Qwen3_VL_8B
+from modal_dojo import Qwen3_VL_8B
 
 from src.env import EnvironmentConfig, create_environment
 from src.utils import (
