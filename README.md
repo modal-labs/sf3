@@ -68,6 +68,10 @@ modal serve -m src.app
 modal deploy -m src.app
 ```
 
+### LLM action menu
+
+Each character's action menu contains movement, guard/parry/recovery attempts, standing/crouching/air attacks, directional normals, strength/EX variants, follow-ups, target-combo input sequences, and selected Super Arts, per the [Capcom manual](https://www.video-games-museum.com/en/manual/Dreamcast/22142_us-Street-Fighter-III-3rd-Strike.pdf) and [StrategyWiki move lists](https://strategywiki.org/wiki/Street_Fighter_III:_3rd_Strike/Moves). The prompt shows the last eight attempted moves, oldest first.
+
 ## Changelog
 
 <details>

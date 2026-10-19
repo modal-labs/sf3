@@ -13,11 +13,14 @@ import modal
 from src.env import EnvironmentConfig, create_environment
 from src.serve import MODELS
 from src.utils import (
+    ATTACK_MASK,
+    BUTTON_INPUTS,
     COMBOS,
     CONTAINER_REGION,
-    MAX_CPU_DIFFICULTY,
     DEFAULT_PLAYER1_PARTICIPANT,
     DEFAULT_PLAYER2_PARTICIPANT,
+    MAX_CPU_DIFFICULTY,
+    MAX_MACRO_FRAMES,
     MINUTES,
     PARTICIPANT_LABELS,
     RECENT_MOVE_LIMIT,
@@ -332,9 +335,6 @@ class Web:
                 self.player1_next_buttons = []
                 self.player2_next_buttons = []
                 self.selection_next_buttons = []
-                self.next_buttons_limit = (
-                    20  # simply for memory, roughly length of longest combo
-                )
                 self.player1_current_action = 0
                 self.player2_current_action = 0
                 self.selection_current_action = 0
@@ -415,9 +415,8 @@ class Web:
                         self.env_operation_task = None
 
             def enqueue_buttons(self, queue, buttons):
-                available = self.next_buttons_limit - len(queue)
-                if available > 0:
-                    queue.extend(buttons[:available])
+                if len(queue) + len(buttons) <= MAX_MACRO_FRAMES:
+                    queue.extend(buttons)
 
             def invalidate_actions(self):
                 self.action_generation += 1
@@ -511,8 +510,10 @@ class Web:
                 action = action_data.get("action")
                 if not isinstance(action, int):
                     return
+                if not 0 <= action < 1 << len(BUTTON_INPUTS):
+                    return
                 if self.info and self.info.get("selecting"):
-                    if action <= 8:
+                    if not action & ATTACK_MASK:
                         self.selection_current_action = action
                     else:
                         self.enqueue_buttons(self.selection_next_buttons, [action])
@@ -521,54 +522,18 @@ class Web:
                 player_number = self.human_player_number()
                 if player_number is None:
                     return
-                player_key = f"player{player_number}"
-                observation_key = f"P{player_number}"
                 next_buttons = (
                     self.player1_next_buttons
                     if player_number == 1
                     else self.player2_next_buttons
                 )
-
-                # super art
-
-                if action == 18:
-                    super_art_name = action_data.get("super_art")
-                    if not super_art_name:
-                        return
-
-                    player_obs = self.observation[observation_key]
-                    character = self.game_settings[player_key]["character"]
-                    direction = "left" if player_obs["side"] == 0 else "right"
-
-                    move = SPECIAL_MOVES.get(character, {}).get(super_art_name)
-                    if move is not None:
-                        self.enqueue_buttons(next_buttons, move[direction])
-
-                # combo
-
-                elif action == 19:
-                    combo_name = action_data.get("combo")
-                    if not combo_name:
-                        return
-
-                    player_obs = self.observation[observation_key]
-                    character = self.game_settings[player_key]["character"]
-                    direction = "left" if player_obs["side"] == 0 else "right"
-
-                    move = COMBOS.get(character, {}).get(combo_name)
-                    if move is not None:
-                        self.enqueue_buttons(next_buttons, move[direction])
-
-                # normal move
-
-                else:
-                    if action <= 8:  # directional, so don't queue
-                        if player_number == 1:
-                            self.player1_current_action = action
-                        else:
-                            self.player2_current_action = action
-                    else:  # attack moves (9-17), so queue
-                        self.enqueue_buttons(next_buttons, [action])
+                if not action & ATTACK_MASK:  # directional, so don't queue
+                    if player_number == 1:
+                        self.player1_current_action = action
+                    else:
+                        self.player2_current_action = action
+                else:  # attack moves and chords, so queue
+                    self.enqueue_buttons(next_buttons, [action])
 
             async def cleanup_environment(self):
                 env = self.env
@@ -1499,8 +1464,9 @@ class Web:
                             break
                         await session.prepare_for_next_game()
 
-                except Exception:
+                except Exception as exc:
                     print(f"Error in game loop: {traceback.format_exc()}")
+                    await fail_current_game(format_runtime_error(exc))
                     session.request_stop()
 
             if session.runtime_task is None:

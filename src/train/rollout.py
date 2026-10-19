@@ -39,7 +39,7 @@ async def _move(
     if state.aborted:
         raise RuntimeError("rollout aborted")
     messages, available = create_messages(
-        fighters[1 - seat], fighters[seat], [frame], recent[seat]
+        fighters[1 - seat], fighters[seat], frame, recent[seat]
     )
     prompt_text = state.tokenizer.apply_chat_template(
         messages,

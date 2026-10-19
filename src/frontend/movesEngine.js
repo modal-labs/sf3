@@ -8,25 +8,24 @@ export const MovesDisplay = {
     return fullKey;
   },
 
-  getExtraElements(sequence, idxToMove, isGamepadConnected) {
+  getExtraElements(sequence, displayFrame, isGamepadConnected) {
     const buttons = sequence
       .map((action) => {
-        const move = idxToMove[action];
-        const symbol = isGamepadConnected ? move.gamepadDisplay : move.display;
+        const symbol = displayFrame(action, isGamepadConnected);
         return `<span class="game-ctrl">${symbol}</span>`;
       })
       .join("");
     return `<div class="flex items-center flex-wrap gap-1">${buttons}</div>`;
   },
 
-  generateMovesHTML(moves, idxToMove, isGamepadConnected) {
+  generateMovesHTML(moves, displayFrame, isGamepadConnected) {
     const moveElements = moves
       .map(
         (move) => `
             <div class="flex justify-between items-center gap-4">
                 ${this.getExtraElements(
                   move.sequence,
-                  idxToMove,
+                  displayFrame,
                   isGamepadConnected
                 )}
                 <h3 class="text-sf-gold">${move.name}</h3>

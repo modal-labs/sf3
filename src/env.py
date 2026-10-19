@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from src.utils import STUN_BAR_MAX, SUPER_BAR_MAX, TIMER_MAX
+from src.utils import STUN_BAR_MAX, SUPER_BAR_MAX, TIMER_MAX, frame_inputs
 
 _ROM_FILENAME = "sfiii3n.zip"
 _ROM_SHA256 = "7239b5eb005488db22ace477501c574e9420c0ab70aeeb0795dfeb474284d416"
@@ -189,27 +189,10 @@ def _action_values(player: int, action_id: int):
     from MAMEToolkit.sf_environment.Actions import Actions
 
     prefix = f"P{player}"
-    action_names = {
-        0: (),
-        1: ("LEFT",),
-        2: ("LEFT", "UP"),
-        3: ("UP",),
-        4: ("UP", "RIGHT"),
-        5: ("RIGHT",),
-        6: ("RIGHT", "DOWN"),
-        7: ("DOWN",),
-        8: ("DOWN", "LEFT"),
-        9: ("JPUNCH",),
-        10: ("SPUNCH",),
-        11: ("FPUNCH",),
-        12: ("SKICK",),
-        13: ("FKICK",),
-        14: ("RKICK",),
-        15: ("JPUNCH", "SKICK"),
-        16: ("SPUNCH", "FKICK"),
-        17: ("FPUNCH", "RKICK"),
-    }.get(int(action_id), ())
-    return [getattr(Actions, f"{prefix}_{name}").value for name in action_names]
+    return [
+        getattr(Actions, f"{prefix}_{name}").value
+        for name in frame_inputs(int(action_id))
+    ]
 
 
 @dataclass(frozen=True)
