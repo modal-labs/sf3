@@ -2,7 +2,7 @@
 
 An interactive Street Fighter 3 web game against RL-trained LLMs.
 
-https://github.com/user-attachments/assets/d9ac80e3-6cdc-48a2-9413-e9a734026f5b
+https://github.com/user-attachments/assets/02c48751-527a-497c-a293-037ee24b7c28
 
 ## Quickstart
 
