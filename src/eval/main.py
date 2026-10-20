@@ -18,13 +18,11 @@ from src.serve import MODELS, POLICY_MODEL_KEY
 from src.serve.qwen3_vl_8b import CHECKPOINTS_MOUNT, CHECKPOINTS_VOLUME
 from src.utils import (
     CHARACTER_MAPPING,
-    CONTAINER_REGION,
     INFERENCE_LATENCY_MS,
     MAX_CPU_DIFFICULTY,
     MINUTES,
     PARTICIPANT_LABELS,
     RECENT_MOVE_LIMIT,
-    ROUTING_REGION,
     FrameEncoder,
     create_gameplay_image,
     generate_move,
@@ -302,14 +300,14 @@ def player_server(player):
     spec = MODELS.get(player, MODELS[POLICY_MODEL_KEY])
     # the policy server loads the latest fine-tuned export when ckpt_path is empty
     checkpoint = player if player.startswith("/") else spec.version["model"]
-    return spec.server.with_options(gpu=spec.eval_gpu)(ckpt_path=checkpoint)
+    return spec.server.with_options(gpu=spec.eval_gpu, region="us")(
+        ckpt_path=checkpoint
+    )
 
 
 @app.function(
     image=eval_image,
     volumes={"/cache": cache_volume},
-    region=CONTAINER_REGION,
-    routing_region=ROUTING_REGION,
     timeout=MATCH_TIMEOUT,
     retries=MATCH_RETRIES,
     secrets=[modal.Secret.from_name("huggingface-secret")],
@@ -370,8 +368,6 @@ def schedule_jobs(players, run_id):
 @app.function(
     image=eval_image,
     volumes={"/cache": cache_volume},
-    region=CONTAINER_REGION,
-    routing_region=ROUTING_REGION,
     timeout=ORCHESTRATE_TIMEOUT,
 )
 async def orchestrate(players: tuple[str, ...] = DEFAULT_PLAYERS) -> dict[str, Any]:

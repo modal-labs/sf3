@@ -67,7 +67,7 @@ async def run_arcade_sandbox(
             image=modal.Image.from_id(os.environ[WORKER_IMAGE_ENV]),
             cpu=1,
             memory=2 * GB,
-            region=CONTAINER_REGION,
+            region=os.environ.get("MODAL_REGION", CONTAINER_REGION),
             runtime="gvisor",
             timeout=WORKER_TIMEOUT,
             workdir="/root",

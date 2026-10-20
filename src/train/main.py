@@ -14,7 +14,6 @@ from src.train.rollout import (
 )
 from src.train.worker import MAX_WORKERS, WORKER_IMAGE_ENV, build_worker_image
 from src.utils import (
-    CONTAINER_REGION,
     MAX_TOKENS,
     TEMPERATURE,
     TOP_P,
@@ -37,7 +36,6 @@ recipe = Qwen3_VL_8B_Recipe(
         *PROCESSOR_PACKAGES
     ).add_local_python_source("src", copy=True),
     actor_num_gpus_per_node=8,
-    region=CONTAINER_REGION,
     num_rollout=NUM_ROLLOUTS,
     save_interval=5,
     capture_trace=True,
