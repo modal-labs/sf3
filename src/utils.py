@@ -1,9 +1,11 @@
 import base64
+import math
 import os
 import random
 import re
 import subprocess
 from dataclasses import dataclass
+from itertools import groupby
 from pathlib import Path
 from typing import Any, Literal, Sequence, TypedDict
 
@@ -68,6 +70,20 @@ PARTICIPANT_LABELS = {
 DEFAULT_PLAYER1_PARTICIPANT = "human"
 DEFAULT_PLAYER2_PARTICIPANT = "qwen35_9b"
 MAX_CPU_DIFFICULTY = 8
+INFERENCE_LATENCY_MS = 200.0
+
+
+def model_reaction_delay_ms(buttons: Sequence[int], generation_ms: float) -> float:
+    n_buttons = sum(button != 0 for button, _ in groupby(buttons))
+    if n_buttons == 0:
+        return generation_ms
+    human_ms = 100.0 + 30.0 * (n_buttons - 1)
+    playback_ms = (len(buttons) - 1) * (1000.0 / 60.0)
+    return max(generation_ms, human_ms - playback_ms)
+
+
+def model_reaction_frames(buttons: Sequence[int], generation_ms: float) -> int:
+    return math.ceil(model_reaction_delay_ms(buttons, generation_ms) * 60 / 1000)
 
 
 def is_model_participant(participant: str) -> bool:
@@ -2301,7 +2317,7 @@ def create_random_messages() -> tuple[list[dict], str, int, int, int, list[str]]
 
 MAX_CONTEXT_LEN = 4096
 MAX_TOKENS = 32
-TEMPERATURE = 0.7
+TEMPERATURE = 1.0
 TOP_P = 0.8
 
 

@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import uuid
 from collections import deque
-from itertools import combinations, product
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
 import modal
 
 from src.env import EnvironmentConfig, create_environment
+from src.eval.video import MatchVideos
 from src.serve import MODELS, POLICY_MODEL_KEY
+from src.serve.qwen3_vl_8b import CHECKPOINTS_MOUNT, CHECKPOINTS_VOLUME
 from src.utils import (
     CHARACTER_MAPPING,
     CONTAINER_REGION,
+    INFERENCE_LATENCY_MS,
     MAX_CPU_DIFFICULTY,
     MINUTES,
     PARTICIPANT_LABELS,
@@ -24,6 +28,7 @@ from src.utils import (
     FrameEncoder,
     create_gameplay_image,
     generate_move,
+    model_reaction_frames,
     player_state,
 )
 
@@ -38,11 +43,11 @@ with eval_image.imports():
     from src.eval.plot import write_tournament_plots
 
 
-CHARACTERS = tuple(combinations(CHARACTER_MAPPING.values(), 2))
+ROSTER = tuple(CHARACTER_MAPPING.values())
+CHARACTERS = tuple(combinations(ROSTER, 2))
 CPU_PLAYERS = {f"cpu:{level}" for level in range(1, MAX_CPU_DIFFICULTY + 1)}
 DEFAULT_PLAYERS = (*MODELS, f"cpu:{MAX_CPU_DIFFICULTY}")
 K_FACTOR, INITIAL_RATING = 16.0, 1200.0
-OUTPUT_DIR = "tournaments"
 
 MATCH_ENVIRONMENT_ATTEMPTS = 3
 MATCH_RETRIES = 1
@@ -133,7 +138,8 @@ async def play_game(
     chats: dict[str, Any],
     encoder: FrameEncoder,
     initial_reset: tuple[dict[str, Any], dict[str, Any]],
-) -> tuple[str, list[float]]:
+    videos: MatchVideos,
+) -> tuple[str, list[float], str]:
     if player1 in CPU_PLAYERS:
         raise ValueError("CPU tournaments require CPU in P2")
     vs_cpu = player2 in CPU_PLAYERS
@@ -141,73 +147,71 @@ async def play_game(
     observation, _ = initial_reset
     hp_diff = 0.0
     p1_round_hp_diffs: list[float] = []
+    players = (player1, player2)
     while True:
         identity = env.read_match_identity()
         fighters = [
-            player_state(observation, identity["player1"], "P1"),
-            player_state(observation, identity["player2"], "P2"),
+            player_state(observation, identity[f"player{seat + 1}"], f"P{seat + 1}")
+            for seat in range(2)
         ]
+        if videos.path is None:
+            videos.start([fighter.character for fighter in fighters])
+            videos.write(observation["frame"])
         frame_url = encoder.data_url(observation["frame"])
-        players = (player1, player2)
         request_seats = range(1 if vs_cpu else 2)
+
+        async def infer(seat):
+            buttons, move = await generate_move(
+                chats[players[seat]],
+                fighters[seat],
+                fighters[1 - seat],
+                frame_url,
+                recent[seat],
+            )
+            delay = model_reaction_frames(buttons, INFERENCE_LATENCY_MS)
+            return [0] * delay + buttons, move
+
         try:
             async with asyncio.TaskGroup() as group:
-                tasks = [
-                    group.create_task(
-                        generate_move(
-                            chats[players[seat]],
-                            fighters[seat],
-                            fighters[1 - seat],
-                            frame_url,
-                            recent[seat],
-                        )
-                    )
-                    for seat in request_seats
-                ]
+                tasks = [group.create_task(infer(seat)) for seat in request_seats]
         except BaseExceptionGroup as group_error:
             # match retry and deadline handling both match on the concrete
             # exception type, which a group would hide
             raise group_error.exceptions[0] from group_error
-        generated = [task.result() for task in tasks]
         buttons = [[0], [0]]
-        for seat, (move_buttons, move_name) in zip(request_seats, generated):
-            buttons[seat] = move_buttons
-            recent[seat].append(move_name)
+        for seat, task in zip(request_seats, tasks):
+            buttons[seat], move = task.result()
+            recent[seat].append(move)
         n_steps = max(map(len, buttons))
         actions = zip(
             buttons[0] + [0] * (n_steps - len(buttons[0])),
             buttons[1] + [0] * (n_steps - len(buttons[1])),
         )
-
-        terminated = truncated = False
-        info: dict[str, Any] = {}
-        for p1_button, p2_button in actions:
-            observation, reward, terminated, truncated, info = await call_environment(
-                env,
-                env.step,
-                {"agent_0": p1_button, "agent_1": p2_button},
-            )
-            hp_diff += reward
-            if terminated or truncated or info.get("round_done"):
-                break
-
+        observation, reward, terminated, truncated, info = await call_environment(
+            env,
+            videos.step,
+            env,
+            [{"agent_0": p1, "agent_1": p2} for p1, p2 in actions],
+        )
+        hp_diff += reward
         if info.get("round_done"):
             p1_round_hp_diffs.append(hp_diff)
             hp_diff = 0.0
             for moves in recent:
                 moves.clear()
-        if info.get("stage_done") and not terminated:
-            return player1, p1_round_hp_diffs
-        if not (terminated or truncated):
+        if not ((vs_cpu and info.get("stage_done")) or terminated or truncated):
             continue
+        video = str(videos.finish().relative_to(Path("/cache")))
+        if info.get("stage_done") and not truncated:
+            return player1, p1_round_hp_diffs, video
         if truncated or not info.get("game_done"):
             raise RuntimeError("Episode ended without normal game completion")
         seat_winner = info.get("winner")
         if seat_winner == "draw":
-            return "draw", p1_round_hp_diffs
+            return "draw", p1_round_hp_diffs, video
         if seat_winner not in {"P1", "P2"}:
             raise RuntimeError(f"Environment returned invalid winner: {seat_winner!r}")
-        return player1 if seat_winner == "P1" else player2, p1_round_hp_diffs
+        return players[0 if seat_winner == "P1" else 1], p1_round_hp_diffs, video
 
 
 async def play_match(
@@ -220,6 +224,12 @@ async def play_match(
     vs_cpu = b in CPU_PLAYERS
     # alternate seats between LLMs so the P1 side advantage cancels out
     player1, player2 = (a, b) if vs_cpu or match_idx % 2 == 0 else (b, a)
+    video_prefix = hashlib.sha256(job["match_id"].encode()).hexdigest()[:12]
+    videos = MatchVideos(
+        Path("/cache") / job["run_id"] / "videos",
+        (player1, player2),
+        f"{match_idx:03d}-{video_prefix}",
+    )
     deadline = asyncio.timeout(MATCH_DEADLINE)
     try:
         async with deadline:
@@ -230,8 +240,9 @@ async def play_match(
                         characters=tuple(job["characters"]),
                         outfits=(1, 1),
                         super_arts=(1, 1),
-                        step_ratio=6,
+                        step_ratio=1,
                         vs_cpu=vs_cpu,
+                        lock_cpu_opponent=not vs_cpu,
                         cpu_difficulty=int(b.removeprefix("cpu:"))
                         if vs_cpu
                         else MAX_CPU_DIFFICULTY,
@@ -254,18 +265,22 @@ async def play_match(
                     await close_environment(env)
                 raise
             try:
-                winner, p1_round_hp_diffs = await play_game(
+                winner, p1_round_hp_diffs, video = await play_game(
                     env,
                     player1,
                     player2,
                     chats,
                     encoder,
                     reset_task.result(),
+                    videos,
                 )
                 if winner != "draw" and winner not in {a, b}:
                     raise RuntimeError(f"Invalid game winner: {winner!r}")
             finally:
-                await close_environment(env)
+                try:
+                    await close_environment(env)
+                finally:
+                    await asyncio.to_thread(videos.close)
     except TimeoutError as exc:
         if not deadline.expired():
             raise
@@ -279,11 +294,20 @@ async def play_match(
         "player1": player1,
         "winner": winner,
         "p1_round_hp_diffs": p1_round_hp_diffs,
+        "video": video,
     }
+
+
+def player_server(player):
+    spec = MODELS.get(player, MODELS[POLICY_MODEL_KEY])
+    # the policy server loads the latest fine-tuned export when ckpt_path is empty
+    checkpoint = player if player.startswith("/") else spec.version["model"]
+    return spec.server.with_options(gpu=spec.eval_gpu)(ckpt_path=checkpoint)
 
 
 @app.function(
     image=eval_image,
+    volumes={"/cache": cache_volume},
     region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
     timeout=MATCH_TIMEOUT,
@@ -296,16 +320,15 @@ async def execute_match(job: dict[str, Any]) -> dict[str, Any]:
     for player in job["pair"]:
         if player in CPU_PLAYERS:
             continue
-        spec = MODELS.get(player, MODELS[POLICY_MODEL_KEY])
-        # the policy server loads the latest fine-tuned export when ckpt_path is empty
-        ckpt_path = player if player.startswith("/") else spec.version["model"]
-        server = spec.server.with_options(gpu=spec.eval_gpu)(ckpt_path=ckpt_path)
+        server = player_server(player)
         chats[player] = server.chat.remote.aio
         model_boots.append(server.boot.remote.aio)
 
     for attempt in range(MATCH_ENVIRONMENT_ATTEMPTS):
         try:
-            return await play_match(job, chats, model_boots)
+            outcome = await play_match(job, chats, model_boots)
+            await cache_volume.commit.aio()
+            return outcome
         except (OSError, TimeoutError) as exc:
             retryable = any(
                 marker in str(exc) for marker in RETRYABLE_MAME_ENVIRONMENT_ERRORS
@@ -319,6 +342,31 @@ async def execute_match(job: dict[str, Any]) -> dict[str, Any]:
     raise AssertionError("unreachable")
 
 
+def schedule_jobs(players, run_id):
+    jobs = []
+    for a, b in combinations(players, 2):
+        characters = (
+            [
+                [character, "Ryu"]
+                for _ in range(len(CHARACTERS) // len(ROSTER))
+                for character in ROSTER
+            ]
+            if b in CPU_PLAYERS
+            else [list(pair) for pair in CHARACTERS]
+        )
+        for match_idx, pair in enumerate(characters):
+            jobs.append(
+                {
+                    "match_id": f"{run_id}-{a}-{b}-{match_idx}",
+                    "run_id": run_id,
+                    "match_idx": match_idx,
+                    "pair": [a, b],
+                    "characters": pair,
+                }
+            )
+    return jobs
+
+
 @app.function(
     image=eval_image,
     volumes={"/cache": cache_volume},
@@ -329,24 +377,16 @@ async def execute_match(job: dict[str, Any]) -> dict[str, Any]:
 async def orchestrate(players: tuple[str, ...] = DEFAULT_PLAYERS) -> dict[str, Any]:
     players = validate_players(tuple(players))
     run_id = f"{time.strftime('%Y%m%d_%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    run_output_dir = f"{OUTPUT_DIR}/{run_id}"
-    jobs = [
-        {
-            "match_id": f"{run_id}-{a}-{b}-{match_idx}",
-            "match_idx": match_idx,
-            "pair": [a, b],
-            "characters": list(characters),
-        }
-        for (a, b), (match_idx, characters) in product(
-            combinations(players, 2), enumerate(CHARACTERS)
-        )
-    ]
+    run_output_dir = run_id
+    jobs = schedule_jobs(players, run_id)
     config = {
         "run_id": run_id,
         "players": players,
         "characters": list(CHARACTERS),
         "llm_match_format": "one_fight_first_to_two_rounds",
-        "matches_per_pair": len(CHARACTERS),
+        "cpu_match_format": "one_fight_first_to_two_rounds",
+        "inference_latency_ms": INFERENCE_LATENCY_MS,
+        "win_rate_unit": "fight_first_to_two_rounds",
         "models": {
             player: {"model": player}
             if player.startswith("/")
@@ -357,6 +397,12 @@ async def orchestrate(players: tuple[str, ...] = DEFAULT_PLAYERS) -> dict[str, A
         "output_dir": run_output_dir,
         "schedule": jobs,
     }
+    for player in players:
+        if player in CPU_PLAYERS:
+            continue
+        await asyncio.wait_for(
+            player_server(player).boot.remote.aio(), timeout=MATCH_DEADLINE
+        )
     outcomes: list[Any] = [None] * len(jobs)
     completed = failed = 0
     print(f"run_id: {run_id}")
@@ -486,8 +532,10 @@ async def orchestrate(players: tuple[str, ...] = DEFAULT_PLAYERS) -> dict[str, A
         }
         for rank, player in enumerate(order, 1)
     ]
+
     # save report
 
+    await cache_volume.reload.aio()
     directory = Path("/cache") / run_output_dir
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / ("results.json" if report["complete"] else "partial.json")
@@ -513,8 +561,33 @@ async def orchestrate(players: tuple[str, ...] = DEFAULT_PLAYERS) -> dict[str, A
     return report
 
 
+def hf_checkpoint(player: str) -> str:
+    if not player.startswith("/") or player.endswith("_hf"):
+        return player
+    from modal_dojo import (
+        Checkpoint,
+        CheckpointType,
+        Qwen3_VL_8B,
+        convert_megatron_checkpoint_to_hf,
+    )
+
+    path = Path(player)
+    checkpoint = Checkpoint(
+        checkpoint_type=CheckpointType.megatron,
+        name=path.name,
+        path=player,
+        timestamp=0.0,
+        training_run_id=path.parent.name,
+        checkpoints_volume_name=CHECKPOINTS_VOLUME,
+        checkpoints_mount_path=CHECKPOINTS_MOUNT,
+    )
+    return convert_megatron_checkpoint_to_hf(checkpoint, Qwen3_VL_8B()).path
+
+
 @app.local_entrypoint()
-async def main(players: str = ",".join(DEFAULT_PLAYERS)) -> None:
-    players = validate_players(tuple(players.split(",")))
-    call = await orchestrate.spawn.aio(players=players)
+def main(players: str = ",".join(DEFAULT_PLAYERS)) -> None:
+    participants = validate_players(
+        tuple(hf_checkpoint(player) for player in players.split(","))
+    )
+    call = orchestrate.spawn(players=participants)
     print(f"call_id={call.object_id}", flush=True)

@@ -22,12 +22,14 @@ app = modal.App(APP_NAME)
 
 model_name = "Qwen/Qwen3-VL-8B-Instruct"
 model_revision = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
+INFERENCE_IMAGE = "slimerl/slime@sha256:a97ec147e37bef050337a9b229036eda00b4aa9c4d02b31a0109dc850f8ca342"
+PROCESSOR_PACKAGES = ("transformers==5.12.1", "qwen-vl-utils==0.0.14")
 
 sglang_image = (
-    modal.Image.from_registry("lmsysorg/sglang:v0.5.12.post1-cu130")
+    modal.Image.from_registry(INFERENCE_IMAGE)
     .entrypoint([])
     .run_commands("rm -rf /root/.cache/huggingface /root/.cache/flashinfer")
-    .uv_pip_install("qwen-vl-utils==0.0.14")
+    .uv_pip_install(*PROCESSOR_PACKAGES)
     .env(
         {
             "HF_XET_HIGH_PERFORMANCE": "1",
@@ -35,7 +37,6 @@ sglang_image = (
         }
     )
 )
-
 hf_cache_vol = modal.Volume.from_name("sf3-huggingface-cache", create_if_missing=True)
 flashinfer_cache_vol = modal.Volume.from_name(
     "sf3-flashinfer-cache", create_if_missing=True
@@ -60,7 +61,7 @@ def latest_hf_export_on_volume() -> str | None:
 
 max_inputs = max_num_seqs = 32
 gpu = "B200:1"
-eval_gpu = "H100:1"
+eval_gpu = gpu
 
 
 @app.cls(
@@ -107,8 +108,10 @@ class Qwen3VLServer:
             context_length=MAX_CONTEXT_LEN,
             chunked_prefill_size=8192,
             max_running_requests=max_num_seqs,
-            cuda_graph_max_bs=max_inputs * 2,
+            cuda_graph_max_bs_decode=max_inputs * 2,
             mem_fraction_static=0.9,
+            cuda_graph_backend_prefill="disabled",
+            mm_attention_backend="sdpa",
         )
         self.tokenizer = self.llm.tokenizer_manager.tokenizer
         self.sampling_params = {

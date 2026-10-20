@@ -30,6 +30,7 @@ from src.utils import (
     create_gameplay_image,
     generate_move,
     is_model_participant,
+    model_reaction_delay_ms,
     normalize_game_participants,
     player_state,
 )
@@ -953,13 +954,6 @@ class Web:
                     },
                 )
 
-            def human_floor_wait_ms(n_buttons: int, generation_ms: float) -> float:
-                if n_buttons < 1:
-                    return 0.0
-                human_ms = 100.0 + 30.0 * (n_buttons - 1)
-                llm_ms = generation_ms + (n_buttons - 1) * (1000.0 / 60.0)
-                return max(0.0, human_ms - llm_ms)
-
             def snapshot_robot_observation():
                 obs = session.observation
                 if (
@@ -1004,8 +998,8 @@ class Web:
                     ),
                     timeout=1 * MINUTES,
                 )
-                generation_ms = (time.perf_counter() - started_at) * 1000.0
-                return player_number, moves, move_name, generation_ms
+                ready_at = started_at + model_reaction_delay_ms(moves, 0.0) / 1000
+                return player_number, moves, move_name, ready_at
 
             async def run_robot_background():
                 try:
@@ -1013,7 +1007,6 @@ class Web:
                         if not await session.wait_for_connection():
                             break
                         await asyncio.sleep(0.001)
-
                         if (
                             not session.game_running
                             or session.observation is None
@@ -1021,67 +1014,43 @@ class Web:
                             or session.match_identity is None
                         ):
                             continue
-
-                        if (
-                            "timer" not in session.observation
-                            or session.observation["timer"] is None
-                        ):  # in case env was just reset
-                            continue
-
-                        action_generation = session.action_generation
-                        player1_participant, player2_participant = (
-                            normalize_game_participants(session.game_settings)
-                        )
-                        player1_is_model = is_model_participant(player1_participant)
-                        player2_is_model = is_model_participant(player2_participant)
-                        if not (player1_is_model or player2_is_model):
-                            continue
-
                         snapshot = snapshot_robot_observation()
                         if snapshot is None:
                             continue
-                        requests = []
-                        if player1_is_model and not session.player1_next_buttons:
-                            requests.append(
-                                generate_robot_move(
-                                    1,
-                                    player1_participant,
-                                    snapshot,
-                                )
-                            )
-                        if player2_is_model and not session.player2_next_buttons:
-                            requests.append(
-                                generate_robot_move(
-                                    2,
-                                    player2_participant,
-                                    snapshot,
-                                )
-                            )
+                        generation = session.action_generation
+                        participants = normalize_game_participants(
+                            session.game_settings
+                        )
+                        queues = (
+                            session.player1_next_buttons,
+                            session.player2_next_buttons,
+                        )
+                        requests = [
+                            generate_robot_move(player, participant, snapshot)
+                            for player, participant in enumerate(participants, 1)
+                            if is_model_participant(participant)
+                            and not queues[player - 1]
+                        ]
                         if not requests:
                             continue
-
                         results = await asyncio.gather(*requests)
-                        if action_generation != session.action_generation:
+                        if generation != session.action_generation:
                             continue
-                        wait_ms = max(
-                            human_floor_wait_ms(len(moves), generation_ms)
-                            for _, moves, _, generation_ms in results
+                        wait = (
+                            max(result[3] for result in results) - time.perf_counter()
                         )
-                        if wait_ms > 0:
-                            await asyncio.sleep(wait_ms / 1000.0)
-                            if action_generation != session.action_generation:
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                            if generation != session.action_generation:
                                 continue
-
-                        for player_number, moves, move_name, _ in results:
-                            if player_number == 1:
-                                next_buttons = session.player1_next_buttons
-                                recent_move_names = session.player1_recent_move_names
-                            else:
-                                next_buttons = session.player2_next_buttons
-                                recent_move_names = session.player2_recent_move_names
-                            session.enqueue_buttons(next_buttons, moves)
-                            recent_move_names.append(move_name)
-
+                        for player, moves, name, _ in results:
+                            session.enqueue_buttons(queues[player - 1], moves)
+                            history = (
+                                session.player1_recent_move_names
+                                if player == 1
+                                else session.player2_recent_move_names
+                            )
+                            history.append(name)
                 except WebSocketDisconnect:
                     session.request_stop()
                 except Exception as exc:
