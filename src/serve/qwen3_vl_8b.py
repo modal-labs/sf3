@@ -55,13 +55,21 @@ cache_volumes = {
 
 
 def latest_hf_export_on_volume() -> str | None:
-    exports = list(Path(CHECKPOINTS_MOUNT).glob("*/*_hf"))
-    return str(max(exports, key=lambda path: path.stat().st_mtime)) if exports else None
+    runs = {path.parent for path in Path(CHECKPOINTS_MOUNT).glob("*/iter_*_hf")}
+    if not runs:
+        return None
+    run = max(
+        runs,
+        key=lambda run: max(
+            (path.stat().st_mtime for path in run.glob("iter_*[0-9]")), default=0
+        ),
+    )
+    return str(max(run.glob("iter_*_hf")))
 
 
 max_inputs = max_num_seqs = 32
 gpu = "B200:1"
-eval_gpu = gpu
+eval_gpu = "H200:1"
 
 
 @app.cls(

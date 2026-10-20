@@ -18,7 +18,7 @@ import {
 import { SOUND_KEYS } from "./constants.js";
 
 const createUIController = () => {
-  const defaultModelParticipant = "qwen35_9b";
+  const defaultModelParticipant = "qwen3_vl_8b";
 
   const focusLobbyStart = () => {
     requestAnimationFrame(() => {

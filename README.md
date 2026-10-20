@@ -43,8 +43,6 @@ modal secret create huggingface-secret HF_TOKEN=your-key
 
 ### Commands
 
-Prepend web app commands with `SF3_WARM_MODELS=1` to avoid cold-starts.
-
 ```bash
 # evaluate llms +/- cpu on every character matchup
 modal run --detach -m src.eval.main  # every base llm and cpu:8

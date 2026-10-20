@@ -48,7 +48,8 @@ SESSION_TASK_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 ENV_INIT_TIMEOUT_SECONDS = 1 * MINUTES
 GAMEPLAY_PORT = 8000
 GAMEPLAY_SESSION_IDLE_TIMEOUT_SECONDS = 10 * MINUTES
-MAX_GAME_SESSIONS = 6
+SESSION_RECONNECT_GRACE_SECONDS = 1 * MINUTES
+MAX_GAME_SESSIONS = 2
 
 
 local_assets_dir = Path(__file__).parent.parent / "assets"
@@ -83,8 +84,7 @@ gameplay_image = (
     compute_region=CONTAINER_REGION,
     routing_region=ROUTING_REGION,
     min_containers=1,
-    max_concurrency=3,
-    target_concurrency=2,
+    max_concurrency=MAX_GAME_SESSIONS,
     secrets=[modal.Secret.from_name("turn-credentials")],
     port=GAMEPLAY_PORT,
     startup_timeout=5 * MINUTES,
@@ -109,14 +109,6 @@ class Web:
             )
         )
         threading.Thread(target=self.http_server.run, daemon=True).start()
-        if os.environ.get("SF3_WARM_MODELS") != "1":
-            return
-        for participant, model in MODELS.items():
-            try:
-                model.server().update_autoscaler(min_containers=1)
-            except Exception as exc:
-                label = PARTICIPANT_LABELS.get(participant, participant)
-                print(f"Could not keep {label} warm: {exc!r}")
 
     @modal.exit()
     def exit(self):
@@ -244,33 +236,30 @@ class Web:
             def __init__(self, frame_buffer):
                 super().__init__()
                 self.frame_buffer = frame_buffer
-                self._timestamp = 0
-                self._has_sent_frame = False
-                self._last_frame_at = None
+                self._start = None
+                self._next_frame_at = None
 
             async def recv(self) -> VideoFrame:
                 while self.frame_buffer.latest_frame is None:
                     await asyncio.sleep(1 / self.frame_buffer.target_fps)
-                frame = self.frame_buffer.latest_frame
 
                 loop = asyncio.get_running_loop()
-                timestamp_step = int((1 / self.frame_buffer.target_fps) * 90000)
-                if self._last_frame_at is not None:
-                    deadline = self._last_frame_at + (1 / self.frame_buffer.target_fps)
-                    while (delay := deadline - loop.time()) > 0:
-                        await asyncio.sleep(delay)
-                self._last_frame_at = loop.time()
-                if self._has_sent_frame:
-                    self._timestamp += timestamp_step
-                else:
-                    self._has_sent_frame = True
+                interval = 1 / self.frame_buffer.target_fps
+                if self._start is None:
+                    self._start = self._next_frame_at = loop.time()
+                while (delay := self._next_frame_at - loop.time()) > 0:
+                    await asyncio.sleep(delay)
+                now = loop.time()
+                self._next_frame_at = (
+                    max(self._next_frame_at, now - interval) + interval
+                )
 
                 try:
                     frame = self.frame_buffer.phase_frames.get_nowait()
                 except queue.Empty:
                     frame = self.frame_buffer.latest_frame
                 output = VideoFrame.from_ndarray(frame, format="rgb24")
-                output.pts = self._timestamp
+                output.pts = int((now - self._start) * 90000)
                 output.time_base = Fraction(1, 90000)
                 return output
 
@@ -1132,16 +1121,18 @@ class Web:
                 nonlocal phase_edge_armed, phase_generation
                 frame_interval = 1.0 / session.frame_buffer.target_fps
 
-                async def pace_frame(last_frame_at):
+                async def pace_frame(next_frame_at):
                     if not await session.wait_for_connection():
                         return None
-                    if last_frame_at is not None:
-                        deadline = last_frame_at + frame_interval
-                        while (
-                            delay := deadline - asyncio.get_running_loop().time()
-                        ) > 0:
-                            await asyncio.sleep(delay)
-                    return asyncio.get_running_loop().time()
+                    loop = asyncio.get_running_loop()
+                    if next_frame_at is None:
+                        return loop.time() + frame_interval
+                    while (delay := next_frame_at - loop.time()) > 0:
+                        await asyncio.sleep(delay)
+                    return (
+                        max(next_frame_at, loop.time() - frame_interval)
+                        + frame_interval
+                    )
 
                 try:
                     while not session.stop_event.is_set():
@@ -1182,12 +1173,12 @@ class Web:
                         session.game_state["error"] = ""
                         await session.send_game_state()
 
-                        last_frame_at = None
+                        next_frame_at = None
                         while (
                             not session.start_requested
                             and not session.stop_event.is_set()
                         ):
-                            last_frame_at = await pace_frame(last_frame_at)
+                            next_frame_at = await pace_frame(next_frame_at)
                             if session.stop_event.is_set():
                                 break
                             try:
@@ -1261,9 +1252,9 @@ class Web:
                         session.game_state["status"] = "selecting"
                         await session.send_game_state()
 
-                        last_frame_at = None
+                        next_frame_at = None
                         while session.game_running and not session.stop_event.is_set():
-                            last_frame_at = await pace_frame(last_frame_at)
+                            next_frame_at = await pace_frame(next_frame_at)
                             if session.stop_event.is_set():
                                 break
 
@@ -1426,7 +1417,7 @@ class Web:
                                 session.accepts_input = human_player_number is not None
                                 session.sync_round_number()
                                 session.game_state["status"] = "running"
-                                last_frame_at = None
+                                next_frame_at = None
                                 await session.send_game_state()
 
                         if session.stop_event.is_set():
@@ -1474,6 +1465,18 @@ class Web:
                 if creating_session:
                     session.runtime_task = asyncio.create_task(run_runtime())
                     self.game_sessions[game_id] = session
+                    session.prefetch_task = asyncio.create_task(
+                        prefetch_required_servers(
+                            DEFAULT_PLAYER1_PARTICIPANT, DEFAULT_PLAYER2_PARTICIPANT
+                        )
+                    )
+                    session.prefetch_task.add_done_callback(
+                        lambda task: (
+                            task.cancelled()
+                            or task.exception() is None
+                            or print(f"Model prefetch failed: {task.exception()!r}")
+                        )
+                    )
 
             tasks = [
                 asyncio.create_task(process_signaling_messages()),
@@ -1510,7 +1513,7 @@ class Web:
                         if not session.stop_event.is_set():
                             session.expiry_handle = (
                                 asyncio.get_running_loop().call_later(
-                                    GAMEPLAY_SESSION_IDLE_TIMEOUT_SECONDS,
+                                    SESSION_RECONNECT_GRACE_SECONDS,
                                     session.request_stop,
                                 )
                             )

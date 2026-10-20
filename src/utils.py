@@ -1,6 +1,5 @@
 import base64
 import math
-import os
 import random
 import re
 import subprocess
@@ -68,7 +67,7 @@ PARTICIPANT_LABELS = {
     participant: spec["label"] for participant, spec in PARTICIPANT_SPECS.items()
 }
 DEFAULT_PLAYER1_PARTICIPANT = "human"
-DEFAULT_PLAYER2_PARTICIPANT = "qwen35_9b"
+DEFAULT_PLAYER2_PARTICIPANT = "qwen3_vl_8b"
 MAX_CPU_DIFFICULTY = 8
 INFERENCE_LATENCY_MS = 200.0
 
@@ -135,7 +134,6 @@ def create_gameplay_image(
             {
                 "SDL_VIDEODRIVER": "dummy",
                 "SDL_AUDIODRIVER": "dummy",
-                "SF3_WARM_MODELS": os.environ.get("SF3_WARM_MODELS", "0"),
                 "XDG_RUNTIME_DIR": "/tmp",
             }
         )

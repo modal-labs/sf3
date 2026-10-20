@@ -1,7 +1,7 @@
 const createGameState = () => {
   let state = {
     player1Participant: "human",
-    player2Participant: "qwen35_9b",
+    player2Participant: "qwen3_vl_8b",
     loaded: false,
     acceptsInput: false,
     serverReady: false,
